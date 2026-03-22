@@ -1,2 +1,0 @@
-"""ALTLINK VPN application package."""
-
