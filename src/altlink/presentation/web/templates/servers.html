@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <h2>Серверы Remnawave</h2>
+    <form method="post" action="/admin/servers/sync">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="button primary" type="submit">Синхронизировать список</button>
+    </form>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Сервер</th>
+        <th>Страна</th>
+        <th>Состояние</th>
+        <th>Управление</th>
+        <th>Клиенты</th>
+        <th>Нагрузка</th>
+        <th>Inbounds</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for server in servers %}
+      <tr>
+        <td>{{ server.name }}</td>
+        <td>{{ server.country_code or '—' }}</td>
+        <td>
+          <span class="badge {{ 'good' if server.is_connected else 'danger' }}">{{ 'online' if server.is_connected else 'offline' }}</span>
+          {% if server.is_disabled_remote %}<span class="badge danger">disabled remote</span>{% endif %}
+        </td>
+        <td>
+          <form method="post" action="/admin/servers/{{ server.id }}/toggle" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <select name="is_enabled">
+              <option value="true" {% if server.is_enabled %}selected{% endif %}>Активен</option>
+              <option value="false" {% if not server.is_enabled %}selected{% endif %}>Выключен</option>
+            </select>
+            <input type="number" name="max_clients_count" min="1" value="{{ server.max_clients_count }}">
+            <button class="button ghost small" type="submit">Сохранить</button>
+          </form>
+          <form method="post" action="/admin/servers/{{ server.id }}/remove">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="button danger small" type="submit">Убрать локально</button>
+          </form>
+        </td>
+        <td>{{ server.current_clients_count }}/{{ server.max_clients_count }}</td>
+        <td>{{ server.load_percent }}%</td>
+        <td>{{ server.inbounds|length }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">Сначала синхронизируйте список серверов.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

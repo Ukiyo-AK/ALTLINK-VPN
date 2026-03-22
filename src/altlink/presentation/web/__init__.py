@@ -1,0 +1,2 @@
+"""Web admin panel."""
+

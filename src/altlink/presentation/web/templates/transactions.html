@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head"><h2>Баланс и транзакции</h2></div>
+  <table>
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>User ID</th>
+        <th>Тип</th>
+        <th>Сумма</th>
+        <th>До</th>
+        <th>После</th>
+        <th>Комментарий</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in transactions %}
+      <tr>
+        <td>{{ item.created_at|dtfmt }}</td>
+        <td><a href="/admin/users/{{ item.user_id }}">{{ item.user_id }}</a></td>
+        <td>{{ item.transaction_type.value }}</td>
+        <td>{{ item.amount_rub|money }}</td>
+        <td>{{ item.balance_before|money }}</td>
+        <td>{{ item.balance_after|money }}</td>
+        <td>{{ item.comment or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">Транзакций нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

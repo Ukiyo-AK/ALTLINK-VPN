@@ -1,0 +1,13 @@
+.git
+.pytest_cache
+.ruff_cache
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+htmlcov
+.env
+alembic/__pycache__
+tests/__pycache__
+

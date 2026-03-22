@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <div class="panel-head"><h2>Трафик и лимиты</h2></div>
+  <table>
+    <thead>
+      <tr>
+        <th>Пользователь</th>
+        <th>Статус</th>
+        <th>Трафик</th>
+        <th>Лимит</th>
+        <th>Период</th>
+        <th>Задолженность</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in subscriptions %}
+      <tr>
+        <td><a href="/admin/users/{{ item.user_id }}">{{ item.user_id }}</a></td>
+        <td><span class="badge">{{ item.status.value }}</span></td>
+        <td>{{ item.traffic_used_bytes_cache|bytesfmt }}</td>
+        <td>{{ item.traffic_limit_bytes_snapshot|bytesfmt if item.traffic_limit_bytes_snapshot else 'Безлимит' }}</td>
+        <td>{{ item.current_period_start|dtfmt }} → {{ item.current_period_end|dtfmt }}</td>
+        <td>{{ item.debt_rub|money }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">Нет активных подписок.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

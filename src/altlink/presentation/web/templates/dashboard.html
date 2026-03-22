@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="stats-grid">
+  <article class="stat-card">
+    <div class="label">Активные</div>
+    <div class="value">{{ dashboard.counts.active }}</div>
+  </article>
+  <article class="stat-card">
+    <div class="label">Grace period</div>
+    <div class="value">{{ dashboard.counts.grace }}</div>
+  </article>
+  <article class="stat-card">
+    <div class="label">Заблокированные</div>
+    <div class="value">{{ dashboard.counts.blocked }}</div>
+  </article>
+  <article class="stat-card">
+    <div class="label">Тестовые</div>
+    <div class="value">{{ dashboard.counts.trial }}</div>
+  </article>
+  <article class="stat-card">
+    <div class="label">Новые заявки</div>
+    <div class="value">{{ dashboard.counts.new_topups }}</div>
+  </article>
+  <article class="stat-card">
+    <div class="label">Онлайн</div>
+    <div class="value">{{ dashboard.counts.online }}</div>
+  </article>
+</section>
+
+<section class="grid-two">
+  <article class="panel">
+    <div class="panel-head">
+      <h2>Финансы и трафик</h2>
+    </div>
+    <div class="kv">
+      <div>Задолженности</div>
+      <div>{{ dashboard.debts_rub|money }}</div>
+      <div>Суммарный трафик</div>
+      <div>{{ dashboard.total_traffic_bytes|bytesfmt }}</div>
+    </div>
+  </article>
+  <article class="panel">
+    <div class="panel-head">
+      <h2>Топ пользователей по трафику</h2>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Пользователь</th>
+          <th>Статус</th>
+          <th>Трафик</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for user, subscription in dashboard.top_users %}
+        <tr>
+          <td><a href="/admin/users/{{ user.id }}">{{ user.telegram_username or user.telegram_id }}</a></td>
+          <td><span class="badge">{{ user.status.value }}</span></td>
+          <td>{{ subscription.traffic_used_bytes_cache|bytesfmt }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="muted">Данных пока нет.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </article>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2>Загрузка серверов</h2>
+    <a class="button ghost" href="/admin/servers">Управлять серверами</a>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Сервер</th>
+        <th>Статус</th>
+        <th>Клиенты</th>
+        <th>Лимит</th>
+        <th>Нагрузка</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for server in dashboard.servers %}
+      <tr>
+        <td>{{ server.name }}</td>
+        <td>
+          <span class="badge {{ 'good' if server.is_connected else 'danger' }}">
+            {{ 'online' if server.is_connected else 'offline' }}
+          </span>
+        </td>
+        <td>{{ server.current_clients_count }}</td>
+        <td>{{ server.max_clients_count }}</td>
+        <td>{{ server.load_percent }}%</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Сервера ещё не синхронизированы.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+
