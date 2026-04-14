@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h2>Системные настройки</h2>
+  <form method="post" action="/admin/settings" class="stack compact">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label><span>Ключ</span><input type="text" name="key" required></label>
+    <label><span>Значение</span><textarea name="value" rows="4" placeholder='Можно JSON или простой текст'></textarea></label>
+    <label><span>Описание</span><input type="text" name="description"></label>
+    <button type="submit" class="button">Сохранить</button>
+  </form>
+  <table class="table">
+    <thead><tr><th>Ключ</th><th>Значение</th><th>Описание</th></tr></thead>
+    <tbody>
+      {% for item in settings_list %}
+      <tr>
+        <td>{{ item.key }}</td>
+        <td><div class="codeblock">{{ item.value }}</div></td>
+        <td>{{ item.description or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">Настроек пока нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

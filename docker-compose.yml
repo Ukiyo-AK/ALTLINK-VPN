@@ -1,0 +1,77 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: altlink
+      POSTGRES_USER: altlink
+      POSTGRES_PASSWORD: altlink
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U altlink -d altlink"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    command: ["python", "-m", "altlink.main", "backend"]
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "altlink.healthcheck", "backend", "http://127.0.0.1:8000/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  client-bot:
+    build: .
+    command: ["python", "-m", "altlink.main", "client-bot"]
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "altlink.healthcheck", "heartbeat", "/tmp/altlink-client-bot.heartbeat"]
+      interval: 45s
+      timeout: 5s
+      retries: 3
+
+  admin-bot:
+    build: .
+    command: ["python", "-m", "altlink.main", "admin-bot"]
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "altlink.healthcheck", "heartbeat", "/tmp/altlink-admin-bot.heartbeat"]
+      interval: 45s
+      timeout: 5s
+      retries: 3
+
+  scheduler:
+    build: .
+    command: ["python", "-m", "altlink.main", "scheduler"]
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "altlink.healthcheck", "heartbeat", "/tmp/altlink-scheduler.heartbeat"]
+      interval: 45s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  postgres-data:
+

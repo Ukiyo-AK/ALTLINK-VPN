@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="cards">
+  <article class="card"><div class="muted">Активные</div><strong>{{ overview.active_users }}</strong></article>
+  <article class="card"><div class="muted">Grace period</div><strong>{{ overview.grace_users }}</strong></article>
+  <article class="card"><div class="muted">Заблокированные</div><strong>{{ overview.blocked_users }}</strong></article>
+  <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>
+  <article class="card"><div class="muted">Новые заявки</div><strong>{{ overview.new_topups }}</strong></article>
+  <article class="card"><div class="muted">Задолженность</div><strong>{{ overview.debt_total_rub }} ₽</strong></article>
+</section>
+
+<section class="grid-two">
+  <article class="panel">
+    <h2>Топ по трафику</h2>
+    <table class="table">
+      <thead><tr><th>Пользователь</th><th>Тариф</th><th>Трафик</th></tr></thead>
+      <tbody>
+        {% for item in overview.top_users %}
+        <tr>
+          <td>{{ item.user.username or item.user.telegram_id }}</td>
+          <td>{{ item.plan.name }}</td>
+          <td>{{ item.traffic_used_bytes }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="muted">Пока пусто.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </article>
+
+  <article class="panel">
+    <h2>Загрузка серверов</h2>
+    <table class="table">
+      <thead><tr><th>Сервер</th><th>Клиенты</th><th>Нагрузка</th></tr></thead>
+      <tbody>
+        {% for server in overview.servers %}
+        <tr>
+          <td>{{ server.name }}</td>
+          <td>{{ server.current_clients }}/{{ server.max_clients or 'n/a' }}</td>
+          <td>{{ server.load_percent }}%</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="muted">Серверы ещё не синхронизированы.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </article>
+</section>
+{% endblock %}
+

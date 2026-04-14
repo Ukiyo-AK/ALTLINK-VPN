@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <table class="table">
+    <thead><tr><th>Уровень</th><th>Источник</th><th>Событие</th><th>Сообщение</th><th>Дата</th></tr></thead>
+    <tbody>
+      {% for item in events %}
+      <tr>
+        <td>{{ item.level }}</td>
+        <td>{{ item.source }}</td>
+        <td>{{ item.event_type }}</td>
+        <td>{{ item.message }}</td>
+        <td>{{ item.created_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Событий пока нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

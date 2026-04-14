@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+
+
+def rub(amount: Decimal | int | float) -> str:
+    return f"{Decimal(amount):.2f} ₽"
+
+
+def format_datetime(dt: datetime) -> str:
+    return dt.strftime("%d.%m.%Y %H:%M")
+
+
+def low_balance_message(balance: Decimal, next_charge: Decimal, due_at: datetime) -> str:
+    return (
+        f"Баланс почти закончился.\n\n"
+        f"Сейчас на счёте: {rub(balance)}\n"
+        f"Следующее списание: {rub(next_charge)}\n"
+        f"Дата списания: {format_datetime(due_at)}\n\n"
+        f"Пополните баланс заранее, чтобы доступ не ушёл в льготный период."
+    )
+
+
+def upcoming_renewal_message(next_charge: Decimal, due_at: datetime) -> str:
+    return (
+        f"Скоро будет продление подписки.\n\n"
+        f"К списанию: {rub(next_charge)}\n"
+        f"Дата: {format_datetime(due_at)}"
+    )
+
+
+def grace_started_message(balance: Decimal, debt: Decimal, grace_until: datetime) -> str:
+    return (
+        f"Подписка перешла в льготный период.\n\n"
+        f"Баланс: {rub(balance)}\n"
+        f"Не хватает: {rub(debt)}\n"
+        f"Доступ сохранится до: {format_datetime(grace_until)}\n\n"
+        f"Пополните баланс, чтобы избежать блокировки."
+    )
+
+
+def grace_reminder_message(debt: Decimal, grace_until: datetime) -> str:
+    return (
+        f"Напоминаем о задолженности по подписке.\n\n"
+        f"Не хватает: {rub(debt)}\n"
+        f"Льготный период закончится: {format_datetime(grace_until)}"
+    )
+
+
+def blocked_message() -> str:
+    return (
+        "Доступ к VPN заблокирован.\n\n"
+        "Льготный период закончился или лимит трафика исчерпан. "
+        "Пополните баланс и активируйте тариф заново."
+    )
+
+
+def topup_approved_message(amount: Decimal) -> str:
+    return f"Заявка на пополнение подтверждена. На баланс зачислено {rub(amount)}."
+
+
+def topup_rejected_message(amount: Decimal, comment: str | None = None) -> str:
+    suffix = f"\nКомментарий администратора: {comment}" if comment else ""
+    return f"Заявка на пополнение на сумму {rub(amount)} отклонена.{suffix}"
+
+
+def trial_ended_message() -> str:
+    return (
+        "Тестовый период завершён.\n\n"
+        "Чтобы продолжить пользоваться VPN, выберите тариф и пополните баланс."
+    )
+
+
+def traffic_threshold_message(percent: int, used_gb: float, limit_gb: float) -> str:
+    return (
+        f"Вы использовали {percent}% лимита трафика.\n\n"
+        f"Израсходовано: {used_gb:.2f} ГБ из {limit_gb:.2f} ГБ."
+    )
+
+
+def traffic_exceeded_message(limit_gb: float) -> str:
+    return (
+        f"Лимит трафика {limit_gb:.2f} ГБ исчерпан. "
+        f"Доступ временно остановлен до начала нового оплаченного периода."
+    )
+

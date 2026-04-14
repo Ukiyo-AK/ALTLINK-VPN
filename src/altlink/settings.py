@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+from functools import lru_cache
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    app_name: str = "ALTLINK VPN"
+    environment: str = "development"
+    debug: bool = False
+    timezone: str = "UTC"
+
+    secret_key: str = "change-me"
+    session_secret_key: str = "change-me-session"
+    admin_api_key: str = "change-me-admin-api-key"
+
+    database_url: str = "sqlite+aiosqlite:///./data/altlink.db"
+    sql_echo: bool = False
+
+    backend_host: str = "0.0.0.0"
+    backend_port: int = 8000
+    backend_public_url: str = "http://localhost:8000"
+
+    client_bot_token: str = ""
+    admin_bot_token: str = ""
+    admin_allowed_telegram_ids: list[int] = Field(default_factory=list)
+    client_bot_name: str = "altlink"
+    admin_bot_name: str = "admin altlink bot"
+
+    remnawave_base_url: str = ""
+    remnawave_api_token: str = ""
+    remnawave_timeout_seconds: int = 20
+    remnawave_retry_attempts: int = 3
+    remnawave_subscription_base_url: str = ""
+
+    default_currency: str = "RUB"
+    trial_duration_days: int = 2
+    billing_period_days: int = 30
+    grace_period_days: int = 14
+    low_balance_threshold_rub: int = 50
+    traffic_notification_thresholds: list[int] = Field(default_factory=lambda: [70, 90, 100])
+
+    sync_servers_interval_minutes: int = 30
+    billing_interval_minutes: int = 60
+    traffic_snapshot_interval_minutes: int = 30
+    notification_dispatch_interval_minutes: int = 2
+    online_refresh_interval_minutes: int = 30
+    heartbeat_max_age_seconds: int = 180
+
+    @field_validator("admin_allowed_telegram_ids", mode="before")
+    @classmethod
+    def _parse_admin_ids(cls, value: object) -> list[int]:
+        if value in (None, "", []):
+            return []
+        if isinstance(value, str):
+            return [int(item.strip()) for item in value.split(",") if item.strip()]
+        if isinstance(value, list):
+            return [int(item) for item in value]
+        raise ValueError("ADMIN_ALLOWED_TELEGRAM_IDS must be a comma-separated list")
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def _parse_debug(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "debug", "dev", "development"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "release", "prod", "production"}:
+                return False
+        return bool(value)
+
+    @field_validator("traffic_notification_thresholds", mode="before")
+    @classmethod
+    def _parse_thresholds(cls, value: object) -> list[int]:
+        if value in (None, "", []):
+            return [70, 90, 100]
+        if isinstance(value, str):
+            items = [int(item.strip()) for item in value.split(",") if item.strip()]
+            return sorted(set(items))
+        if isinstance(value, list):
+            return sorted({int(item) for item in value})
+        raise ValueError("TRAFFIC_NOTIFICATION_THRESHOLDS must be a comma-separated list")
+
+    @property
+    def remnawave_subscription_public_base(self) -> str:
+        return (self.remnawave_subscription_base_url or self.remnawave_base_url).rstrip("/")
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+data
+logs
+htmlcov
+dist
+build
+_tmp_remnawave_backend
+

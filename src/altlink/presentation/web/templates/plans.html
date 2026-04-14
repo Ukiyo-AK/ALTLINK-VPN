@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <table class="table">
+    <thead><tr><th>Код</th><th>Название</th><th>Цена</th><th>Период</th><th>Лимит</th></tr></thead>
+    <tbody>
+      {% for plan in plans %}
+      <tr>
+        <td>{{ plan.code }}</td>
+        <td>{{ plan.name }}</td>
+        <td>{{ plan.price_rub }} ₽</td>
+        <td>{{ plan.period_days }} дней</td>
+        <td>{{ plan.traffic_limit_bytes or 'без лимита' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

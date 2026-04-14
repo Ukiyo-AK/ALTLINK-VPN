@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <table class="table">
+    <thead><tr><th>Пользователь</th><th>Тариф</th><th>Статус</th><th>Использовано</th><th>Лимит</th><th>Следующее продление</th></tr></thead>
+    <tbody>
+      {% for item in subscriptions %}
+      <tr>
+        <td><a href="/admin/users/{{ item.user.id }}">{{ item.user.username or item.user.telegram_id }}</a></td>
+        <td>{{ item.plan.name }}</td>
+        <td>{{ item.status }}</td>
+        <td>{{ item.traffic_used_bytes }}</td>
+        <td>{{ item.traffic_limit_bytes or 'без лимита' }}</td>
+        <td>{{ item.next_billing_at }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="muted">Подписок пока нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

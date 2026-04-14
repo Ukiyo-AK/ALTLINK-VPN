@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <form method="get" class="toolbar">
+    <input type="text" name="search" value="{{ search }}" placeholder="Поиск по Telegram ID, username, имени">
+    <button type="submit" class="button">Найти</button>
+  </form>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Пользователь</th>
+        <th>Telegram</th>
+        <th>Статус</th>
+        <th>Баланс</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+      <tr>
+        <td>{{ user.first_name or '' }} {{ user.last_name or '' }}<div class="muted">{{ user.username or 'без username' }}</div></td>
+        <td>{{ user.telegram_id }}</td>
+        <td><span class="badge">{{ user.status }}</span></td>
+        <td>{{ user.balance_rub }} ₽</td>
+        <td><a class="button ghost" href="/admin/users/{{ user.id }}">Открыть</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Пользователи не найдены.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
+

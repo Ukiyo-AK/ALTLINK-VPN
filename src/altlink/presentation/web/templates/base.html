@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} | ALTLINK VPN</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <strong>ALTLINK VPN</strong>
+          <div class="muted">Admin Panel</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <a class="{{ 'active' if active_nav == 'dashboard' else '' }}" href="/admin/dashboard">Dashboard</a>
+        <a class="{{ 'active' if active_nav == 'users' else '' }}" href="/admin/users">Пользователи</a>
+        <a class="{{ 'active' if active_nav == 'servers' else '' }}" href="/admin/servers">Серверы</a>
+        <a class="{{ 'active' if active_nav == 'topups' else '' }}" href="/admin/topups">Заявки</a>
+        <a class="{{ 'active' if active_nav == 'plans' else '' }}" href="/admin/plans">Тарифы</a>
+        <a class="{{ 'active' if active_nav == 'transactions' else '' }}" href="/admin/transactions">Транзакции</a>
+        <a class="{{ 'active' if active_nav == 'traffic' else '' }}" href="/admin/traffic">Трафик</a>
+        <a class="{{ 'active' if active_nav == 'online' else '' }}" href="/admin/online">Онлайн</a>
+        <a class="{{ 'active' if active_nav == 'settings' else '' }}" href="/admin/settings">Настройки</a>
+        <a class="{{ 'active' if active_nav == 'events' else '' }}" href="/admin/events">События</a>
+      </nav>
+      <form method="post" action="/admin/logout" class="logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button ghost full">Выйти</button>
+      </form>
+    </aside>
+    <main class="main">
+      <header class="header">
+        <div>
+          <h1>{{ title }}</h1>
+          <p class="muted">Администратор: {{ admin.full_name or admin.username }}</p>
+        </div>
+      </header>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>
+

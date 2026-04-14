@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <form method="get" class="toolbar">
+    <select name="status_filter">
+      <option value="">Все статусы</option>
+      <option value="new" {{ 'selected' if status_filter == 'new' else '' }}>new</option>
+      <option value="approved" {{ 'selected' if status_filter == 'approved' else '' }}>approved</option>
+      <option value="rejected" {{ 'selected' if status_filter == 'rejected' else '' }}>rejected</option>
+      <option value="canceled" {{ 'selected' if status_filter == 'canceled' else '' }}>canceled</option>
+    </select>
+    <button type="submit" class="button">Фильтр</button>
+  </form>
+  <table class="table">
+    <thead><tr><th>Пользователь</th><th>Сумма</th><th>Статус</th><th>Комментарий</th><th>Действия</th></tr></thead>
+    <tbody>
+      {% for item in topups %}
+      <tr>
+        <td><a href="/admin/users/{{ item.user.id }}">{{ item.user.username or item.user.telegram_id }}</a></td>
+        <td>{{ item.amount_rub }} ₽</td>
+        <td>{{ item.status }}</td>
+        <td>{{ item.user_comment or '—' }}</td>
+        <td>
+          {% if item.status == 'new' %}
+          <form method="post" action="/admin/topups/{{ item.id }}/approve" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="comment" placeholder="Комментарий">
+            <button type="submit" class="button">Подтвердить</button>
+          </form>
+          <form method="post" action="/admin/topups/{{ item.id }}/reject" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="comment" placeholder="Причина">
+            <button type="submit" class="button danger">Отклонить</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Заявок пока нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
