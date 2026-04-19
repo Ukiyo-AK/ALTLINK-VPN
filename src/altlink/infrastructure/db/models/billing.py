@@ -48,12 +48,16 @@ class Subscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     next_billing_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     billing_anchor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    cycle_days_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     grace_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     grace_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accrued_debt_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), nullable=False)
     traffic_limit_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    whitelist_traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    whitelist_traffic_billed_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     last_traffic_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_notification_threshold: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     auto_renew: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -116,4 +120,3 @@ class TrialPeriod(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     converted_to_subscription: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="trial_period")
-

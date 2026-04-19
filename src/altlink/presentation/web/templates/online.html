@@ -1,26 +1,27 @@
 {% extends "base.html" %}
 {% block content %}
+<section class="toolbar">
+  <a href="/admin/online?refresh=1" class="button">Обновить онлайн-снимок</a>
+</section>
+
 <section class="panel">
-  <div class="toolbar">
-    <a class="button" href="/admin/online?refresh=1">Обновить из Remnawave</a>
-  </div>
   <table class="table">
-    <thead><tr><th>Пользователь</th><th>Сервер</th><th>IP</th><th>User-Agent</th><th>Последняя активность</th><th>Онлайн</th></tr></thead>
+    <thead><tr><th>Пользователь</th><th>Сервер</th><th>IP</th><th>Устройство</th><th>Inbound</th><th>Последняя активность</th><th>Статус</th></tr></thead>
     <tbody>
       {% for item in records %}
       <tr>
-        <td>{{ item.user.username or item.user.telegram_id if item.user else 'n/a' }}</td>
-        <td>{{ item.server.name if item.server else 'n/a' }}</td>
-        <td>{{ item.remote_ip or 'n/a' }}</td>
-        <td class="truncate">{{ item.user_agent or 'n/a' }}</td>
-        <td>{{ item.last_activity_at or 'n/a' }}</td>
-        <td>{{ 'Да' if item.is_online else 'Нет' }}</td>
+        <td>{{ item.user.username or item.user.telegram_id if item.user else '—' }}</td>
+        <td>{{ item.server.name if item.server else '—' }}</td>
+        <td>{{ item.remote_ip or '—' }}</td>
+        <td>{{ item.device or item.user_agent or '—' }}</td>
+        <td>{{ item.inbound or '—' }}</td>
+        <td>{{ item.last_activity_at or '—' }}</td>
+        <td>{{ 'online' if item.is_online else 'offline' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">Данные пока не загружены.</td></tr>
+      <tr><td colspan="7" class="muted">Онлайн-данных пока нет.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 {% endblock %}
-

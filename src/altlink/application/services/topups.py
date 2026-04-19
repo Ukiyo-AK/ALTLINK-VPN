@@ -30,7 +30,14 @@ class TopupService(BaseService):
         self.accounts = accounts
         self.notifications = notifications
 
-    async def create_request(self, user_id: str, amount_rub: Decimal, comment: str | None = None) -> TopupRequest:
+    async def create_request(
+        self,
+        user_id: str,
+        amount_rub: Decimal,
+        comment: str | None = None,
+        *,
+        auto_complete: bool = True,
+    ) -> TopupRequest:
         if amount_rub <= 0:
             raise ConflictError("Сумма пополнения должна быть больше нуля.")
         request = TopupRequest(user_id=user_id, amount_rub=Decimal(amount_rub), user_comment=comment)
@@ -39,9 +46,11 @@ class TopupService(BaseService):
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="topup_created",
-            message="Создана новая заявка на пополнение.",
+            message="Создан новый платёж на пополнение.",
             payload={"topup_request_id": request.id, "user_id": user_id, "amount": str(amount_rub)},
         )
+        if auto_complete:
+            await self.approve(request.id, admin_id=None, comment="auto_stub")
         return request
 
     async def list_requests(
@@ -57,13 +66,13 @@ class TopupService(BaseService):
     async def get_request(self, request_id: str) -> TopupRequest:
         item = await self.session.get(TopupRequest, request_id, options=[joinedload(TopupRequest.user)])
         if item is None:
-            raise NotFoundError("Заявка не найдена.")
+            raise NotFoundError("Платёж не найден.")
         return item
 
     async def approve(self, request_id: str, admin_id: str | None, comment: str | None = None) -> TopupRequest:
         item = await self.get_request(request_id)
         if item.status != TopupStatus.NEW:
-            raise ConflictError("Подтвердить можно только новую заявку.")
+            raise ConflictError("Подтвердить можно только новый платёж.")
         item.status = TopupStatus.APPROVED
         item.admin_comment = comment
         item.approved_by_admin_id = admin_id
@@ -73,7 +82,7 @@ class TopupService(BaseService):
             user_id=item.user_id,
             amount_rub=Decimal(item.amount_rub),
             transaction_type=BalanceTransactionType.TOPUP,
-            description=f"Подтверждено пополнение #{item.id}",
+            description=f"Пополнение баланса #{item.id}",
             admin_id=admin_id,
             topup_request_id=item.id,
         )
@@ -81,11 +90,12 @@ class TopupService(BaseService):
             user_id=item.user_id,
             notification_type=NotificationType.TOPUP_APPROVED,
             message=topup_approved_message(Decimal(item.amount_rub)),
+            dedupe_key=f"topup-approved:{item.id}",
         )
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="topup_approved",
-            message="Заявка на пополнение подтверждена.",
+            message="Платёж на пополнение успешно подтверждён.",
             payload={"topup_request_id": item.id},
             actor_admin_id=admin_id,
         )
@@ -94,7 +104,7 @@ class TopupService(BaseService):
     async def reject(self, request_id: str, admin_id: str | None, comment: str | None = None) -> TopupRequest:
         item = await self.get_request(request_id)
         if item.status != TopupStatus.NEW:
-            raise ConflictError("Отклонить можно только новую заявку.")
+            raise ConflictError("Отклонить можно только новый платёж.")
         item.status = TopupStatus.REJECTED
         item.admin_comment = comment
         item.approved_by_admin_id = admin_id
@@ -103,11 +113,12 @@ class TopupService(BaseService):
             user_id=item.user_id,
             notification_type=NotificationType.TOPUP_REJECTED,
             message=topup_rejected_message(Decimal(item.amount_rub), comment),
+            dedupe_key=f"topup-rejected:{item.id}",
         )
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="topup_rejected",
-            message="Заявка на пополнение отклонена.",
+            message="Платёж на пополнение отклонён.",
             payload={"topup_request_id": item.id},
             actor_admin_id=admin_id,
         )
@@ -116,9 +127,9 @@ class TopupService(BaseService):
     async def cancel(self, request_id: str, user_id: str) -> TopupRequest:
         item = await self.get_request(request_id)
         if item.user_id != user_id:
-            raise ConflictError("Можно отменить только свою заявку.")
+            raise ConflictError("Можно отменить только свой платёж.")
         if item.status != TopupStatus.NEW:
-            raise ConflictError("Отменить можно только новую заявку.")
+            raise ConflictError("Отменить можно только новый платёж.")
         item.status = TopupStatus.CANCELED
         item.canceled_at = utc_now()
         return item

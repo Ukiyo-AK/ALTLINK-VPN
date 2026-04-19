@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} | ALTLINK VPN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <div class="portal-shell">
+    <header class="portal-topbar">
+      <div class="brand" style="margin: 0;">
+        <div class="brand-mark">A</div>
+        <div>
+          <strong>ALTLINK VPN</strong>
+          <div class="muted">Личный кабинет</div>
+        </div>
+      </div>
+      <form method="post" action="/portal/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="button ghost">Выйти</button>
+      </form>
+    </header>
+
+    {% if flash %}
+    <div class="alert {{ flash.level }}">{{ flash.message }}</div>
+    {% endif %}
+
+    <section class="hero">
+      <article class="hero-panel">
+        <h1>{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}</h1>
+        <p class="muted">
+          Бот и сайт работают с одним аккаунтом Telegram, поэтому изменения по тарифу, балансу,
+          тесту и доступным серверам появляются синхронно.
+        </p>
+        <div class="hero-meta">
+          <span class="badge">{{ portal_user.status }}</span>
+          <span class="badge gold">Баланс {{ portal_user.balance_rub }} ₽</span>
+          <span class="badge warning">
+            {{ portal_subscription.plan.name if portal_subscription else 'Подписка не активна' }}
+          </span>
+        </div>
+      </article>
+    </section>
+
+    {% if not portal_channel_ok %}
+    <section class="panel status-lock stack">
+      <h2>Нужно подписаться на Telegram-канал</h2>
+      <p class="muted">
+        До подписки на официальный канал тестовый период, тарифы и конфиги будут заблокированы
+        и здесь, и в боте.
+      </p>
+      <div class="toolbar">
+        {% if required_channel_url %}
+        <a class="button" href="{{ required_channel_url }}" target="_blank" rel="noreferrer">Подписаться на канал</a>
+        {% endif %}
+        <a class="button ghost" href="/portal/check-channel">Проверить подписку</a>
+      </div>
+    </section>
+    {% endif %}
+
+    <section class="cards">
+      <article class="card">
+        <div class="muted">Следующее списание</div>
+        <strong>{{ portal_subscription.next_billing_at.strftime('%d.%m %H:%M') if portal_subscription else '—' }}</strong>
+      </article>
+      <article class="card">
+        <div class="muted">Задолженность</div>
+        <strong>{{ portal_subscription.accrued_debt_rub if portal_subscription else '0.00' }} ₽</strong>
+      </article>
+      <article class="card">
+        <div class="muted">Общий трафик</div>
+        <strong>{{ '%.2f'|format((portal_subscription.traffic_used_bytes if portal_subscription else 0) / 1024**3) }} ГБ</strong>
+      </article>
+      <article class="card">
+        <div class="muted">Whitelist</div>
+        <strong>{{ '%.2f'|format((portal_subscription.whitelist_traffic_used_bytes if portal_subscription else 0) / 1024**3) }} ГБ</strong>
+      </article>
+    </section>
+
+    <section class="portal-grid">
+      <article class="panel stack">
+        <div class="split">
+          <h2>Тарифы и тест</h2>
+          <span class="badge">2 дня trial</span>
+        </div>
+        <p class="muted">
+          Тариф 69 ₽ назначает один наименее загруженный сервер типа «10 Гбит».
+          Трафик по серверам «Белые списки» считается отдельно по {{ whitelist_price_per_gb }} ₽ за ГБ.
+        </p>
+
+        <form method="post" action="/portal/trial">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button full" {% if not portal_channel_ok %}disabled{% endif %}>Запустить тест на 2 дня</button>
+        </form>
+
+        <div class="grid-two">
+          {% for plan in portal_plans if not plan.is_trial %}
+          <article class="panel plan-card">
+            <h3>{{ plan.name }}</h3>
+            <div class="plan-price">{{ plan.price_rub }} ₽</div>
+            <div class="muted">Суточное списание: {{ '%.2f'|format(plan.price_rub / plan.period_days) }} ₽</div>
+            <p>{{ plan.description }}</p>
+            <form method="post" action="/portal/plan">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="plan_code" value="{{ plan.code.value }}">
+              <button type="submit" class="button full" {% if not portal_channel_ok %}disabled{% endif %}>Выбрать тариф</button>
+            </form>
+          </article>
+          {% endfor %}
+        </div>
+      </article>
+
+      <article class="panel stack">
+        <div class="split">
+          <h2>Баланс и оплата</h2>
+          <span class="badge gold">Stub payment</span>
+        </div>
+        <p class="muted">
+          Внешний платёжный провайдер будет подключён позже. Сейчас пополнение проходит через заглушку
+          и сразу зачисляется на внутренний баланс.
+        </p>
+        <form method="post" action="/portal/topup" class="stack">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label>
+            <span>Сумма пополнения, ₽</span>
+            <input type="number" min="1" step="0.01" name="amount" value="300" required>
+          </label>
+          <button type="submit" class="button full">Пополнить баланс</button>
+        </form>
+        <div class="muted">Whitelist начислено за текущий период: {{ whitelist_cost_rub }} ₽</div>
+      </article>
+    </section>
+
+    <section class="grid-two">
+      <article class="panel stack">
+        <div class="split">
+          <h2>Конфиги и ссылка</h2>
+          <span class="badge">Синхронизировано с ботом</span>
+        </div>
+        {% if portal_bundle.subscription_info %}
+        <div class="codeblock">{{ portal_bundle.subscription_info.subscriptionUrl }}</div>
+        {% elif portal_bundle.connection_keys and portal_bundle.connection_keys.enabledKeys %}
+        <div class="codeblock">{{ portal_bundle.connection_keys.enabledKeys[0] }}</div>
+        {% else %}
+        <p class="muted">Ссылка появится после активации теста или тарифа.</p>
+        {% endif %}
+        {% if portal_qr_data_uri %}
+        <div class="qr-box">
+          <img src="{{ portal_qr_data_uri }}" alt="QR-код">
+        </div>
+        {% endif %}
+      </article>
+
+      <article class="panel stack">
+        <div class="split">
+          <h2>Доступные серверы</h2>
+          <span class="badge warning">Локальная матрица доступа</span>
+        </div>
+        <table class="table">
+          <thead><tr><th>Сервер</th><th>Тип</th><th>Статус</th></tr></thead>
+          <tbody>
+            {% for access in portal_servers if access.server %}
+            <tr>
+              <td>{{ access.server.name }}</td>
+              <td>
+                {% if access.server.server_type.value == 'ten_gbit' %}⚡ 10 Гбит{% endif %}
+                {% if access.server.server_type.value == 'whitelist' %}Белые списки{% endif %}
+                {% if access.server.server_type.value == 'regular' %}Обычный сервер{% endif %}
+              </td>
+              <td>{{ access.status }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="muted">Серверы появятся после активации доступа.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="split">
+        <h2>История платежей</h2>
+        <a href="{{ portal_url }}" class="button ghost">Обновить</a>
+      </div>
+      <table class="table">
+        <thead><tr><th>Сумма</th><th>Статус</th><th>Комментарий</th><th>Дата</th></tr></thead>
+        <tbody>
+          {% for payment in portal_payments %}
+          <tr>
+            <td>{{ payment.amount_rub }} ₽</td>
+            <td>{{ payment.status }}</td>
+            <td>{{ payment.admin_comment or payment.user_comment or '—' }}</td>
+            <td>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted">Платежей пока нет.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+</body>
+</html>

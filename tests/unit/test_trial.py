@@ -22,3 +22,6 @@ async def test_trial_can_be_activated_only_once(test_services):
         with pytest.raises(ConflictError):
             await hub.billing.activate_trial(user.id)
 
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_user_by_telegram_id(1001)
+        assert user.assigned_server is not None

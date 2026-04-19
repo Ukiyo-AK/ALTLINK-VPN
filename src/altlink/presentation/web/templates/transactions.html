@@ -2,22 +2,20 @@
 {% block content %}
 <section class="panel">
   <table class="table">
-    <thead><tr><th>Пользователь</th><th>Тип</th><th>Сумма</th><th>Баланс до</th><th>Баланс после</th><th>Дата</th></tr></thead>
+    <thead><tr><th>Пользователь</th><th>Тип</th><th>Сумма</th><th>Описание</th><th>Дата</th></tr></thead>
     <tbody>
-      {% for item in transactions %}
+      {% for tx in transactions %}
       <tr>
-        <td>{{ item.user.username or item.user.telegram_id }}</td>
-        <td>{{ item.type }}</td>
-        <td>{{ item.amount_rub }} ₽</td>
-        <td>{{ item.balance_before }} ₽</td>
-        <td>{{ item.balance_after }} ₽</td>
-        <td>{{ item.created_at }}</td>
+        <td>{{ tx.user.username or tx.user.telegram_id }}</td>
+        <td>{{ tx.type }}</td>
+        <td>{{ tx.amount_rub }} ₽</td>
+        <td>{{ tx.description or '—' }}</td>
+        <td>{{ tx.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">Транзакций пока нет.</td></tr>
+      <tr><td colspan="5" class="muted">Транзакций пока нет.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 {% endblock %}
-

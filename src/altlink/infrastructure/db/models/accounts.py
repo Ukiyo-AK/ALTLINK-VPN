@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, Numeric, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from altlink.domain.enums import UserStatus
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
         TopupRequest,
         TrialPeriod,
     )
-    from altlink.infrastructure.db.models.catalog import UserServerAccess
+    from altlink.infrastructure.db.models.catalog import Server, UserServerAccess
     from altlink.infrastructure.db.models.ops import Notification, OnlineSessionCache, TrafficSnapshot
 
 
@@ -35,6 +35,11 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     remnawave_user_uuid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     remnawave_username: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     remnawave_short_uuid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    assigned_server_id: Mapped[str | None] = mapped_column(
+        ForeignKey("servers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="user")
@@ -45,6 +50,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     server_accesses: Mapped[list["UserServerAccess"]] = relationship(back_populates="user")
     online_sessions: Mapped[list["OnlineSessionCache"]] = relationship(back_populates="user")
     traffic_snapshots: Mapped[list["TrafficSnapshot"]] = relationship(back_populates="user")
+    assigned_server: Mapped["Server | None"] = relationship(foreign_keys=[assigned_server_id])
 
 
 class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -62,4 +68,3 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     created_transactions: Mapped[list["BalanceTransaction"]] = relationship(back_populates="created_by_admin")
     updated_settings: Mapped[list["SystemSetting"]] = relationship(back_populates="updated_by_admin")
     system_events: Mapped[list["SystemEvent"]] = relationship(back_populates="actor_admin")
-

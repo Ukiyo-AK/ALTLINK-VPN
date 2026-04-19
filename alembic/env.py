@@ -1,17 +1,26 @@
 from __future__ import annotations
 
 from logging.config import fileConfig
+from pathlib import Path
+import sys
 
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from altlink.db import ensure_sqlite_directory
 from altlink.infrastructure.db.models import Base
 from altlink.settings import get_settings
 
 config = context.config
 settings = get_settings()
+ensure_sqlite_directory(settings.database_url)
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 if config.config_file_name is not None:
@@ -58,4 +67,3 @@ else:
     import asyncio
 
     asyncio.run(run_migrations_online())
-

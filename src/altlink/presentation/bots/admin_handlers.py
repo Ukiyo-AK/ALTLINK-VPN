@@ -10,8 +10,8 @@ from aiogram.types import CallbackQuery, Message
 
 from altlink.application.services.base import ConflictError
 from altlink.application.services.registry import AppContainer
-from altlink.domain.enums import BalanceTransactionType, PlanCode, TopupStatus
-from altlink.presentation.bots.admin_keyboards import admin_menu, server_actions, topup_actions, user_actions
+from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType
+from altlink.presentation.bots.admin_keyboards import admin_menu, server_actions, user_actions
 
 router = Router(name="admin-router")
 
@@ -34,19 +34,20 @@ async def show_user_card(target, user_id: str, container: AppContainer):
         card = await hub.accounts.user_card(user_id)
         user = card["user"]
         subscription = card["subscription"]
-        debt = Decimal("0")
-        if subscription and subscription.plan:
-            debt = max(Decimal(subscription.plan.price_rub) - Decimal(user.balance_rub), Decimal("0"))
+        debt = Decimal(subscription.accrued_debt_rub) if subscription else Decimal("0")
+        assigned_server = user.assigned_server.name if user.assigned_server else "не назначен"
         text = (
-            f"Карточка пользователя\n\n"
+            "Карточка пользователя\n\n"
             f"Telegram ID: {user.telegram_id}\n"
             f"Username: {user.username or 'нет'}\n"
             f"Статус: {user.status}\n"
             f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n"
             f"Тариф: {subscription.plan.name if subscription else 'нет'}\n"
-            f"Продление: {subscription.next_billing_at if subscription else '—'}\n"
+            f"Следующее списание: {subscription.next_billing_at if subscription else '—'}\n"
             f"Задолженность: {debt:.2f} ₽\n"
-            f"Трафик: {subscription.traffic_used_bytes if subscription else 0}"
+            f"Трафик: {(subscription.traffic_used_bytes / 1024**3):.2f if subscription else 0} ГБ\n"
+            f"Белые списки: {(subscription.whitelist_traffic_used_bytes / 1024**3):.2f if subscription else 0} ГБ\n"
+            f"Назначенный 10 Гбит сервер: {assigned_server}"
         )
     await target.answer(text, reply_markup=user_actions(user_id).as_markup())
 
@@ -58,7 +59,8 @@ async def start(message: Message, container: AppContainer):
         return
     await message.answer(
         "admin altlink bot готов к работе.\n\n"
-        "Через него можно подтверждать заявки, искать пользователей, управлять доступом и серверами.",
+        "Здесь можно искать пользователей, менять тарифы и баланс, смотреть аналитику, "
+        "платежи, онлайн и управлять типами серверов.",
         reply_markup=admin_menu(),
     )
 
@@ -69,61 +71,30 @@ async def admin_help(message: Message, container: AppContainer):
         return
     await message.answer(
         "Помощь по admin bot\n\n"
-        "Заявки: подтверждение и отклонение пополнений.\n"
-        "Пользователи: поиск по Telegram ID или username.\n"
-        "Серверы: sync Remnawave и локальное включение/исключение.\n"
-        "Статистика: сводка по базе и трафику.\n"
-        "Онлайн: свежий snapshot последних активностей."
+        "Платежи: история автоматических пополнений через stub/внешний провайдер.\n"
+        "Пользователи: поиск по Telegram ID или username и управление тарифами.\n"
+        "Серверы: sync с Remnawave, локальное включение и изменение типа сервера.\n"
+        "Аналитика: сводка по статусам, долгам, трафику и загрузке серверов.\n"
+        "Онлайн: свежий snapshot последних подключений."
     )
 
 
-@router.message(F.text == "Заявки")
-async def topups_screen(message: Message, container: AppContainer):
+@router.message(F.text == "Платежи")
+async def payments_screen(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
     async with container.hub() as hub:
-        items = await hub.topups.list_requests(status=TopupStatus.NEW)
-        if not items:
-            recent = await hub.topups.list_requests()
-            text = "Новых заявок нет.\n\nПоследние заявки:\n"
-            text += "\n".join([f"• {item.amount_rub} ₽ — {item.status}" for item in recent[:10]]) or "Пусто."
-            await message.answer(text)
-            return
-        for item in items[:10]:
-            user = item.user
-            await message.answer(
-                f"Новая заявка\n\n"
-                f"Пользователь: {user.username or user.telegram_id}\n"
-                f"Сумма: {item.amount_rub} ₽\n"
-                f"Комментарий: {item.user_comment or '—'}",
-                reply_markup=topup_actions(item.id).as_markup(),
-            )
-
-
-@router.callback_query(F.data.startswith("admin:topup_approve:"))
-async def topup_approve(callback: CallbackQuery, container: AppContainer):
-    if not await is_admin(callback.from_user.id, container):
-        await callback.answer("Нет доступа", show_alert=True)
+        items = await hub.topups.list_requests()
+    if not items:
+        await message.answer("Платежей пока нет.")
         return
-    request_id = callback.data.split(":")[-1]
-    async with container.hub() as hub:
-        admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
-        await hub.topups.approve(request_id, admin.id if admin else None)
-    await callback.message.edit_text("Заявка подтверждена.")
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("admin:topup_reject:"))
-async def topup_reject(callback: CallbackQuery, container: AppContainer):
-    if not await is_admin(callback.from_user.id, container):
-        await callback.answer("Нет доступа", show_alert=True)
-        return
-    request_id = callback.data.split(":")[-1]
-    async with container.hub() as hub:
-        admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
-        await hub.topups.reject(request_id, admin.id if admin else None)
-    await callback.message.edit_text("Заявка отклонена.")
-    await callback.answer()
+    text = "Последние платежи\n\n" + "\n".join(
+        [
+            f"• {item.user.username or item.user.telegram_id} — {Decimal(item.amount_rub):.2f} ₽ — {item.status}"
+            for item in items[:15]
+        ]
+    )
+    await message.answer(text)
 
 
 @router.message(F.text == "Пользователи")
@@ -220,9 +191,7 @@ async def user_balance_prompt(callback: CallbackQuery, state: FSMContext, contai
     user_id = callback.data.split(":")[-1]
     await state.set_state(BalanceStates.waiting_for_amount)
     await state.update_data(user_id=user_id)
-    await callback.message.answer(
-        "Введите сумму корректировки. Можно со знаком минус, например: -50 или 250"
-    )
+    await callback.message.answer("Введите сумму корректировки, например: -50 или 500")
     await callback.answer()
 
 
@@ -256,18 +225,23 @@ async def servers(message: Message, container: AppContainer):
         return
     async with container.hub() as hub:
         servers = await hub.catalog.list_servers()
-        await message.answer("Серверы\n\nДля синхронизации нажмите /start в web panel или используйте кнопку ниже.")
-        await message.answer("Синхронизация серверов", reply_markup=server_actions("sync", True).as_markup())
-        for server in servers[:10]:
-            await message.answer(
-                f"{server.name}\n"
-                f"Адрес: {server.address}\n"
-                f"Локально: {'включён' if server.is_available else 'выключен'}\n"
-                f"Статус: {'online' if server.is_connected else 'offline'}\n"
-                f"Клиенты: {server.current_clients}/{server.max_clients or 'n/a'}\n"
-                f"Нагрузка: {server.load_percent}%",
-                reply_markup=server_actions(server.id, server.is_available).as_markup(),
-            )
+    await message.answer("Синхронизация серверов", reply_markup=server_actions("sync", True).as_markup())
+    for server in servers[:12]:
+        type_label = {
+            ServerType.TEN_GBIT: "⚡ 10 Гбит",
+            ServerType.WHITELIST: "Белые списки",
+            ServerType.REGULAR: "Обычный сервер",
+        }[server.server_type]
+        await message.answer(
+            f"{server.name}\n"
+            f"Адрес: {server.address}\n"
+            f"Тип: {type_label}\n"
+            f"Локально: {'включён' if server.is_available else 'выключен'}\n"
+            f"Статус: {'online' if server.is_connected else 'offline'}\n"
+            f"Клиенты: {server.current_clients}/{server.max_clients or 'n/a'}\n"
+            f"Нагрузка: {server.load_percent}%",
+            reply_markup=server_actions(server.id, server.is_available).as_markup(),
+        )
 
 
 @router.callback_query(F.data == "admin:server_toggle:sync:0")
@@ -294,26 +268,40 @@ async def toggle_server(callback: CallbackQuery, container: AppContainer):
     await callback.answer()
 
 
-@router.message(F.text == "Статистика")
+@router.callback_query(F.data.startswith("admin:server_type:"))
+async def change_server_type(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    _, _, _, server_id, raw_type = callback.data.split(":")
+    async with container.hub() as hub:
+        server = await hub.catalog.set_server_type(server_id, ServerType(raw_type))
+    await callback.message.answer(f"Тип сервера «{server.name}» изменён на {server.server_type}.")
+    await callback.answer()
+
+
+@router.message(F.text == "Аналитика")
 async def statistics(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
     async with container.hub() as hub:
         overview = await hub.dashboard.overview()
     text = (
-        "Статистика\n\n"
+        "Аналитика\n\n"
         f"Активные: {overview['active_users']}\n"
         f"Grace: {overview['grace_users']}\n"
         f"Заблокированные: {overview['blocked_users']}\n"
         f"Тестовые: {overview['trial_users']}\n"
-        f"Новые заявки: {overview['new_topups']}\n"
-        f"Суммарный трафик: {overview['total_traffic_bytes']}"
+        f"Платежей за 30 дней: {overview['payments_count']}\n"
+        f"Выручка за 30 дней: {overview['payments_total_rub']:.2f} ₽\n"
+        f"Суммарный долг: {overview['debt_total_rub']:.2f} ₽\n"
+        f"Трафик: {overview['total_traffic_bytes'] / 1024**3:.2f} ГБ\n"
+        f"Whitelist-трафик: {overview['whitelist_traffic_bytes'] / 1024**3:.2f} ГБ"
     )
     if overview["top_users"]:
         text += "\n\nТоп по трафику:\n"
         text += "\n".join(
             [
-                f"• {item.user.username or item.user.telegram_id}: {item.traffic_used_bytes}"
+                f"• {item.user.username or item.user.telegram_id}: {item.traffic_used_bytes / 1024**3:.2f} ГБ"
                 for item in overview["top_users"][:5]
             ]
         )

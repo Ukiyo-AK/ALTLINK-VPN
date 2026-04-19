@@ -79,6 +79,7 @@ class AccountService(BaseService):
                 selectinload(User.subscriptions).joinedload(Subscription.plan),
                 selectinload(User.topup_requests),
                 selectinload(User.balance_transactions),
+                joinedload(User.assigned_server),
                 joinedload(User.trial_period),
             ],
         )
@@ -87,10 +88,12 @@ class AccountService(BaseService):
         return user
 
     async def get_user_by_telegram_id(self, telegram_id: int) -> User | None:
-        return await self.session.scalar(select(User).where(User.telegram_id == telegram_id))
+        return await self.session.scalar(
+            select(User).options(joinedload(User.assigned_server)).where(User.telegram_id == telegram_id)
+        )
 
     async def list_users(self, search: str | None = None) -> Sequence[User]:
-        query = select(User).order_by(User.created_at.desc())
+        query = select(User).options(joinedload(User.assigned_server)).order_by(User.created_at.desc())
         if search:
             search_like = f"%{search}%"
             query = query.where(

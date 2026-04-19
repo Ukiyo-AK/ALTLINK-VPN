@@ -24,8 +24,14 @@ class SubscriptionStatus(StrEnum):
 
 class PlanCode(StrEnum):
     TRIAL = "trial"
+    SINGLE_10GBIT = "single_10gbit"
     UNLIMITED = "unlimited"
-    LIMITED_50GB = "limited_50gb"
+
+
+class ServerType(StrEnum):
+    TEN_GBIT = "ten_gbit"
+    WHITELIST = "whitelist"
+    REGULAR = "regular"
 
 
 class TopupStatus(StrEnum):
@@ -71,4 +77,3 @@ class SystemEventLevel(StrEnum):
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
-

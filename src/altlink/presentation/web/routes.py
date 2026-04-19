@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -10,11 +11,15 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
-from altlink.domain.enums import BalanceTransactionType, PlanCode, TopupStatus
+from altlink.domain.billing import bytes_to_gb_cost
+from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType, TopupStatus
 from altlink.infrastructure.db.models import Subscription, SystemSetting, User
+from altlink.application.services.base import ConflictError
+from altlink.utils.qr import render_qr_png
 from altlink.utils.security import generate_token
+from altlink.utils.telegram_web import check_channel_membership, verify_telegram_auth_payload
 
-router = APIRouter(prefix="/admin", tags=["admin-web"])
+router = APIRouter(tags=["web"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
@@ -31,13 +36,21 @@ def validate_csrf(request: Request, form: dict) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный CSRF токен.")
 
 
+def set_flash(request: Request, message: str, level: str = "success") -> None:
+    request.session["flash"] = {"message": message, "level": level}
+
+
+def pop_flash(request: Request) -> dict | None:
+    return request.session.pop("flash", None)
+
+
 def render(request: Request, template_name: str, **context):
     return templates.TemplateResponse(
         request=request,
         name=template_name,
         context={
             "csrf_token": get_csrf_token(request),
-            "admin_id": request.session.get("admin_id"),
+            "flash": pop_flash(request),
             **context,
         },
     )
@@ -45,6 +58,10 @@ def render(request: Request, template_name: str, **context):
 
 def login_redirect() -> RedirectResponse:
     return RedirectResponse("/admin/login", status_code=303)
+
+
+def portal_login_redirect() -> RedirectResponse:
+    return RedirectResponse("/portal/login", status_code=303)
 
 
 async def resolve_admin(request: Request, hub):
@@ -58,12 +75,73 @@ async def resolve_admin(request: Request, hub):
         return None
 
 
-@router.get("/login")
+async def resolve_portal_user(request: Request, hub):
+    portal_user_id = request.session.get("portal_user_id")
+    if not portal_user_id:
+        return None
+    try:
+        return await hub.accounts.get_user(portal_user_id)
+    except Exception:
+        request.session.pop("portal_user_id", None)
+        return None
+
+
+async def portal_channel_state(request: Request, user: User) -> bool:
+    settings = request.app.state.settings
+    if not settings.required_subscription_channel:
+        return True
+    return await check_channel_membership(
+        bot_token=settings.client_bot_token,
+        channel=settings.required_subscription_channel,
+        user_id=user.telegram_id,
+    )
+
+
+async def build_portal_context(request: Request, hub, user: User) -> dict:
+    bundle = await hub.accounts.get_subscription_bundle(user.id)
+    subscription = bundle.get("subscription")
+    user_servers = await hub.catalog.get_user_servers(user.id)
+    plans = await hub.dashboard.list_plans()
+    payments = await hub.topups.list_requests(user_id=user.id)
+    channel_ok = await portal_channel_state(request, user)
+
+    qr_data_uri = None
+    info = bundle.get("subscription_info")
+    keys = bundle.get("connection_keys")
+    payload = info.subscriptionUrl if info else None
+    if payload is None and keys and keys.enabledKeys:
+        payload = keys.enabledKeys[0]
+    if payload:
+        qr_png = render_qr_png(payload)
+        qr_data_uri = f"data:image/png;base64,{base64.b64encode(qr_png).decode('ascii')}"
+
+    return {
+        "title": "Личный кабинет",
+        "portal_user": user,
+        "portal_subscription": subscription,
+        "portal_bundle": bundle,
+        "portal_servers": user_servers,
+        "portal_plans": plans,
+        "portal_payments": payments,
+        "portal_qr_data_uri": qr_data_uri,
+        "portal_channel_ok": channel_ok,
+        "portal_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/portal",
+        "required_channel_url": request.app.state.settings.required_subscription_channel_url,
+        "whitelist_price_per_gb": request.app.state.settings.whitelist_price_per_gb_rub,
+        "whitelist_cost_rub": bytes_to_gb_cost(
+            subscription.whitelist_traffic_used_bytes if subscription else 0,
+            Decimal(request.app.state.settings.whitelist_price_per_gb_rub),
+        ),
+        "telegram_login_bot": request.app.state.settings.client_bot_name.lstrip("@"),
+    }
+
+
+@router.get("/admin/login")
 async def login_page(request: Request, error: str | None = None):
     return render(request, "login.html", title="Вход", error=error)
 
 
-@router.post("/login")
+@router.post("/admin/login")
 async def login_submit(request: Request):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -76,13 +154,13 @@ async def login_submit(request: Request):
         return RedirectResponse("/admin/dashboard", status_code=303)
 
 
-@router.post("/logout")
+@router.post("/admin/logout")
 async def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/admin/login", status_code=303)
 
 
-@router.get("/dashboard")
+@router.get("/admin/dashboard")
 async def dashboard(request: Request):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -95,11 +173,12 @@ async def dashboard(request: Request):
             title="Dashboard",
             admin=admin,
             overview=overview,
+            charts_json=json.dumps(overview["charts"], ensure_ascii=False),
             active_nav="dashboard",
         )
 
 
-@router.get("/users")
+@router.get("/admin/users")
 async def users_page(request: Request, search: str | None = None):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -117,7 +196,7 @@ async def users_page(request: Request, search: str | None = None):
         )
 
 
-@router.get("/users/{user_id}")
+@router.get("/admin/users/{user_id}")
 async def user_detail(request: Request, user_id: str):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -136,11 +215,15 @@ async def user_detail(request: Request, user_id: str):
             bundle=bundle,
             user_servers=user_servers,
             plans=plans,
+            whitelist_cost_rub=bytes_to_gb_cost(
+                card["subscription"].whitelist_traffic_used_bytes if card["subscription"] else 0,
+                Decimal(request.app.state.settings.whitelist_price_per_gb_rub),
+            ),
             active_nav="users",
         )
 
 
-@router.post("/users/{user_id}/balance")
+@router.post("/admin/users/{user_id}/balance")
 async def user_balance(request: Request, user_id: str):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -160,7 +243,7 @@ async def user_balance(request: Request, user_id: str):
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
-@router.post("/users/{user_id}/trial")
+@router.post("/admin/users/{user_id}/trial")
 async def user_trial(request: Request, user_id: str):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -172,7 +255,7 @@ async def user_trial(request: Request, user_id: str):
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
-@router.post("/users/{user_id}/plan")
+@router.post("/admin/users/{user_id}/plan")
 async def user_plan(request: Request, user_id: str):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -186,7 +269,7 @@ async def user_plan(request: Request, user_id: str):
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
-@router.post("/users/{user_id}/activate")
+@router.post("/admin/users/{user_id}/activate")
 async def user_activate(request: Request, user_id: str):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -198,7 +281,7 @@ async def user_activate(request: Request, user_id: str):
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
-@router.post("/users/{user_id}/deactivate")
+@router.post("/admin/users/{user_id}/deactivate")
 async def user_deactivate(request: Request, user_id: str):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -210,7 +293,7 @@ async def user_deactivate(request: Request, user_id: str):
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
-@router.get("/servers")
+@router.get("/admin/servers")
 async def servers_page(request: Request):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -223,11 +306,12 @@ async def servers_page(request: Request):
             title="Серверы",
             admin=admin,
             servers=servers,
+            server_types=list(ServerType),
             active_nav="servers",
         )
 
 
-@router.post("/servers/sync")
+@router.post("/admin/servers/sync")
 async def servers_sync(request: Request):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -239,7 +323,7 @@ async def servers_sync(request: Request):
         return RedirectResponse("/admin/servers", status_code=303)
 
 
-@router.post("/servers/{server_id}/toggle")
+@router.post("/admin/servers/{server_id}/toggle")
 async def server_toggle(request: Request, server_id: str):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -252,7 +336,7 @@ async def server_toggle(request: Request, server_id: str):
         return RedirectResponse("/admin/servers", status_code=303)
 
 
-@router.post("/servers/{server_id}/capacity")
+@router.post("/admin/servers/{server_id}/capacity")
 async def server_capacity(request: Request, server_id: str):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -265,7 +349,20 @@ async def server_capacity(request: Request, server_id: str):
         return RedirectResponse("/admin/servers", status_code=303)
 
 
-@router.get("/topups")
+@router.post("/admin/servers/{server_id}/type")
+async def server_type(request: Request, server_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    raw_type = form.get("server_type", ServerType.REGULAR.value)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        await hub.catalog.set_server_type(server_id, ServerType(raw_type))
+        return RedirectResponse("/admin/servers", status_code=303)
+
+
+@router.get("/admin/topups")
 async def topups_page(request: Request, status_filter: str | None = None):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -276,7 +373,7 @@ async def topups_page(request: Request, status_filter: str | None = None):
         return render(
             request,
             "topups.html",
-            title="Заявки на пополнение",
+            title="Платежи",
             admin=admin,
             topups=topups,
             status_filter=status_filter or "",
@@ -284,33 +381,7 @@ async def topups_page(request: Request, status_filter: str | None = None):
         )
 
 
-@router.post("/topups/{request_id}/approve")
-async def topup_approve(request: Request, request_id: str):
-    form = dict(await request.form())
-    validate_csrf(request, form)
-    comment = form.get("comment") or None
-    async with request.app.state.container.hub() as hub:
-        admin = await resolve_admin(request, hub)
-        if admin is None:
-            return login_redirect()
-        await hub.topups.approve(request_id, admin.id, comment)
-        return RedirectResponse("/admin/topups", status_code=303)
-
-
-@router.post("/topups/{request_id}/reject")
-async def topup_reject(request: Request, request_id: str):
-    form = dict(await request.form())
-    validate_csrf(request, form)
-    comment = form.get("comment") or None
-    async with request.app.state.container.hub() as hub:
-        admin = await resolve_admin(request, hub)
-        if admin is None:
-            return login_redirect()
-        await hub.topups.reject(request_id, admin.id, comment)
-        return RedirectResponse("/admin/topups", status_code=303)
-
-
-@router.get("/plans")
+@router.get("/admin/plans")
 async def plans_page(request: Request):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -327,7 +398,7 @@ async def plans_page(request: Request):
         )
 
 
-@router.get("/transactions")
+@router.get("/admin/transactions")
 async def transactions_page(request: Request):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -344,7 +415,7 @@ async def transactions_page(request: Request):
         )
 
 
-@router.get("/traffic")
+@router.get("/admin/traffic")
 async def traffic_page(request: Request):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -361,14 +432,15 @@ async def traffic_page(request: Request):
         return render(
             request,
             "traffic.html",
-            title="Трафик и лимиты",
+            title="Трафик и начисления",
             admin=admin,
             subscriptions=subscriptions,
+            whitelist_price_per_gb=request.app.state.settings.whitelist_price_per_gb_rub,
             active_nav="traffic",
         )
 
 
-@router.get("/online")
+@router.get("/admin/online")
 async def online_page(request: Request, refresh: int = 0):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -387,7 +459,7 @@ async def online_page(request: Request, refresh: int = 0):
         )
 
 
-@router.get("/settings")
+@router.get("/admin/settings")
 async def settings_page(request: Request):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -404,7 +476,7 @@ async def settings_page(request: Request):
         )
 
 
-@router.post("/settings")
+@router.post("/admin/settings")
 async def settings_save(request: Request):
     form = dict(await request.form())
     validate_csrf(request, form)
@@ -429,7 +501,7 @@ async def settings_save(request: Request):
         return RedirectResponse("/admin/settings", status_code=303)
 
 
-@router.get("/events")
+@router.get("/admin/events")
 async def events_page(request: Request):
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
@@ -444,3 +516,124 @@ async def events_page(request: Request):
             events=events,
             active_nav="events",
         )
+
+
+@router.get("/portal/login")
+async def portal_login_page(request: Request):
+    if request.session.get("portal_user_id"):
+        return RedirectResponse("/portal", status_code=303)
+    return render(
+        request,
+        "portal_login.html",
+        title="Вход в кабинет",
+        telegram_login_bot=request.app.state.settings.client_bot_name.lstrip("@"),
+        backend_public_url=request.app.state.settings.backend_public_url.rstrip("/"),
+    )
+
+
+@router.get("/portal/auth/telegram")
+async def portal_telegram_auth(request: Request):
+    payload = {key: value for key, value in request.query_params.items()}
+    settings = request.app.state.settings
+    if not verify_telegram_auth_payload(
+        payload,
+        bot_token=settings.client_bot_token,
+        max_age_seconds=settings.telegram_auth_max_age_seconds,
+    ):
+        set_flash(request, "Не удалось подтвердить вход через Telegram.", "danger")
+        return RedirectResponse("/portal/login", status_code=303)
+
+    async with request.app.state.container.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=int(payload["id"]),
+            username=payload.get("username"),
+            first_name=payload.get("first_name"),
+            last_name=payload.get("last_name"),
+            language_code="ru",
+        )
+        request.session["portal_user_id"] = user.id
+    set_flash(request, "Вход через Telegram подтверждён.")
+    return RedirectResponse("/portal", status_code=303)
+
+
+@router.post("/portal/logout")
+async def portal_logout(request: Request):
+    request.session.pop("portal_user_id", None)
+    set_flash(request, "Вы вышли из личного кабинета.")
+    return RedirectResponse("/portal/login", status_code=303)
+
+
+@router.get("/portal")
+async def portal_home(request: Request):
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        context = await build_portal_context(request, hub, user)
+        return render(request, "portal_dashboard.html", **context)
+
+
+@router.post("/portal/trial")
+async def portal_trial(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        if not await portal_channel_state(request, user):
+            set_flash(request, "Сначала подпишитесь на Telegram-канал проекта.", "danger")
+            return RedirectResponse("/portal", status_code=303)
+        try:
+            await hub.billing.activate_trial(user.id)
+            set_flash(request, "Тестовый период на 2 дня активирован.")
+        except ConflictError as exc:
+            set_flash(request, str(exc), "danger")
+    return RedirectResponse("/portal", status_code=303)
+
+
+@router.post("/portal/plan")
+async def portal_plan(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    plan_code = PlanCode(form.get("plan_code"))
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        if not await portal_channel_state(request, user):
+            set_flash(request, "Сначала подпишитесь на Telegram-канал проекта.", "danger")
+            return RedirectResponse("/portal", status_code=303)
+        try:
+            await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
+            set_flash(request, "Тариф успешно активирован.")
+        except ConflictError as exc:
+            set_flash(request, str(exc), "danger")
+    return RedirectResponse("/portal", status_code=303)
+
+
+@router.post("/portal/topup")
+async def portal_topup(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    amount = Decimal(str(form.get("amount", "0")))
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        await hub.topups.create_request(user.id, amount, auto_complete=True)
+        set_flash(request, f"Баланс пополнен на {amount:.2f} ₽ через тестовую заглушку.")
+    return RedirectResponse("/portal", status_code=303)
+
+
+@router.get("/portal/check-channel")
+async def portal_check_channel(request: Request):
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        if await portal_channel_state(request, user):
+            set_flash(request, "Подписка на канал подтверждена.")
+        else:
+            set_flash(request, "Подписка на канал пока не найдена.", "danger")
+    return RedirectResponse("/portal", status_code=303)

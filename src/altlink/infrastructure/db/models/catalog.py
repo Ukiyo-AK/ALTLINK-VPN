@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from altlink.domain.enums import AccessStatus
+from altlink.domain.enums import AccessStatus, ServerType
 from altlink.infrastructure.db.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, enum_values
 
 if TYPE_CHECKING:
@@ -22,6 +22,11 @@ class Server(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     address: Mapped[str] = mapped_column(String(255), nullable=False)
     country_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    server_type: Mapped[ServerType] = mapped_column(
+        enum_values(ServerType),
+        default=ServerType.REGULAR,
+        nullable=False,
+    )
     is_connected: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_available: Mapped[bool] = mapped_column(default=True, nullable=False)
     last_status_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -30,6 +35,7 @@ class Server(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     max_clients: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     current_clients: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     load_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("0"), nullable=False)
+    remnawave_internal_squad_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -71,4 +77,3 @@ class UserServerAccess(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="server_accesses")
     server: Mapped["Server"] = relationship(back_populates="user_accesses")
-

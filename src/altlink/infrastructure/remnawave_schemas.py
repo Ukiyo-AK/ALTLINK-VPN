@@ -69,6 +69,21 @@ class RemoteInternalSquad(BaseSchema):
     name: str
 
 
+class RemoteInternalSquadInfo(BaseSchema):
+    membersCount: int
+    inboundsCount: int
+
+
+class RemoteManagedInternalSquad(BaseSchema):
+    uuid: str
+    viewPosition: int
+    name: str
+    info: RemoteInternalSquadInfo
+    inbounds: list[RemoteInbound]
+    createdAt: datetime
+    updatedAt: datetime
+
+
 class RemoteUser(BaseSchema):
     uuid: str
     id: int
@@ -178,4 +193,3 @@ class RemoteUsageResponse(BaseSchema):
 class RemoteTrafficSnapshot(BaseSchema):
     snapshotDate: date
     total: int
-

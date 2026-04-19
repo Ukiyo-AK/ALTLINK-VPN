@@ -5,46 +5,145 @@
   <article class="card"><div class="muted">Grace period</div><strong>{{ overview.grace_users }}</strong></article>
   <article class="card"><div class="muted">Заблокированные</div><strong>{{ overview.blocked_users }}</strong></article>
   <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>
-  <article class="card"><div class="muted">Новые заявки</div><strong>{{ overview.new_topups }}</strong></article>
-  <article class="card"><div class="muted">Задолженность</div><strong>{{ overview.debt_total_rub }} ₽</strong></article>
+  <article class="card"><div class="muted">Платежи за 30 дней</div><strong>{{ overview.payments_total_rub }} ₽</strong></article>
+  <article class="card"><div class="muted">Суммарный долг</div><strong>{{ overview.debt_total_rub }} ₽</strong></article>
+</section>
+
+<section class="grid-two">
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Статусы пользователей</h2>
+      <span class="badge">Живой срез</span>
+    </div>
+    <canvas id="statusChart"></canvas>
+  </article>
+
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Выручка по дням</h2>
+      <span class="badge gold">14 дней</span>
+    </div>
+    <canvas id="paymentsChart"></canvas>
+  </article>
+</section>
+
+<section class="grid-two">
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Загрузка серверов</h2>
+      <span class="badge warning">По локальной матрице доступа</span>
+    </div>
+    <canvas id="serversChart"></canvas>
+  </article>
+
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Типы серверов</h2>
+      <span class="badge">Каталог</span>
+    </div>
+    <canvas id="serverTypesChart"></canvas>
+  </article>
 </section>
 
 <section class="grid-two">
   <article class="panel">
     <h2>Топ по трафику</h2>
     <table class="table">
-      <thead><tr><th>Пользователь</th><th>Тариф</th><th>Трафик</th></tr></thead>
+      <thead><tr><th>Пользователь</th><th>Тариф</th><th>Трафик</th><th>Долг</th></tr></thead>
       <tbody>
         {% for item in overview.top_users %}
         <tr>
           <td>{{ item.user.username or item.user.telegram_id }}</td>
           <td>{{ item.plan.name }}</td>
-          <td>{{ item.traffic_used_bytes }}</td>
+          <td>{{ '%.2f'|format(item.traffic_used_bytes / 1024**3) }} ГБ</td>
+          <td>{{ item.accrued_debt_rub }} ₽</td>
         </tr>
         {% else %}
-        <tr><td colspan="3" class="muted">Пока пусто.</td></tr>
+        <tr><td colspan="4" class="muted">Пока пусто.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </article>
 
   <article class="panel">
-    <h2>Загрузка серверов</h2>
+    <h2>Последние платежи</h2>
     <table class="table">
-      <thead><tr><th>Сервер</th><th>Клиенты</th><th>Нагрузка</th></tr></thead>
+      <thead><tr><th>Пользователь</th><th>Сумма</th><th>Статус</th><th>Дата</th></tr></thead>
       <tbody>
-        {% for server in overview.servers %}
+        {% for item in overview.recent_topups %}
         <tr>
-          <td>{{ server.name }}</td>
-          <td>{{ server.current_clients }}/{{ server.max_clients or 'n/a' }}</td>
-          <td>{{ server.load_percent }}%</td>
+          <td>{{ item.user.username or item.user.telegram_id }}</td>
+          <td>{{ item.amount_rub }} ₽</td>
+          <td>{{ item.status }}</td>
+          <td>{{ item.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="3" class="muted">Серверы ещё не синхронизированы.</td></tr>
+        <tr><td colspan="4" class="muted">Платежей пока нет.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </article>
 </section>
-{% endblock %}
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  const charts = {{ charts_json | safe }};
+
+  new Chart(document.getElementById("statusChart"), {
+    type: "doughnut",
+    data: {
+      labels: charts.user_statuses.labels,
+      datasets: [{
+        data: charts.user_statuses.values,
+        backgroundColor: ["#0d8f77", "#d17d26", "#bc4d54", "#c79b2f", "#7c8a7a"]
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+
+  new Chart(document.getElementById("paymentsChart"), {
+    type: "line",
+    data: {
+      labels: charts.payments.labels,
+      datasets: [{
+        label: "Пополнения, ₽",
+        data: charts.payments.values,
+        borderColor: "#0d8f77",
+        backgroundColor: "rgba(13, 143, 119, 0.14)",
+        fill: true,
+        tension: 0.35
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+
+  new Chart(document.getElementById("serversChart"), {
+    type: "bar",
+    data: {
+      labels: charts.server_loads.labels,
+      datasets: [{
+        label: "Нагрузка, %",
+        data: charts.server_loads.values,
+        backgroundColor: charts.server_loads.types.map((type) => {
+          if (type === "ten_gbit") return "#c79b2f";
+          if (type === "whitelist") return "#d17d26";
+          return "#0d8f77";
+        })
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+
+  new Chart(document.getElementById("serverTypesChart"), {
+    type: "polarArea",
+    data: {
+      labels: charts.server_types.labels,
+      datasets: [{
+        data: charts.server_types.values,
+        backgroundColor: ["rgba(199, 155, 47, 0.8)", "rgba(209, 125, 38, 0.8)", "rgba(13, 143, 119, 0.8)"]
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+</script>
+{% endblock %}

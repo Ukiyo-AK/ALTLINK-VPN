@@ -4,12 +4,13 @@
 
 ## 1. Требования
 
-- VPS с Linux
+- Linux VPS
 - 2 GB RAM достаточно для первой production-версии
-- Docker и Docker Compose plugin
-- домен или IP для доступа к web panel
+- Docker + Docker Compose plugin
+- домен или IP для доступа к сайту
 - токены двух Telegram-ботов
 - `base URL` и `API token` от Remnawave
+- Telegram-канал, на который пользователь должен подписаться
 
 ## 2. Установка Docker
 
@@ -30,7 +31,7 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin d
 sudo usermod -aG docker $USER
 ```
 
-Перезайдите в сессию после добавления в группу `docker`.
+Перезайдите в shell после добавления пользователя в группу `docker`.
 
 ## 3. Подготовка проекта
 
@@ -51,11 +52,14 @@ cp .env.example .env
 - `CLIENT_BOT_TOKEN`
 - `ADMIN_BOT_TOKEN`
 - `ADMIN_ALLOWED_TELEGRAM_IDS`
+- `CLIENT_BOT_NAME`
 - `REMNAWAVE_BASE_URL`
 - `REMNAWAVE_API_TOKEN`
 - `BACKEND_PUBLIC_URL`
+- `REQUIRED_SUBSCRIPTION_CHANNEL`
+- `REQUIRED_SUBSCRIPTION_CHANNEL_URL`
 
-Для Docker Compose по умолчанию используется:
+Рекомендуемый `DATABASE_URL` для Docker Compose:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://altlink:altlink@postgres:5432/altlink
@@ -67,12 +71,15 @@ DATABASE_URL=postgresql+asyncpg://altlink:altlink@postgres:5432/altlink
 BACKEND_PUBLIC_URL=https://vpn.example.com
 CLIENT_BOT_TOKEN=123456:AAAA...
 ADMIN_BOT_TOKEN=654321:BBBB...
+CLIENT_BOT_NAME=altlink
 ADMIN_ALLOWED_TELEGRAM_IDS=123456789
+REQUIRED_SUBSCRIPTION_CHANNEL=@altlink_channel
+REQUIRED_SUBSCRIPTION_CHANNEL_URL=https://t.me/altlink_channel
 REMNAWAVE_BASE_URL=https://panel.example.com
 REMNAWAVE_API_TOKEN=rw_token_here
 ```
 
-Если Remnawave использует отдельный публичный домен для subscription links, заполните:
+Если Remnawave использует отдельный публичный домен для subscription links:
 
 ```env
 REMNAWAVE_SUBSCRIPTION_BASE_URL=https://sub.example.com
@@ -82,11 +89,6 @@ REMNAWAVE_SUBSCRIPTION_BASE_URL=https://sub.example.com
 
 ```bash
 docker compose up -d --build
-```
-
-Проверка статуса:
-
-```bash
 docker compose ps
 ```
 
@@ -102,10 +104,11 @@ docker compose run --rm backend python -m alembic upgrade head
 docker compose run --rm backend python -m altlink.cli seed-defaults
 ```
 
-Команда создаст:
+Команда создаст базовые тарифы:
 
-- системные настройки
-- тарифы `trial`, `unlimited`, `limited_50gb`
+- `trial`
+- `single_10gbit`
+- `unlimited`
 
 ## 8. Создание первого администратора
 
@@ -115,26 +118,15 @@ docker compose run --rm backend python -m altlink.cli create-admin --username ad
 
 Пароль команда запросит интерактивно.
 
-После этого:
-
-- web panel: `http://YOUR_HOST:8000/admin/login`
-- admin bot будет пускать Telegram ID, который есть в `ADMIN_ALLOWED_TELEGRAM_IDS` и/или привязан к `admin_users`
-
 ## 9. Webhook или polling
 
-В этой версии система использует только long polling.
+В этой версии используются только long polling и фоновые cron-like задачи через APScheduler.
 
-Ничего настраивать для webhook не нужно.
-
-Преимущества этого варианта:
-
-- проще deploy
-- меньше внешних зависимостей
-- удобно для одного VPS
+Webhook настраивать не нужно.
 
 ## 10. Проверка работы
 
-Healthcheck backend:
+Health endpoints:
 
 ```bash
 curl http://127.0.0.1:8000/health/live
@@ -155,21 +147,57 @@ docker compose logs -f admin-bot
 docker compose logs -f scheduler
 ```
 
-## 11. Обновление проекта
+## 11. Что открыть после запуска
+
+- админка: `https://YOUR_HOST/admin/login`
+- пользовательский кабинет: `https://YOUR_HOST/portal`
+- бот: `https://t.me/<CLIENT_BOT_NAME>`
+
+## 12. Как работает верификация на сайте
+
+Для входа в пользовательский кабинет используется Telegram Login Widget.
+
+Почему выбран именно он:
+
+- это официальный способ подтверждения личности через Telegram
+- сайт и бот получают один и тот же `telegram_id`
+- не нужно отдельное хранение паролей пользователя
+- синхронизация бота и сайта получается естественной
+
+Что нужно сделать для production:
+
+1. Убедиться, что у бота есть корректный username.
+2. Указать `BACKEND_PUBLIC_URL` с правильным доменом.
+3. Настроить разрешённый домен у бота через BotFather для Telegram Login Widget.
+
+## 13. Сценарий первичной настройки
+
+1. Зайдите в `/admin/login`.
+2. Выполните sync серверов из Remnawave.
+3. Назначьте каждому серверу тип:
+   - `ten_gbit`
+   - `whitelist`
+   - `regular`
+4. При необходимости задайте `max_clients`.
+5. Проверьте пользовательский flow:
+   - вход в бот
+   - подписка на канал
+   - trial
+   - вход на сайт через Telegram
+   - auto-stub пополнение
+   - активация тарифа
+   - получение subscription link и QR
+
+## 14. Обновление проекта
 
 ```bash
 git pull
 docker compose up -d --build
 docker compose run --rm backend python -m alembic upgrade head
-```
-
-Если менялись системные сиды:
-
-```bash
 docker compose run --rm backend python -m altlink.cli seed-defaults
 ```
 
-## 12. Backup PostgreSQL
+## 15. Backup PostgreSQL
 
 Резервная копия:
 
@@ -183,32 +211,8 @@ docker compose exec postgres pg_dump -U altlink -d altlink > backup_$(date +%F_%
 cat backup.sql | docker compose exec -T postgres psql -U altlink -d altlink
 ```
 
-## 13. Просмотр логов
+## 16. Практические замечания
 
-```bash
-docker compose logs -f backend
-docker compose logs -f client-bot
-docker compose logs -f admin-bot
-docker compose logs -f scheduler
-docker compose logs -f postgres
-```
-
-## 14. Что делать после запуска
-
-1. Войдите в web panel.
-2. Выполните синхронизацию серверов из Remnawave.
-3. Убедитесь, что нужные серверы локально включены в продажу.
-4. При необходимости задайте `max_clients` для корректного расчёта нагрузки.
-5. Протестируйте:
-   создание пользователя через client bot
-   trial
-   заявку на пополнение
-   подтверждение заявки через admin bot или web panel
-   выдачу subscription link и QR
-
-## 15. Практические замечания
-
-- если вы используете nginx/Caddy перед FastAPI, проксируйте `:8000`
-- если хотите HTTPS, лучше закрывать его на reverse proxy
-- если Remnawave временно недоступен, ALTLINK не будет выдумывать обходные методы и продолжит работать только в пределах локальной информации и безопасных fallback’ов
-
+- для HTTPS лучше поставить nginx или Caddy перед FastAPI
+- если вы обновляетесь со старой beta-схемы, перед миграцией стоит сделать backup
+- эта версия меняет продуктовую модель тарифов и доступа, поэтому после обновления разумно прогнать `seed-defaults` и проверить типы серверов в админке

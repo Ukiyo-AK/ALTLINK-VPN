@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -27,9 +28,12 @@ class Settings(BaseSettings):
 
     client_bot_token: str = ""
     admin_bot_token: str = ""
-    admin_allowed_telegram_ids: list[int] = Field(default_factory=list)
+    admin_allowed_telegram_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     client_bot_name: str = "altlink"
     admin_bot_name: str = "admin altlink bot"
+    required_subscription_channel: str = ""
+    required_subscription_channel_url: str = ""
+    telegram_auth_max_age_seconds: int = 300
 
     remnawave_base_url: str = ""
     remnawave_api_token: str = ""
@@ -42,7 +46,12 @@ class Settings(BaseSettings):
     billing_period_days: int = 30
     grace_period_days: int = 14
     low_balance_threshold_rub: int = 50
-    traffic_notification_thresholds: list[int] = Field(default_factory=lambda: [70, 90, 100])
+    unlimited_plan_price_rub: int = 200
+    single_server_plan_price_rub: int = 69
+    whitelist_price_per_gb_rub: int = 4
+    traffic_notification_thresholds: Annotated[list[int], NoDecode] = Field(
+        default_factory=lambda: [70, 90, 100]
+    )
 
     sync_servers_interval_minutes: int = 30
     billing_interval_minutes: int = 60

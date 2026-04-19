@@ -14,17 +14,17 @@ def format_datetime(dt: datetime) -> str:
 
 def low_balance_message(balance: Decimal, next_charge: Decimal, due_at: datetime) -> str:
     return (
-        f"Баланс почти закончился.\n\n"
+        "Баланс почти закончился.\n\n"
         f"Сейчас на счёте: {rub(balance)}\n"
-        f"Следующее списание: {rub(next_charge)}\n"
+        f"Ближайшее списание: {rub(next_charge)}\n"
         f"Дата списания: {format_datetime(due_at)}\n\n"
-        f"Пополните баланс заранее, чтобы доступ не ушёл в льготный период."
+        "Пополните баланс заранее, чтобы доступ не перешёл в льготный период."
     )
 
 
 def upcoming_renewal_message(next_charge: Decimal, due_at: datetime) -> str:
     return (
-        f"Скоро будет продление подписки.\n\n"
+        "Скоро будет следующее списание.\n\n"
         f"К списанию: {rub(next_charge)}\n"
         f"Дата: {format_datetime(due_at)}"
     )
@@ -32,18 +32,18 @@ def upcoming_renewal_message(next_charge: Decimal, due_at: datetime) -> str:
 
 def grace_started_message(balance: Decimal, debt: Decimal, grace_until: datetime) -> str:
     return (
-        f"Подписка перешла в льготный период.\n\n"
+        "Подписка перешла в льготный период.\n\n"
         f"Баланс: {rub(balance)}\n"
-        f"Не хватает: {rub(debt)}\n"
+        f"Текущая задолженность: {rub(debt)}\n"
         f"Доступ сохранится до: {format_datetime(grace_until)}\n\n"
-        f"Пополните баланс, чтобы избежать блокировки."
+        "Пополните баланс, чтобы не потерять доступ."
     )
 
 
 def grace_reminder_message(debt: Decimal, grace_until: datetime) -> str:
     return (
-        f"Напоминаем о задолженности по подписке.\n\n"
-        f"Не хватает: {rub(debt)}\n"
+        "Напоминание о задолженности.\n\n"
+        f"Нужно пополнить: {rub(debt)}\n"
         f"Льготный период закончится: {format_datetime(grace_until)}"
     )
 
@@ -51,18 +51,17 @@ def grace_reminder_message(debt: Decimal, grace_until: datetime) -> str:
 def blocked_message() -> str:
     return (
         "Доступ к VPN заблокирован.\n\n"
-        "Льготный период закончился или лимит трафика исчерпан. "
-        "Пополните баланс и активируйте тариф заново."
+        "Льготный период закончился. Пополните баланс и возобновите тариф, чтобы снова получить доступ."
     )
 
 
 def topup_approved_message(amount: Decimal) -> str:
-    return f"Заявка на пополнение подтверждена. На баланс зачислено {rub(amount)}."
+    return f"Платёж подтверждён. На баланс зачислено {rub(amount)}."
 
 
 def topup_rejected_message(amount: Decimal, comment: str | None = None) -> str:
-    suffix = f"\nКомментарий администратора: {comment}" if comment else ""
-    return f"Заявка на пополнение на сумму {rub(amount)} отклонена.{suffix}"
+    suffix = f"\nКомментарий: {comment}" if comment else ""
+    return f"Платёж на сумму {rub(amount)} не прошёл.{suffix}"
 
 
 def trial_ended_message() -> str:
@@ -74,7 +73,7 @@ def trial_ended_message() -> str:
 
 def traffic_threshold_message(percent: int, used_gb: float, limit_gb: float) -> str:
     return (
-        f"Вы использовали {percent}% лимита трафика.\n\n"
+        f"Использовано {percent}% лимита трафика.\n\n"
         f"Израсходовано: {used_gb:.2f} ГБ из {limit_gb:.2f} ГБ."
     )
 
@@ -82,6 +81,5 @@ def traffic_threshold_message(percent: int, used_gb: float, limit_gb: float) -> 
 def traffic_exceeded_message(limit_gb: float) -> str:
     return (
         f"Лимит трафика {limit_gb:.2f} ГБ исчерпан. "
-        f"Доступ временно остановлен до начала нового оплаченного периода."
+        "Доступ временно остановлен до начала нового оплаченного периода."
     )
-

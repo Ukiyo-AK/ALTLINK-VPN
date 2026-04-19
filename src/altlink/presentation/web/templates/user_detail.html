@@ -1,51 +1,64 @@
 {% extends "base.html" %}
 {% block content %}
+{% set user = card.user %}
+{% set subscription = card.subscription %}
 <section class="grid-two">
   <article class="panel">
-    <h2>Карточка</h2>
+    <h2>Профиль</h2>
     <dl class="details">
-      <div><dt>Telegram ID</dt><dd>{{ card.user.telegram_id }}</dd></div>
-      <div><dt>Username</dt><dd>{{ card.user.username or 'нет' }}</dd></div>
-      <div><dt>Статус</dt><dd>{{ card.user.status }}</dd></div>
-      <div><dt>Баланс</dt><dd>{{ card.user.balance_rub }} ₽</dd></div>
-      <div><dt>Тариф</dt><dd>{{ card.subscription.plan.name if card.subscription else 'нет' }}</dd></div>
-      <div><dt>Следующее продление</dt><dd>{{ card.subscription.next_billing_at if card.subscription else 'нет' }}</dd></div>
-      <div><dt>Трафик</dt><dd>{{ card.subscription.traffic_used_bytes if card.subscription else 0 }}</dd></div>
-      <div><dt>Remnawave UUID</dt><dd>{{ card.user.remnawave_user_uuid or 'ещё не создан' }}</dd></div>
+      <div><dt>Telegram ID</dt><dd>{{ user.telegram_id }}</dd></div>
+      <div><dt>Username</dt><dd>{{ user.username or '—' }}</dd></div>
+      <div><dt>Статус</dt><dd>{{ user.status }}</dd></div>
+      <div><dt>Баланс</dt><dd>{{ user.balance_rub }} ₽</dd></div>
+      <div><dt>Назначенный 10 Гбит сервер</dt><dd>{{ user.assigned_server.name if user.assigned_server else '—' }}</dd></div>
+      <div><dt>Тариф</dt><dd>{{ subscription.plan.name if subscription else '—' }}</dd></div>
+      <div><dt>Следующее списание</dt><dd>{{ subscription.next_billing_at if subscription else '—' }}</dd></div>
+      <div><dt>Задолженность</dt><dd>{{ subscription.accrued_debt_rub if subscription else '0' }} ₽</dd></div>
+      <div><dt>Whitelist трафик</dt><dd>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes if subscription else 0) / 1024**3) }} ГБ</dd></div>
+      <div><dt>Начисление за whitelist</dt><dd>{{ whitelist_cost_rub }} ₽</dd></div>
     </dl>
   </article>
 
-  <article class="panel">
+  <article class="panel stack">
     <h2>Действия</h2>
-    <form method="post" action="/admin/users/{{ card.user.id }}/balance" class="stack compact">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label><span>Корректировка баланса</span><input type="number" step="0.01" name="amount" required></label>
-      <label><span>Описание</span><input type="text" name="description" value="Ручная корректировка"></label>
-      <button type="submit" class="button">Изменить баланс</button>
-    </form>
-    <form method="post" action="/admin/users/{{ card.user.id }}/trial" class="inline-form">
+    <form method="post" action="/admin/users/{{ user.id }}/trial" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="button ghost">Выдать тест</button>
     </form>
-    <form method="post" action="/admin/users/{{ card.user.id }}/activate" class="inline-form">
+    <form method="post" action="/admin/users/{{ user.id }}/activate" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit" class="button ghost">Активировать</button>
+      <button type="submit" class="button">Активировать</button>
     </form>
-    <form method="post" action="/admin/users/{{ card.user.id }}/deactivate" class="inline-form">
+    <form method="post" action="/admin/users/{{ user.id }}/deactivate" class="inline-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="button danger">Деактивировать</button>
     </form>
-    <form method="post" action="/admin/users/{{ card.user.id }}/plan" class="stack compact">
+    <form method="post" action="/admin/users/{{ user.id }}/balance" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>
-        <span>Активировать тариф</span>
+        <span>Корректировка баланса</span>
+        <input type="number" step="0.01" name="amount" required>
+      </label>
+      <label>
+        <span>Комментарий</span>
+        <input type="text" name="description" value="Ручная корректировка баланса">
+      </label>
+      <button type="submit" class="button">Обновить баланс</button>
+    </form>
+    <form method="post" action="/admin/users/{{ user.id }}/plan" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Применить тариф</span>
         <select name="plan_code">
           {% for plan in plans if not plan.is_trial %}
-          <option value="{{ plan.code }}">{{ plan.name }} — {{ plan.price_rub }} ₽</option>
+          <option value="{{ plan.code.value }}">{{ plan.name }} • {{ plan.price_rub }} ₽</option>
           {% endfor %}
         </select>
       </label>
-      <label class="checkbox"><input type="checkbox" name="charge_user" value="1" checked>Списать с баланса пользователя</label>
+      <label class="inline-form">
+        <input type="checkbox" name="charge_user" value="1">
+        <span>Списать средства с баланса сразу</span>
+      </label>
       <button type="submit" class="button">Применить тариф</button>
     </form>
   </article>
@@ -53,67 +66,58 @@
 
 <section class="grid-two">
   <article class="panel">
-    <h2>Серверы пользователя</h2>
+    <h2>Доступные серверы</h2>
     <table class="table">
-      <thead><tr><th>Сервер</th><th>Статус</th><th>Подключён</th></tr></thead>
+      <thead><tr><th>Сервер</th><th>Тип</th><th>Статус</th></tr></thead>
       <tbody>
         {% for access in user_servers %}
         <tr>
-          <td>{{ access.server.name }}</td>
+          <td>{{ access.server.name if access.server else '—' }}</td>
+          <td>{{ access.server.server_type if access.server else '—' }}</td>
           <td>{{ access.status }}</td>
-          <td>{{ 'Да' if access.server.is_connected else 'Нет' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="3" class="muted">Нет доступных серверов.</td></tr>
+        <tr><td colspan="3" class="muted">Пока пусто.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </article>
 
   <article class="panel">
-    <h2>Подписка Remnawave</h2>
-    <div class="stack compact">
-      <div><strong>Общая ссылка:</strong><div class="codeblock">{{ bundle.subscription_info.subscriptionUrl if bundle.subscription_info else 'недоступно' }}</div></div>
-      <div><strong>Включённые ключи:</strong><div class="codeblock">{{ ', '.join(bundle.connection_keys.enabledKeys) if bundle.connection_keys else 'нет' }}</div></div>
-      <div><strong>Доступные серверы:</strong></div>
-      <ul class="plain-list">
-        {% for node in bundle.accessible_nodes or [] %}
-        <li>{{ node.nodeName }} ({{ node.countryCode }})</li>
-        {% else %}
-        <li class="muted">Данные пока недоступны.</li>
-        {% endfor %}
-      </ul>
-    </div>
-  </article>
-</section>
-
-<section class="grid-two">
-  <article class="panel">
-    <h2>Последние заявки</h2>
+    <h2>Последние платежи</h2>
     <table class="table">
       <thead><tr><th>Сумма</th><th>Статус</th><th>Дата</th></tr></thead>
       <tbody>
-        {% for item in card.topups %}
-        <tr><td>{{ item.amount_rub }} ₽</td><td>{{ item.status }}</td><td>{{ item.created_at }}</td></tr>
+        {% for topup in card.topups %}
+        <tr>
+          <td>{{ topup.amount_rub }} ₽</td>
+          <td>{{ topup.status }}</td>
+          <td>{{ topup.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        </tr>
         {% else %}
-        <tr><td colspan="3" class="muted">Нет заявок.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </article>
-  <article class="panel">
-    <h2>Последние транзакции</h2>
-    <table class="table">
-      <thead><tr><th>Тип</th><th>Сумма</th><th>Баланс после</th></tr></thead>
-      <tbody>
-        {% for item in card.transactions %}
-        <tr><td>{{ item.type }}</td><td>{{ item.amount_rub }} ₽</td><td>{{ item.balance_after }} ₽</td></tr>
-        {% else %}
-        <tr><td colspan="3" class="muted">Нет транзакций.</td></tr>
+        <tr><td colspan="3" class="muted">Платежей пока нет.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </article>
 </section>
-{% endblock %}
 
+<section class="panel">
+  <h2>Транзакции баланса</h2>
+  <table class="table">
+    <thead><tr><th>Тип</th><th>Сумма</th><th>Описание</th><th>Дата</th></tr></thead>
+    <tbody>
+      {% for tx in card.transactions %}
+      <tr>
+        <td>{{ tx.type }}</td>
+        <td>{{ tx.amount_rub }} ₽</td>
+        <td>{{ tx.description or '—' }}</td>
+        <td>{{ tx.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">Транзакций пока нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

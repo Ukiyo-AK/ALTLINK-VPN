@@ -3,34 +3,41 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Вход | ALTLINK VPN</title>
+  <title>{{ title }} | ALTLINK VPN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
 </head>
-<body class="login-body">
-  <section class="login-card">
-    <div class="brand brand-login">
-      <div class="brand-mark">A</div>
-      <div>
-        <strong>ALTLINK VPN</strong>
-        <div class="muted">Вход в web admin panel</div>
+<body>
+  <div class="center-shell">
+    <section class="login-card stack">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <strong>ALTLINK VPN</strong>
+          <div class="muted">Вход в админ-панель</div>
+        </div>
       </div>
-    </div>
-    {% if error %}
+      {% if error %}
       <div class="alert danger">{{ error }}</div>
-    {% endif %}
-    <form method="post" class="stack">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label>
-        <span>Логин</span>
-        <input type="text" name="username" required>
-      </label>
-      <label>
-        <span>Пароль</span>
-        <input type="password" name="password" required>
-      </label>
-      <button type="submit" class="button full">Войти</button>
-    </form>
-  </section>
+      {% endif %}
+      {% if flash %}
+      <div class="alert {{ flash.level }}">{{ flash.message }}</div>
+      {% endif %}
+      <form method="post" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>
+          <span>Логин</span>
+          <input type="text" name="username" required>
+        </label>
+        <label>
+          <span>Пароль</span>
+          <input type="password" name="password" required>
+        </label>
+        <button type="submit" class="button full">Войти</button>
+      </form>
+    </section>
+  </div>
 </body>
 </html>
-

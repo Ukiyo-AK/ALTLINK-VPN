@@ -2,15 +2,15 @@
 {% block content %}
 <section class="panel">
   <table class="table">
-    <thead><tr><th>Уровень</th><th>Источник</th><th>Событие</th><th>Сообщение</th><th>Дата</th></tr></thead>
+    <thead><tr><th>Уровень</th><th>Источник</th><th>Тип</th><th>Сообщение</th><th>Дата</th></tr></thead>
     <tbody>
-      {% for item in events %}
+      {% for event in events %}
       <tr>
-        <td>{{ item.level }}</td>
-        <td>{{ item.source }}</td>
-        <td>{{ item.event_type }}</td>
-        <td>{{ item.message }}</td>
-        <td>{{ item.created_at }}</td>
+        <td>{{ event.level }}</td>
+        <td>{{ event.source }}</td>
+        <td>{{ event.event_type }}</td>
+        <td>{{ event.message }}</td>
+        <td>{{ event.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
       </tr>
       {% else %}
       <tr><td colspan="5" class="muted">Событий пока нет.</td></tr>
@@ -19,4 +19,3 @@
   </table>
 </section>
 {% endblock %}
-

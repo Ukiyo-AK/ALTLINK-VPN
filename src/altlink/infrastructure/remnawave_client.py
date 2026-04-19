@@ -12,6 +12,7 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 from altlink.infrastructure.remnawave_schemas import (
     RemoteAccessibleNode,
     RemoteConnectionKeys,
+    RemoteManagedInternalSquad,
     RemoteNode,
     RemoteSubscriptionInfo,
     RemoteSubscriptionRequestRecord,
@@ -39,6 +40,15 @@ class RemnawaveGateway(Protocol):
     async def get_connection_keys(self, user_uuid: str) -> RemoteConnectionKeys: ...
     async def get_user_usage(self, user_uuid: str, start: date, end: date) -> RemoteUsageResponse: ...
     async def get_subscription_request_history(self, user_uuid: str) -> list[RemoteSubscriptionRequestRecord]: ...
+    async def list_internal_squads(self) -> list[RemoteManagedInternalSquad]: ...
+    async def create_internal_squad(self, *, name: str, inbounds: list[str]) -> RemoteManagedInternalSquad: ...
+    async def update_internal_squad(
+        self,
+        *,
+        squad_uuid: str,
+        name: str | None = None,
+        inbounds: list[str] | None = None,
+    ) -> RemoteManagedInternalSquad: ...
     async def healthcheck(self) -> bool: ...
     async def aclose(self) -> None: ...
 
@@ -171,6 +181,30 @@ class RemnawaveClient:
         payload = await self._request("GET", f"/api/users/{user_uuid}/subscription-request-history")
         records = (payload or {}).get("records", [])
         return [RemoteSubscriptionRequestRecord.model_validate(item) for item in records]
+
+    async def list_internal_squads(self) -> list[RemoteManagedInternalSquad]:
+        payload = await self._request("GET", "/api/internal-squads")
+        items = (payload or {}).get("internalSquads", [])
+        return [RemoteManagedInternalSquad.model_validate(item) for item in items]
+
+    async def create_internal_squad(self, *, name: str, inbounds: list[str]) -> RemoteManagedInternalSquad:
+        payload = await self._request("POST", "/api/internal-squads", json={"name": name, "inbounds": inbounds})
+        return RemoteManagedInternalSquad.model_validate(payload)
+
+    async def update_internal_squad(
+        self,
+        *,
+        squad_uuid: str,
+        name: str | None = None,
+        inbounds: list[str] | None = None,
+    ) -> RemoteManagedInternalSquad:
+        body: dict[str, object] = {"uuid": squad_uuid}
+        if name is not None:
+            body["name"] = name
+        if inbounds is not None:
+            body["inbounds"] = inbounds
+        payload = await self._request("PATCH", "/api/internal-squads", json=body)
+        return RemoteManagedInternalSquad.model_validate(payload)
 
 
 @asynccontextmanager

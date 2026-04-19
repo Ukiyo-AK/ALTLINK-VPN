@@ -1,16 +1,19 @@
 # ALTLINK VPN
 
-ALTLINK VPN — production-ready система для продажи и управления VPN на базе официального API Remnawave. В одном репозитории собраны:
+ALTLINK VPN — production-ready система для продажи и управления VPN на базе официального API Remnawave.
+
+В одном репозитории собраны:
 
 - FastAPI backend
-- client Telegram-бот `altlink`
+- клиентский Telegram-бот `altlink`
 - отдельный admin Telegram-бот
-- server-rendered web admin panel на FastAPI + Jinja2
+- server-rendered web admin panel
+- пользовательский web portal, синхронизированный с ботом
 - PostgreSQL + Alembic
 - APScheduler для фоновых задач
 - Docker Compose стек для одного VPS
 
-Проект сознательно сделан прагматичным и лёгким для VPS с 2 GB RAM:
+Проект рассчитан на один VPS с 2 GB RAM и сознательно сделан прагматичным:
 
 - без Redis
 - без Celery
@@ -20,30 +23,38 @@ ALTLINK VPN — production-ready система для продажи и упр�
 
 ## Что умеет система
 
-- регистрация пользователей по `telegram_id`
-- trial на 2 дня, один раз на пользователя
+- регистрация пользователя по `telegram_id`
+- обязательная подписка на Telegram-канал перед началом использования
+- Telegram Login Widget для входа в пользовательский web portal
+- синхронизация сайта и бота через одну БД и один `telegram_id`
+- trial на 2 дня
+- тариф `Один сервер 10 Гбит` за `69 ₽ / 30 дней`
 - тариф `Безлимит` за `200 ₽ / 30 дней`
-- тариф `50 ГБ` за `100 ₽ / 30 дней`
+- ежедневные списания: месячная цена делится на 30 дней
+- grace period на 14 дней при нехватке средств
 - внутренний рублёвый баланс
-- история движений баланса
-- ручные заявки на пополнение с подтверждением админом
-- grace period на 14 дней при нехватке денег
-- автоматические уведомления пользователю
-- синхронизация серверов и inbound'ов из Remnawave
-- локальное включение и исключение серверов из продаж
-- общая subscription link Remnawave и QR-код для клиента
-- web admin panel на русском языке
+- автоматическое пополнение через stub-платёж
+- история платежей и транзакций
+- автоматическое назначение наименее загруженного сервера `10 Гбит`
+- три типа серверов: `10 Гбит`, `Белые списки`, `Обычный`
+- для тарифа `69 ₽`: один выделенный `10 Гбит` сервер + доступ к `Белым спискам`
+- `Белые списки` тарифицируются отдельно по `4 ₽ / ГБ`
+- для тарифа `200 ₽`: доступ ко всем активным серверам
+- реальные ограничения доступа через `activeInternalSquads` Remnawave
+- subscription link и QR-код для пользователя
+- аналитика по статусам, трафику, долгам, выручке и загрузке серверов
 
-## Важные ограничения API Remnawave
+## Remnawave
 
-Система работает только через официальный API Remnawave. В коде и документации честно учтены его ограничения:
+Система работает только через официальный API Remnawave.
 
-- отдельный безопасный speed-limit на 5 Мбит/с для grace mode не включён, потому что в официальном API нет явного и стабильного endpoint для этого сценария
-- per-server subscription URL через официальный API не гарантирован, поэтому клиент получает нативную общую subscription link Remnawave и отдельный список доступных серверов
-- загрузка сервера считается по пользователям, которыми управляет ALTLINK, и соотносится с локально задаваемым `max_clients`
-  это практичный и честный fallback, потому что Remnawave не отдаёт “бизнесовую вместимость сервера” как отдельный контракт API
+Используется официально поддерживаемый механизм `activeInternalSquads` для ограничения доступа пользователя к нужным нодам. За счёт этого:
 
-Контракты API сверялись по официальному backend-репозиторию Remnawave:
+- тариф `69 ₽` действительно получает один назначенный `10 Гбит` сервер
+- whitelist-доступ выдаётся отдельно
+- `Безлимит` получает все активные серверы
+
+Официальный backend Remnawave, по которому сверялись контракты:
 
 - https://github.com/remnawave/backend
 
@@ -51,17 +62,17 @@ ALTLINK VPN — production-ready система для продажи и упр�
 
 ```text
 src/altlink/
-  domain/            # enums, биллинг, правила уведомлений
-  application/       # use cases и сервисы
+  domain/            # enums, биллинг, уведомления, тарифные правила
+  application/       # сервисы и use case'ы
   infrastructure/    # SQLAlchemy модели, Remnawave client
-  presentation/      # FastAPI, web panel, Telegram-боты
+  presentation/      # FastAPI, web routes, Telegram-боты
   scheduler/         # фоновые задачи
 ```
 
 ## Быстрый старт
 
-1. Скопируйте `.env.example` в `.env` и заполните секреты.
-2. Поднимите стек:
+1. Скопируйте `.env.example` в `.env` и заполните токены.
+2. Поднимите контейнеры:
 
 ```bash
 docker compose up -d --build
@@ -87,29 +98,15 @@ docker compose run --rm backend python -m altlink.cli create-admin --username ad
 
 После этого:
 
-- web admin panel будет доступна на `http://YOUR_HOST:8000/admin/login`
-- backend health endpoints будут доступны на `/health/live` и `/health/ready`
-- оба Telegram-бота начнут работать в long polling режиме
-
-## Полезные команды
-
-```bash
-make install
-make migrate
-make seed
-make create-admin
-make run-backend
-make run-client-bot
-make run-admin-bot
-make run-scheduler
-make test
-```
+- админка будет доступна на `/admin/login`
+- пользовательский кабинет — на `/portal`
+- оба бота запустятся в long polling
 
 ## Документация
 
-- [DEPLOYMENT.md](DEPLOYMENT.md) — развёртывание на один VPS
-- [BOT_USAGE.md](BOT_USAGE.md) — как пользоваться клиентским ботом
-- [ADMIN_USAGE.md](ADMIN_USAGE.md) — как пользоваться admin bot и web admin panel
+- [DEPLOYMENT.md](DEPLOYMENT.md)
+- [BOT_USAGE.md](BOT_USAGE.md)
+- [ADMIN_USAGE.md](ADMIN_USAGE.md)
 
 ## Тесты
 
@@ -120,4 +117,3 @@ python -m pytest tests/unit tests/integration -q
 ```
 
 Результат в этой сессии: `11 passed`
-

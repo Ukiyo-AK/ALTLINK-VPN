@@ -18,17 +18,29 @@ if str(SRC) not in sys.path:
 from altlink.application.services.accounts import AccountService
 from altlink.application.services.billing import BillingService
 from altlink.application.services.catalog import CatalogService
+from altlink.application.services.dashboard import DashboardService
 from altlink.application.services.notifications import NotificationService
 from altlink.application.services.topups import TopupService
 from altlink.db import session_scope
+from altlink.domain.enums import ServerType
 from altlink.domain.plans import DEFAULT_PLAN_SEEDS
 from altlink.infrastructure.db.models import Base, Plan
 from altlink.infrastructure.remnawave_schemas import (
+    RemoteAccessibleNode,
+    RemoteAccessibleSquad,
     RemoteConnectionKeys,
+    RemoteInbound,
+    RemoteInternalSquad,
+    RemoteInternalSquadInfo,
+    RemoteManagedInternalSquad,
+    RemoteNode,
+    RemoteNodeConfigProfile,
+    RemoteSeriesPoint,
     RemoteSubscriptionInfo,
     RemoteSubscriptionInfoUser,
     RemoteSubscriptionRequestRecord,
     RemoteUsageResponse,
+    RemoteUsageTopNode,
     RemoteUser,
     RemoteUserTraffic,
 )
@@ -38,9 +50,11 @@ from altlink.settings import Settings
 class FakeRemnawave:
     def __init__(self) -> None:
         self.users: dict[str, RemoteUser] = {}
+        self.internal_squads: dict[str, RemoteManagedInternalSquad] = {}
+        self.nodes = self._seed_nodes()
 
     async def list_nodes(self):
-        return []
+        return list(self.nodes.values())
 
     async def list_users(self):
         return list(self.users.values())
@@ -65,6 +79,7 @@ class FakeRemnawave:
             short_uuid=short_uuid,
             status=payload.get("status", "ACTIVE"),
             traffic_limit_bytes=int(payload.get("trafficLimitBytes", 0)),
+            active_squads=payload.get("activeInternalSquads", []),
         )
         self.users[user_uuid] = remote
         return remote
@@ -83,6 +98,7 @@ class FakeRemnawave:
             traffic_limit_bytes=int(payload.get("trafficLimitBytes", remote.trafficLimitBytes)),
             used_bytes=remote.userTraffic.usedTrafficBytes,
             lifetime_used_bytes=remote.userTraffic.lifetimeUsedTrafficBytes,
+            active_squads=payload.get("activeInternalSquads", [item.uuid for item in remote.activeInternalSquads]),
         )
         self.users[remote.uuid] = updated
         return updated
@@ -99,6 +115,7 @@ class FakeRemnawave:
             traffic_limit_bytes=user.trafficLimitBytes,
             used_bytes=user.userTraffic.usedTrafficBytes,
             lifetime_used_bytes=user.userTraffic.lifetimeUsedTrafficBytes,
+            active_squads=[item.uuid for item in user.activeInternalSquads],
         )
         return self.users[user_uuid]
 
@@ -114,6 +131,7 @@ class FakeRemnawave:
             traffic_limit_bytes=user.trafficLimitBytes,
             used_bytes=user.userTraffic.usedTrafficBytes,
             lifetime_used_bytes=user.userTraffic.lifetimeUsedTrafficBytes,
+            active_squads=[item.uuid for item in user.activeInternalSquads],
         )
         return self.users[user_uuid]
 
@@ -129,6 +147,7 @@ class FakeRemnawave:
             traffic_limit_bytes=user.trafficLimitBytes,
             used_bytes=0,
             lifetime_used_bytes=user.userTraffic.lifetimeUsedTrafficBytes,
+            active_squads=[item.uuid for item in user.activeInternalSquads],
         )
         return self.users[user_uuid]
 
@@ -137,7 +156,40 @@ class FakeRemnawave:
         return {}
 
     async def get_accessible_nodes(self, user_uuid: str):
-        return []
+        user = self.users[user_uuid]
+        inbound_to_node = {}
+        for node in self.nodes.values():
+            for inbound in node.configProfile.activeInbounds:
+                inbound_to_node[inbound.uuid] = node
+
+        result: list[RemoteAccessibleNode] = []
+        seen: set[str] = set()
+        for squad in user.activeInternalSquads:
+            managed = self.internal_squads.get(squad.uuid)
+            if not managed:
+                continue
+            node_map: dict[str, list[str]] = {}
+            for inbound in managed.inbounds:
+                node = inbound_to_node.get(inbound.uuid)
+                if node is None:
+                    continue
+                node_map.setdefault(node.uuid, []).append(inbound.tag)
+            for node_uuid, tags in node_map.items():
+                if node_uuid in seen:
+                    continue
+                seen.add(node_uuid)
+                node = self.nodes[node_uuid]
+                result.append(
+                    RemoteAccessibleNode(
+                        uuid=node.uuid,
+                        nodeName=node.name,
+                        countryCode=node.countryCode,
+                        configProfileUuid=node.configProfile.activeConfigProfileUuid or str(uuid4()),
+                        configProfileName="default",
+                        activeSquads=[RemoteAccessibleSquad(squadName=managed.name, activeInbounds=tags)],
+                    )
+                )
+        return result
 
     async def get_subscription_info(self, short_uuid: str):
         return RemoteSubscriptionInfo(
@@ -166,7 +218,13 @@ class FakeRemnawave:
         return RemoteConnectionKeys(enabledKeys=[f"vmess://{user_uuid}"], hiddenKeys=[], disabledKeys=[])
 
     async def get_user_usage(self, user_uuid: str, start: date, end: date):
-        return RemoteUsageResponse(categories=[], sparklineData=[], topNodes=[], series=[])
+        whitelist_node = next(node for node in self.nodes.values() if "Whitelist" in node.name)
+        return RemoteUsageResponse(
+            categories=[start.isoformat(), end.isoformat()],
+            sparklineData=[0, 0],
+            topNodes=[RemoteUsageTopNode(uuid=whitelist_node.uuid, color="#f0b35a", name=whitelist_node.name, countryCode=whitelist_node.countryCode, total=0)],
+            series=[RemoteSeriesPoint(uuid=whitelist_node.uuid, name=whitelist_node.name, color="#f0b35a", countryCode=whitelist_node.countryCode, total=0, data=[0, 0])],
+        )
 
     async def get_subscription_request_history(self, user_uuid: str):
         return [
@@ -178,6 +236,25 @@ class FakeRemnawave:
                 requestAt=datetime.now(UTC),
             )
         ]
+
+    async def list_internal_squads(self):
+        return list(self.internal_squads.values())
+
+    async def create_internal_squad(self, *, name: str, inbounds: list[str]):
+        squad_uuid = str(uuid4())
+        squad = self._build_squad(squad_uuid=squad_uuid, name=name, inbound_ids=inbounds)
+        self.internal_squads[squad_uuid] = squad
+        return squad
+
+    async def update_internal_squad(self, *, squad_uuid: str, name: str | None = None, inbounds: list[str] | None = None):
+        existing = self.internal_squads[squad_uuid]
+        squad = self._build_squad(
+            squad_uuid=squad_uuid,
+            name=name or existing.name,
+            inbound_ids=inbounds or [item.uuid for item in existing.inbounds],
+        )
+        self.internal_squads[squad_uuid] = squad
+        return squad
 
     async def healthcheck(self):
         return True
@@ -197,6 +274,80 @@ class FakeRemnawave:
             traffic_limit_bytes=user.trafficLimitBytes,
             used_bytes=used_bytes,
             lifetime_used_bytes=lifetime_used_bytes or used_bytes,
+            active_squads=[item.uuid for item in user.activeInternalSquads],
+        )
+
+    def _seed_nodes(self) -> dict[str, RemoteNode]:
+        ten_uuid = str(uuid4())
+        whitelist_uuid = str(uuid4())
+        regular_uuid = str(uuid4())
+        return {
+            ten_uuid: self._build_node(ten_uuid, "Moscow 10G", "RU"),
+            whitelist_uuid: self._build_node(whitelist_uuid, "Whitelist EU", "NL"),
+            regular_uuid: self._build_node(regular_uuid, "Regular Warsaw", "PL"),
+        }
+
+    def _build_node(self, node_uuid: str, name: str, country_code: str) -> RemoteNode:
+        inbound_uuid = str(uuid4())
+        return RemoteNode(
+            uuid=node_uuid,
+            name=name,
+            address=f"{name.lower().replace(' ', '-')}.example.com",
+            port=443,
+            isConnected=True,
+            isDisabled=False,
+            isConnecting=False,
+            lastStatusChange=datetime.now(UTC),
+            lastStatusMessage="ok",
+            xrayVersion="1.8.0",
+            nodeVersion="1.0.0",
+            xrayUptime="1d",
+            isTrafficTrackingActive=True,
+            trafficResetDay=1,
+            trafficLimitBytes=None,
+            trafficUsedBytes=0,
+            notifyPercent=80,
+            usersOnline=0,
+            viewPosition=1,
+            countryCode=country_code,
+            consumptionMultiplier=1.0,
+            tags=[],
+            cpuCount=4,
+            cpuModel="fake",
+            totalRam="2 GB",
+            createdAt=datetime.now(UTC),
+            updatedAt=datetime.now(UTC),
+            configProfile=RemoteNodeConfigProfile(
+                activeConfigProfileUuid=str(uuid4()),
+                activeInbounds=[
+                    RemoteInbound(
+                        uuid=inbound_uuid,
+                        profileUuid=str(uuid4()),
+                        tag=f"{name.lower().replace(' ', '_')}_main",
+                        type="vless",
+                        network="tcp",
+                        security="reality",
+                        port=443,
+                        rawInbound={},
+                    )
+                ],
+            ),
+        )
+
+    def _build_squad(self, *, squad_uuid: str, name: str, inbound_ids: list[str]) -> RemoteManagedInternalSquad:
+        inbounds = []
+        for node in self.nodes.values():
+            for inbound in node.configProfile.activeInbounds:
+                if inbound.uuid in inbound_ids:
+                    inbounds.append(inbound)
+        return RemoteManagedInternalSquad(
+            uuid=squad_uuid,
+            viewPosition=1,
+            name=name,
+            info=RemoteInternalSquadInfo(membersCount=0, inboundsCount=len(inbounds)),
+            inbounds=inbounds,
+            createdAt=datetime.now(UTC),
+            updatedAt=datetime.now(UTC),
         )
 
     def _build_user(
@@ -211,7 +362,13 @@ class FakeRemnawave:
         traffic_limit_bytes: int,
         used_bytes: int = 0,
         lifetime_used_bytes: int = 0,
+        active_squads: list[str] | None = None,
     ) -> RemoteUser:
+        active_squad_objects = []
+        for squad_uuid in active_squads or []:
+            squad = self.internal_squads.get(squad_uuid)
+            if squad:
+                active_squad_objects.append(RemoteInternalSquad(uuid=squad.uuid, name=squad.name))
         return RemoteUser(
             uuid=user_uuid,
             id=1,
@@ -238,7 +395,7 @@ class FakeRemnawave:
             createdAt=datetime.now(UTC),
             updatedAt=datetime.now(UTC),
             subscriptionUrl=f"https://sub.example/{short_uuid}",
-            activeInternalSquads=[],
+            activeInternalSquads=active_squad_objects,
             userTraffic=RemoteUserTraffic(
                 usedTrafficBytes=used_bytes,
                 lifetimeUsedTrafficBytes=lifetime_used_bytes,
@@ -276,6 +433,7 @@ class TestServices:
                 accounts=accounts,
                 notifications=notifications,
             )
+            dashboard = DashboardService(session, self.settings, self.remnawave)
             yield SimpleNamespace(
                 session=session,
                 settings=self.settings,
@@ -285,6 +443,7 @@ class TestServices:
                 catalog=catalog,
                 billing=billing,
                 topups=topups,
+                dashboard=dashboard,
             )
 
 
@@ -314,6 +473,19 @@ async def test_services(tmp_path):
             session.add(Plan(**seed))
 
     services = TestServices(session_factory, settings, remnawave)
+    async with services.hub() as hub:
+        await hub.catalog.sync_servers()
+        servers = await hub.catalog.list_servers()
+        for server in servers:
+            if "10G" in server.name:
+                await hub.catalog.set_server_type(server.id, ServerType.TEN_GBIT)
+                await hub.catalog.set_server_capacity(server.id, 100)
+            elif "Whitelist" in server.name:
+                await hub.catalog.set_server_type(server.id, ServerType.WHITELIST)
+                await hub.catalog.set_server_capacity(server.id, 100)
+            else:
+                await hub.catalog.set_server_type(server.id, ServerType.REGULAR)
+                await hub.catalog.set_server_capacity(server.id, 100)
     try:
         yield services
     finally:

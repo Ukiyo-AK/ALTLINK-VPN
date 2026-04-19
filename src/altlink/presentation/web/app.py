@@ -65,7 +65,7 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def root() -> RedirectResponse:
-        return RedirectResponse("/admin/dashboard", status_code=303)
+        return RedirectResponse("/portal", status_code=303)
 
     @app.get("/health/live")
     async def health_live() -> dict:

@@ -1,20 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="panel">
-  <table class="table">
-    <thead><tr><th>Код</th><th>Название</th><th>Цена</th><th>Период</th><th>Лимит</th></tr></thead>
-    <tbody>
-      {% for plan in plans %}
-      <tr>
-        <td>{{ plan.code }}</td>
-        <td>{{ plan.name }}</td>
-        <td>{{ plan.price_rub }} ₽</td>
-        <td>{{ plan.period_days }} дней</td>
-        <td>{{ plan.traffic_limit_bytes or 'без лимита' }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<section class="grid-three">
+  {% for plan in plans %}
+  <article class="panel plan-card">
+    <div class="badge {{ 'gold' if plan.is_trial else '' }}">{{ 'Тест' if plan.is_trial else 'Платный тариф' }}</div>
+    <h2>{{ plan.name }}</h2>
+    <div class="plan-price">{{ plan.price_rub }} ₽</div>
+    <div class="muted">Период: {{ plan.period_days }} дней</div>
+    {% if not plan.is_trial %}
+    <div class="muted">Суточное списание: {{ '%.2f'|format(plan.price_rub / plan.period_days) }} ₽</div>
+    {% endif %}
+    <p>{{ plan.description or '—' }}</p>
+  </article>
+  {% endfor %}
 </section>
 {% endblock %}
-

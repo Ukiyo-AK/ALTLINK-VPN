@@ -11,32 +11,20 @@
     </select>
     <button type="submit" class="button">Фильтр</button>
   </form>
+
   <table class="table">
-    <thead><tr><th>Пользователь</th><th>Сумма</th><th>Статус</th><th>Комментарий</th><th>Действия</th></tr></thead>
+    <thead><tr><th>Пользователь</th><th>Сумма</th><th>Статус</th><th>Комментарий</th><th>Дата</th></tr></thead>
     <tbody>
       {% for item in topups %}
       <tr>
-        <td><a href="/admin/users/{{ item.user.id }}">{{ item.user.username or item.user.telegram_id }}</a></td>
+        <td>{{ item.user.username or item.user.telegram_id }}</td>
         <td>{{ item.amount_rub }} ₽</td>
         <td>{{ item.status }}</td>
-        <td>{{ item.user_comment or '—' }}</td>
-        <td>
-          {% if item.status == 'new' %}
-          <form method="post" action="/admin/topups/{{ item.id }}/approve" class="inline-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="text" name="comment" placeholder="Комментарий">
-            <button type="submit" class="button">Подтвердить</button>
-          </form>
-          <form method="post" action="/admin/topups/{{ item.id }}/reject" class="inline-form">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="text" name="comment" placeholder="Причина">
-            <button type="submit" class="button danger">Отклонить</button>
-          </form>
-          {% endif %}
-        </td>
+        <td>{{ item.admin_comment or item.user_comment or '—' }}</td>
+        <td>{{ item.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="muted">Заявок пока нет.</td></tr>
+      <tr><td colspan="5" class="muted">Платежей пока нет.</td></tr>
       {% endfor %}
     </tbody>
   </table>

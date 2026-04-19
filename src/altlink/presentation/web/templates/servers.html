@@ -1,50 +1,66 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="panel">
+<section class="toolbar">
   <form method="post" action="/admin/servers/sync">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <button type="submit" class="button">Синхронизировать Remnawave</button>
+    <button type="submit" class="button">Синхронизировать с Remnawave</button>
   </form>
+</section>
+
+<section class="panel">
   <table class="table">
     <thead>
       <tr>
         <th>Сервер</th>
-        <th>Адрес</th>
-        <th>Статус</th>
+        <th>Тип</th>
+        <th>Локальный статус</th>
         <th>Клиенты</th>
         <th>Нагрузка</th>
-        <th>Локально</th>
-        <th>Лимит</th>
+        <th>Ёмкость</th>
       </tr>
     </thead>
     <tbody>
       {% for server in servers %}
       <tr>
-        <td>{{ server.name }}<div class="muted">{{ server.country_code or 'n/a' }}</div></td>
-        <td>{{ server.address }}</td>
-        <td>{{ 'online' if server.is_connected else 'offline' }}</td>
-        <td>{{ server.current_clients }}/{{ server.max_clients or 'n/a' }}</td>
-        <td>{{ server.load_percent }}%</td>
         <td>
-          <form method="post" action="/admin/servers/{{ server.id }}/toggle" class="inline-form">
+          <strong>{{ server.name }}</strong><br>
+          <span class="muted">{{ server.address }}</span><br>
+          <span class="muted">Squad: {{ server.remnawave_internal_squad_uuid or 'ещё не создан' }}</span>
+        </td>
+        <td>
+          <form method="post" action="/admin/servers/{{ server.id }}/type" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="is_available" value="{{ 0 if server.is_available else 1 }}">
-            <button type="submit" class="button ghost">{{ 'Убрать' if server.is_available else 'Добавить' }}</button>
+            <select name="server_type">
+              {% for item in server_types %}
+              <option value="{{ item.value }}" {{ 'selected' if server.server_type == item else '' }}>{{ item.value }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="button ghost">Сохранить</button>
           </form>
         </td>
         <td>
+          <div>{{ 'включён' if server.is_available else 'выключен' }}</div>
+          <div class="muted">{{ 'online' if server.is_connected else 'offline' }}</div>
+          <form method="post" action="/admin/servers/{{ server.id }}/toggle" class="inline-form" style="margin-top: 0.5rem;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="is_available" value="{{ 0 if server.is_available else 1 }}">
+            <button type="submit" class="button ghost">{{ 'Убрать' if server.is_available else 'Вернуть' }}</button>
+          </form>
+        </td>
+        <td>{{ server.current_clients }}/{{ server.max_clients or 'n/a' }}</td>
+        <td>{{ server.load_percent }}%</td>
+        <td>
           <form method="post" action="/admin/servers/{{ server.id }}/capacity" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="number" name="max_clients" value="{{ server.max_clients }}" class="small-input">
-            <button type="submit" class="button ghost">Сохранить</button>
+            <input class="small-input" type="number" name="max_clients" value="{{ server.max_clients }}">
+            <button type="submit" class="button ghost">Ок</button>
           </form>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="muted">Серверов пока нет.</td></tr>
+      <tr><td colspan="6" class="muted">Серверы ещё не синхронизированы.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 {% endblock %}
-

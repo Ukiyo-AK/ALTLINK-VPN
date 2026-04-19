@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} | ALTLINK VPN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <div class="center-shell">
+    <section class="login-card stack">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <strong>ALTLINK VPN</strong>
+          <div class="muted">Пользовательский кабинет</div>
+        </div>
+      </div>
+
+      {% if flash %}
+      <div class="alert {{ flash.level }}">{{ flash.message }}</div>
+      {% endif %}
+
+      <div class="stack">
+        <h1>Вход через Telegram</h1>
+        <p class="muted">
+          Для верификации на сайте используется официальный Telegram Login Widget.
+          Это даёт один и тот же `telegram_id` для сайта и бота, поэтому профиль,
+          баланс, тестовый период и конфиги синхронизируются автоматически.
+        </p>
+      </div>
+
+      <div class="panel">
+        <script async src="https://telegram.org/js/telegram-widget.js?22"
+                data-telegram-login="{{ telegram_login_bot }}"
+                data-size="large"
+                data-radius="12"
+                data-auth-url="{{ backend_public_url }}/portal/auth/telegram"
+                data-request-access="write"></script>
+      </div>
+
+      <div class="muted">
+        После входа вы сможете запустить тестовый период, пополнить баланс, выбрать тариф
+        и получить конфиги прямо в браузере.
+      </div>
+    </section>
+  </div>
+</body>
+</html>

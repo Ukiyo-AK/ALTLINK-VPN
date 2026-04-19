@@ -2,22 +2,21 @@
 {% block content %}
 <section class="panel">
   <table class="table">
-    <thead><tr><th>Пользователь</th><th>Тариф</th><th>Статус</th><th>Использовано</th><th>Лимит</th><th>Следующее продление</th></tr></thead>
+    <thead><tr><th>Пользователь</th><th>Тариф</th><th>Общий трафик</th><th>Whitelist</th><th>Начисление</th><th>Долг</th></tr></thead>
     <tbody>
-      {% for item in subscriptions %}
+      {% for subscription in subscriptions %}
       <tr>
-        <td><a href="/admin/users/{{ item.user.id }}">{{ item.user.username or item.user.telegram_id }}</a></td>
-        <td>{{ item.plan.name }}</td>
-        <td>{{ item.status }}</td>
-        <td>{{ item.traffic_used_bytes }}</td>
-        <td>{{ item.traffic_limit_bytes or 'без лимита' }}</td>
-        <td>{{ item.next_billing_at }}</td>
+        <td>{{ subscription.user.username or subscription.user.telegram_id }}</td>
+        <td>{{ subscription.plan.name }}</td>
+        <td>{{ '%.2f'|format(subscription.traffic_used_bytes / 1024**3) }} ГБ</td>
+        <td>{{ '%.2f'|format(subscription.whitelist_traffic_used_bytes / 1024**3) }} ГБ</td>
+        <td>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes / 1024**3) * whitelist_price_per_gb) }} ₽</td>
+        <td>{{ subscription.accrued_debt_rub }} ₽</td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">Подписок пока нет.</td></tr>
+      <tr><td colspan="6" class="muted">Данных по трафику пока нет.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 </section>
 {% endblock %}
-

@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }} | ALTLINK VPN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
 </head>
 <body>
@@ -13,14 +16,14 @@
         <div class="brand-mark">A</div>
         <div>
           <strong>ALTLINK VPN</strong>
-          <div class="muted">Admin Panel</div>
+          <div class="muted">Панель управления</div>
         </div>
       </div>
       <nav class="nav">
         <a class="{{ 'active' if active_nav == 'dashboard' else '' }}" href="/admin/dashboard">Dashboard</a>
         <a class="{{ 'active' if active_nav == 'users' else '' }}" href="/admin/users">Пользователи</a>
         <a class="{{ 'active' if active_nav == 'servers' else '' }}" href="/admin/servers">Серверы</a>
-        <a class="{{ 'active' if active_nav == 'topups' else '' }}" href="/admin/topups">Заявки</a>
+        <a class="{{ 'active' if active_nav == 'topups' else '' }}" href="/admin/topups">Платежи</a>
         <a class="{{ 'active' if active_nav == 'plans' else '' }}" href="/admin/plans">Тарифы</a>
         <a class="{{ 'active' if active_nav == 'transactions' else '' }}" href="/admin/transactions">Транзакции</a>
         <a class="{{ 'active' if active_nav == 'traffic' else '' }}" href="/admin/traffic">Трафик</a>
@@ -40,9 +43,11 @@
           <p class="muted">Администратор: {{ admin.full_name or admin.username }}</p>
         </div>
       </header>
+      {% if flash %}
+      <div class="alert {{ flash.level }}">{{ flash.message }}</div>
+      {% endif %}
       {% block content %}{% endblock %}
     </main>
   </div>
 </body>
 </html>
-
