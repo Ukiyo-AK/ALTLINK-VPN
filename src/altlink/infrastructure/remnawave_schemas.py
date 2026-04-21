@@ -45,7 +45,7 @@ class RemoteNode(BaseSchema):
     lastStatusMessage: str | None = None
     xrayVersion: str | None = None
     nodeVersion: str | None = None
-    xrayUptime: str
+    xrayUptime: int | str | None = None
     isTrafficTrackingActive: bool
     trafficResetDay: int | None = None
     trafficLimitBytes: int | None = None

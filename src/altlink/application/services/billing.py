@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
@@ -512,24 +513,84 @@ class BillingService(BaseService):
             "status": "ACTIVE" if enable else "DISABLED",
             "expireAt": expire_at.isoformat(),
             "trafficLimitBytes": int(subscription.traffic_limit_bytes or 0),
-            "trafficLimitStrategy": "no_reset",
+            "trafficLimitStrategy": "NO_RESET",
             "telegramId": user.telegram_id,
             "description": f"ALTLINK user {user.telegram_id}",
             "activeInternalSquads": squad_ids,
         }
-        if user.remnawave_user_uuid:
-            remote = await self.remnawave.update_user(payload)
-        else:
-            payload.pop("uuid", None)
-            remote = await self.remnawave.create_user(payload)
+        try:
+            if user.remnawave_user_uuid:
+                remote = await self.remnawave.update_user(payload)
+            else:
+                payload.pop("uuid", None)
+                remote = await self.remnawave.create_user(payload)
 
-        user.remnawave_user_uuid = remote.uuid
-        user.remnawave_username = remote.username
-        user.remnawave_short_uuid = remote.shortUuid
-        subscription.remnawave_synced_at = utc_now()
-        if enable:
-            await self.remnawave.enable_user(remote.uuid)
-        else:
-            await self.remnawave.disable_user(remote.uuid)
-        if reset_traffic:
-            await self.remnawave.reset_user_traffic(remote.uuid)
+            user.remnawave_user_uuid = remote.uuid
+            user.remnawave_username = remote.username
+            user.remnawave_short_uuid = remote.shortUuid
+            subscription.remnawave_synced_at = utc_now()
+            if enable:
+                try:
+                    await self.remnawave.enable_user(remote.uuid)
+                except httpx.HTTPStatusError as exc:
+                    if not self._is_ignorable_state_error(exc, "enabled"):
+                        raise
+            else:
+                try:
+                    await self.remnawave.disable_user(remote.uuid)
+                except httpx.HTTPStatusError as exc:
+                    if not self._is_ignorable_state_error(exc, "disabled"):
+                        raise
+            if reset_traffic:
+                await self.remnawave.reset_user_traffic(remote.uuid)
+        except httpx.HTTPStatusError as exc:
+            raise ConflictError(self._format_remnawave_error(exc)) from exc
+
+    def _is_ignorable_state_error(self, exc: httpx.HTTPStatusError, desired_state: str) -> bool:
+        response = exc.response
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+
+        messages: list[str] = []
+        if isinstance(payload, dict):
+            message = payload.get("message")
+            if message:
+                messages.append(str(message))
+            details = payload.get("errors")
+            if isinstance(details, list):
+                for item in details:
+                    if isinstance(item, dict):
+                        detail_message = item.get("message")
+                        if detail_message:
+                            messages.append(str(detail_message))
+
+        haystack = " ".join(messages).lower()
+        return f"already {desired_state}" in haystack
+
+    def _format_remnawave_error(self, exc: httpx.HTTPStatusError) -> str:
+        response = exc.response
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+
+        errors = []
+        if isinstance(payload, dict):
+            details = payload.get("errors")
+            if isinstance(details, list):
+                for item in details:
+                    if isinstance(item, dict):
+                        message = item.get("message") or item.get("code")
+                        path = item.get("path")
+                        if isinstance(path, list) and path:
+                            message = f"{'.'.join(str(part) for part in path)}: {message}"
+                        if message:
+                            errors.append(str(message))
+            message = payload.get("message")
+            if message and not errors:
+                errors.append(str(message))
+
+        detail = "; ".join(errors) if errors else response.text[:300]
+        return f"Remnawave отклонил операцию: {detail}"

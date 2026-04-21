@@ -4,6 +4,7 @@ import base64
 import json
 from decimal import Decimal
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -12,9 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from altlink.domain.billing import bytes_to_gb_cost
-from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType, TopupStatus
+from altlink.domain.enums import BalanceTransactionType, ServerType, TopupStatus
+from altlink.domain.plans import parse_paid_plan_code
 from altlink.infrastructure.db.models import Subscription, SystemSetting, User
-from altlink.application.services.base import ConflictError
+from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.utils.qr import render_qr_png
 from altlink.utils.security import generate_token
 from altlink.utils.telegram_web import check_channel_membership, verify_telegram_auth_payload
@@ -62,6 +64,33 @@ def login_redirect() -> RedirectResponse:
 
 def portal_login_redirect() -> RedirectResponse:
     return RedirectResponse("/portal/login", status_code=303)
+
+
+def portal_login_capabilities(settings) -> tuple[bool, str | None, bool]:
+    parsed = urlparse(settings.backend_public_url)
+    host = (parsed.hostname or "").lower()
+    scheme = (parsed.scheme or "").lower()
+    local_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+    if not host:
+        return (
+            False,
+            "Не задан BACKEND_PUBLIC_URL. Укажите публичный адрес сайта, чтобы Telegram Login Widget смог работать.",
+            True,
+        )
+    if host in local_hosts:
+        return (
+            False,
+            "Telegram Login Widget не работает с localhost и локальными IP. Для локальной разработки используйте вход по Telegram ID ниже.",
+            True,
+        )
+    if scheme != "https":
+        return (
+            False,
+            "Telegram Login Widget требует публичный HTTPS-домен. Переключите BACKEND_PUBLIC_URL на https://ваш-домен.",
+            settings.debug,
+        )
+    return True, None, settings.debug
 
 
 async def resolve_admin(request: Request, hub):
@@ -251,7 +280,10 @@ async def user_trial(request: Request, user_id: str):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await hub.billing.activate_trial(user_id)
+        try:
+            await hub.billing.activate_trial(user_id)
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
@@ -259,13 +291,19 @@ async def user_trial(request: Request, user_id: str):
 async def user_plan(request: Request, user_id: str):
     form = dict(await request.form())
     validate_csrf(request, form)
-    plan_code = PlanCode(form.get("plan_code"))
+    plan_code = parse_paid_plan_code(form.get("plan_code"))
+    if plan_code is None:
+        set_flash(request, "Тариф больше не поддерживается. Обновите страницу и выберите актуальный вариант.", "danger")
+        return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
     charge_user = form.get("charge_user") == "1"
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await hub.billing.activate_paid_plan(user_id, plan_code, charge_user=charge_user, admin_id=admin.id)
+        try:
+            await hub.billing.activate_paid_plan(user_id, plan_code, charge_user=charge_user, admin_id=admin.id)
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
@@ -522,12 +560,18 @@ async def events_page(request: Request):
 async def portal_login_page(request: Request):
     if request.session.get("portal_user_id"):
         return RedirectResponse("/portal", status_code=303)
+    settings = request.app.state.settings
+    widget_enabled, widget_issue, dev_login_enabled = portal_login_capabilities(settings)
     return render(
         request,
         "portal_login.html",
         title="Вход в кабинет",
-        telegram_login_bot=request.app.state.settings.client_bot_name.lstrip("@"),
-        backend_public_url=request.app.state.settings.backend_public_url.rstrip("/"),
+        telegram_login_bot=settings.client_bot_name.lstrip("@"),
+        backend_public_url=settings.backend_public_url.rstrip("/"),
+        telegram_widget_enabled=widget_enabled,
+        telegram_widget_issue=widget_issue,
+        dev_login_enabled=dev_login_enabled,
+        portal_domain=urlparse(settings.backend_public_url).hostname or settings.backend_public_url,
     )
 
 
@@ -553,6 +597,39 @@ async def portal_telegram_auth(request: Request):
         )
         request.session["portal_user_id"] = user.id
     set_flash(request, "Вход через Telegram подтверждён.")
+    return RedirectResponse("/portal", status_code=303)
+
+
+@router.post("/portal/dev-login")
+async def portal_dev_login(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    settings = request.app.state.settings
+    _, _, dev_login_enabled = portal_login_capabilities(settings)
+    if not dev_login_enabled:
+        set_flash(request, "Локальный вход отключён. Используйте Telegram Login Widget.", "danger")
+        return RedirectResponse("/portal/login", status_code=303)
+
+    try:
+        telegram_id = int(str(form.get("telegram_id", "")).strip())
+    except ValueError:
+        set_flash(request, "Укажите корректный Telegram ID.", "danger")
+        return RedirectResponse("/portal/login", status_code=303)
+
+    if telegram_id <= 0:
+        set_flash(request, "Telegram ID должен быть положительным числом.", "danger")
+        return RedirectResponse("/portal/login", status_code=303)
+
+    async with request.app.state.container.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=telegram_id,
+            username=None,
+            first_name="Локальный",
+            last_name="вход",
+            language_code="ru",
+        )
+        request.session["portal_user_id"] = user.id
+    set_flash(request, "Локальный вход выполнен. Этот режим предназначен только для разработки.")
     return RedirectResponse("/portal", status_code=303)
 
 
@@ -587,7 +664,7 @@ async def portal_trial(request: Request):
         try:
             await hub.billing.activate_trial(user.id)
             set_flash(request, "Тестовый период на 2 дня активирован.")
-        except ConflictError as exc:
+        except (ConflictError, NotFoundError, ServiceError) as exc:
             set_flash(request, str(exc), "danger")
     return RedirectResponse("/portal", status_code=303)
 
@@ -596,7 +673,10 @@ async def portal_trial(request: Request):
 async def portal_plan(request: Request):
     form = dict(await request.form())
     validate_csrf(request, form)
-    plan_code = PlanCode(form.get("plan_code"))
+    plan_code = parse_paid_plan_code(form.get("plan_code"))
+    if plan_code is None:
+        set_flash(request, "Тариф больше не поддерживается. Обновите страницу и выберите один из актуальных тарифов.", "danger")
+        return RedirectResponse("/portal", status_code=303)
     async with request.app.state.container.hub() as hub:
         user = await resolve_portal_user(request, hub)
         if user is None:
@@ -607,7 +687,7 @@ async def portal_plan(request: Request):
         try:
             await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
             set_flash(request, "Тариф успешно активирован.")
-        except ConflictError as exc:
+        except (ConflictError, NotFoundError, ServiceError) as exc:
             set_flash(request, str(exc), "danger")
     return RedirectResponse("/portal", status_code=303)
 

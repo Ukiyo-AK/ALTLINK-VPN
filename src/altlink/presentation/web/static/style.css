@@ -320,6 +320,12 @@ textarea {
   color: var(--danger);
 }
 
+.alert.warning {
+  background: rgba(246, 191, 56, 0.14);
+  border-color: rgba(246, 191, 56, 0.28);
+  color: #8a6510;
+}
+
 .hero {
   display: grid;
   gap: 1rem;

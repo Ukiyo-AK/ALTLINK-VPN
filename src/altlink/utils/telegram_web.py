@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 from datetime import UTC, datetime
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 def verify_telegram_auth_payload(
@@ -50,14 +53,28 @@ async def check_channel_membership(
     if not bot_token or not channel:
         return True
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.get(
-            f"https://api.telegram.org/bot{bot_token}/getChatMember",
-            params={"chat_id": channel, "user_id": user_id},
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(
+                f"https://api.telegram.org/bot{bot_token}/getChatMember",
+                params={"chat_id": channel, "user_id": user_id},
+            )
+            payload = response.json()
+            if not response.is_success or not payload.get("ok"):
+                logger.warning(
+                    "Telegram channel membership check failed for channel %s and user %s: %s",
+                    channel,
+                    user_id,
+                    payload.get("description") if isinstance(payload, dict) else response.text,
+                )
+                return False
+            status = (payload.get("result") or {}).get("status")
+            return status in {"creator", "administrator", "member", "restricted"}
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.warning(
+            "Telegram channel membership check errored for channel %s and user %s: %s",
+            channel,
+            user_id,
+            exc,
         )
-        response.raise_for_status()
-        payload = response.json()
-        if not payload.get("ok"):
-            return False
-        status = (payload.get("result") or {}).get("status")
-        return status in {"creator", "administrator", "member", "restricted"}
+        return False

@@ -8,9 +8,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
-from altlink.application.services.base import ConflictError
+from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
-from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType
+from altlink.domain.enums import BalanceTransactionType, ServerType
+from altlink.domain.plans import parse_paid_plan_code
 from altlink.presentation.bots.admin_keyboards import admin_menu, server_actions, user_actions
 
 router = Router(name="admin-router")
@@ -168,17 +169,27 @@ async def user_plan(callback: CallbackQuery, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
         return
     _, _, _, user_id, plan_code = callback.data.split(":")
+    resolved_plan_code = parse_paid_plan_code(plan_code)
+    if resolved_plan_code is None:
+        await callback.message.answer(
+            "Этот тариф больше не поддерживается или кнопка устарела.\n\n"
+            "Откройте карточку пользователя заново и выберите актуальный тариф."
+        )
+        await callback.answer()
+        return
     async with container.hub() as hub:
         admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
         try:
             await hub.billing.activate_paid_plan(
                 user_id,
-                PlanCode(plan_code),
+                resolved_plan_code,
                 charge_user=False,
                 admin_id=admin.id if admin else None,
             )
             text = "Тариф применён без списания."
         except ConflictError as exc:
+            text = str(exc)
+        except (NotFoundError, ServiceError) as exc:
             text = str(exc)
     await callback.message.answer(text)
     await callback.answer()

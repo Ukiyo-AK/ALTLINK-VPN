@@ -8,11 +8,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from altlink.application.services.base import ConflictError
+from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
 from altlink.domain.billing import bytes_to_gb_cost
-from altlink.domain.enums import PlanCode, ServerType
-from altlink.domain.plans import WHITELIST_GB_PRICE_RUB
+from altlink.domain.enums import ServerType
+from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, parse_paid_plan_code
 from altlink.presentation.bots.client_keyboards import (
     balance_actions,
     channel_gate_actions,
@@ -369,6 +369,8 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
             )
         except ConflictError as exc:
             text = str(exc)
+        except (NotFoundError, ServiceError) as exc:
+            text = str(exc)
     await callback.message.edit_text(text)
     await callback.answer()
 
@@ -377,7 +379,14 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
 async def activate_plan(callback: CallbackQuery, container: AppContainer):
     if not await ensure_channel_access(callback, container):
         return
-    plan_code = PlanCode(callback.data.split(":")[-1])
+    plan_code = parse_paid_plan_code(callback.data.split(":")[-1])
+    if plan_code is None:
+        await callback.message.edit_text(
+            "Этот тариф больше не поддерживается или кнопка устарела.\n\n"
+            "Откройте меню тарифов заново и выберите один из актуальных вариантов."
+        )
+        await callback.answer()
+        return
     async with container.hub() as hub:
         user = await ensure_user(callback.from_user, container, hub)
         try:
@@ -388,6 +397,8 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
             )
         except ConflictError as exc:
             text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
+        except (NotFoundError, ServiceError) as exc:
+            text = str(exc)
     await callback.message.edit_text(text)
     await callback.answer()
 

@@ -42,3 +42,19 @@ DEFAULT_PLAN_SEEDS = [
         "sort_order": 20,
     },
 ]
+
+
+def parse_plan_code(raw_value: str | None) -> PlanCode | None:
+    if raw_value is None:
+        return None
+    try:
+        return PlanCode(raw_value)
+    except ValueError:
+        return None
+
+
+def parse_paid_plan_code(raw_value: str | None) -> PlanCode | None:
+    plan_code = parse_plan_code(raw_value)
+    if plan_code in {None, PlanCode.TRIAL}:
+        return None
+    return plan_code

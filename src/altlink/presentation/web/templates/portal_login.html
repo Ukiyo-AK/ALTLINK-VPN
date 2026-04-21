@@ -33,14 +33,40 @@
         </p>
       </div>
 
-      <div class="panel">
+      {% if telegram_widget_enabled %}
+      <div class="panel stack">
         <script async src="https://telegram.org/js/telegram-widget.js?22"
                 data-telegram-login="{{ telegram_login_bot }}"
                 data-size="large"
                 data-radius="12"
                 data-auth-url="{{ backend_public_url }}/portal/auth/telegram"
                 data-request-access="write"></script>
+        <div class="muted">
+          Если Telegram показывает ошибку <strong>Bot domain invalid</strong>, откройте BotFather для клиентского бота
+          и выполните <code>/setdomain</code>, указав домен <code>{{ portal_domain }}</code>.
+        </div>
       </div>
+      {% else %}
+      <div class="alert warning">
+        {{ telegram_widget_issue }}
+      </div>
+      {% endif %}
+
+      {% if dev_login_enabled %}
+      <form method="post" action="/portal/dev-login" class="panel stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <h2>Локальный вход</h2>
+        <p class="muted">
+          Этот режим нужен для локальной разработки, когда сайт открыт на <code>localhost</code> и Telegram Login Widget не может
+          проверить домен. Введите свой Telegram ID, чтобы сайт и бот продолжили работать с одним и тем же аккаунтом.
+        </p>
+        <label>
+          <span>Telegram ID</span>
+          <input type="number" name="telegram_id" min="1" required>
+        </label>
+        <button type="submit" class="button full">Войти локально</button>
+      </form>
+      {% endif %}
 
       <div class="muted">
         После входа вы сможете запустить тестовый период, пополнить баланс, выбрать тариф

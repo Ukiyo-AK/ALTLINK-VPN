@@ -333,7 +333,7 @@ class CatalogService(BaseService):
                     "status": "ACTIVE" if user.status in {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE} else "DISABLED",
                     "expireAt": expire_at.isoformat(),
                     "trafficLimitBytes": int(subscription.traffic_limit_bytes or 0),
-                    "trafficLimitStrategy": "no_reset",
+                    "trafficLimitStrategy": "NO_RESET",
                     "telegramId": user.telegram_id,
                     "description": f"ALTLINK user {user.telegram_id}",
                     "activeInternalSquads": squad_ids,

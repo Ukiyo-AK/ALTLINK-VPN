@@ -19,6 +19,7 @@ from altlink.settings import Settings
 class ServiceHub:
     def __init__(self, session: AsyncSession, settings: Settings, remnawave: RemnawaveGateway) -> None:
         self.session = session
+        self.settings = settings
         self.notifications = NotificationService(session, settings, remnawave)
         self.accounts = AccountService(session, settings, remnawave)
         self.catalog = CatalogService(session, settings, remnawave)
