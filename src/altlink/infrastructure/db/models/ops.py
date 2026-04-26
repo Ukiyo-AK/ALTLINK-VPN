@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from altlink.domain.enums import NotificationStatus, NotificationType, SystemEventLevel
+from altlink.domain.enums import NotificationStatus, NotificationType, SupportRequestStatus, SystemEventLevel
 from altlink.infrastructure.db.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, enum_values
 
 if TYPE_CHECKING:
@@ -52,6 +52,25 @@ class Notification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user: Mapped["User"] = relationship(back_populates="notifications")
 
 
+class SupportRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "support_requests"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    resolved_by_admin_id: Mapped[str | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    status: Mapped[SupportRequestStatus] = mapped_column(
+        enum_values(SupportRequestStatus), default=SupportRequestStatus.NEW, nullable=False
+    )
+    topic: Mapped[str] = mapped_column(String(64), default="vpn_issue", nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    resolution_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user: Mapped["User"] = relationship(back_populates="support_requests")
+    resolved_by_admin: Mapped["AdminUser | None"] = relationship(back_populates="resolved_support_requests")
+
+
 class OnlineSessionCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "online_sessions_cache"
 
@@ -95,4 +114,3 @@ class SystemEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     actor_admin: Mapped["AdminUser | None"] = relationship(back_populates="system_events")
-

@@ -31,8 +31,11 @@ class Settings(BaseSettings):
     admin_allowed_telegram_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     client_bot_name: str = "altlink"
     admin_bot_name: str = "admin altlink bot"
-    required_subscription_channel: str = ""
-    required_subscription_channel_url: str = ""
+    required_subscription_channel: str = "@altlink_channel"
+    required_subscription_channel_url: str = "https://t.me/altlink_channel"
+    support_username: str = "@altlink_support"
+    user_agreement_telegraph_url: str = "https://telegra.ph/ALTLINK-VPN--Polzovatelskoe-soglashenie-04-22"
+    privacy_policy_telegraph_url: str = "https://telegra.ph/ALTLINK-VPN--Politika-konfidencialnosti-04-22"
     telegram_auth_max_age_seconds: int = 300
 
     remnawave_base_url: str = ""
@@ -46,7 +49,7 @@ class Settings(BaseSettings):
     billing_period_days: int = 30
     grace_period_days: int = 14
     low_balance_threshold_rub: int = 50
-    unlimited_plan_price_rub: int = 200
+    unlimited_plan_price_rub: int = 199
     single_server_plan_price_rub: int = 69
     whitelist_price_per_gb_rub: int = 4
     traffic_notification_thresholds: Annotated[list[int], NoDecode] = Field(
@@ -59,6 +62,32 @@ class Settings(BaseSettings):
     notification_dispatch_interval_minutes: int = 2
     online_refresh_interval_minutes: int = 30
     heartbeat_max_age_seconds: int = 180
+
+    @field_validator("required_subscription_channel", mode="before")
+    @classmethod
+    def _normalize_required_channel(cls, value: object) -> str:
+        if value is None:
+            return "@altlink_channel"
+        if isinstance(value, str) and not value.strip():
+            return "@altlink_channel"
+        raw = str(value).strip()
+        if raw.startswith("https://t.me/") or raw.startswith("http://t.me/"):
+            raw = raw.split("://", 1)[-1].split("/", 1)[-1].strip("/")
+        if raw.startswith("@") or raw.startswith("-100") or raw.lstrip("-").isdigit():
+            return raw
+        return f"@{raw.lstrip('@')}"
+
+    @field_validator("required_subscription_channel_url", mode="before")
+    @classmethod
+    def _normalize_required_channel_url(cls, value: object) -> str:
+        if value is None:
+            return "https://t.me/altlink_channel"
+        if isinstance(value, str) and not value.strip():
+            return "https://t.me/altlink_channel"
+        raw = str(value).strip()
+        if raw.startswith("https://") or raw.startswith("http://"):
+            return raw
+        return f"https://t.me/{raw.lstrip('@')}"
 
     @field_validator("admin_allowed_telegram_ids", mode="before")
     @classmethod

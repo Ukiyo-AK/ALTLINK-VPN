@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} | ALTLINK VPN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <div class="landing-shell">
+    <header class="landing-topbar">
+      <a class="brand" href="/" style="margin: 0;">
+        <img class="brand-logo" src="{{ url_for('media', path='logo.png') }}" alt="ALTLINK VPN">
+        <div>
+          <strong>ALTLINK VPN</strong>
+          <div class="muted">Стабильный VPN с быстрым подключением</div>
+        </div>
+      </a>
+      <div class="landing-nav">
+        <a href="{{ connection_help_url }}">Подключение</a>
+        <a href="{{ agreement_page_url }}">Соглашение</a>
+        <a href="{{ privacy_page_url }}">Конфиденциальность</a>
+      </div>
+    </header>
+
+    <section class="landing-hero panel" style="position: relative; min-height: 29rem; padding-right: clamp(1.4rem, 3vw, 2rem); overflow: hidden; isolation: isolate;">
+      <div class="landing-copy" style="max-width: min(58rem, 92%);">
+        <span class="badge gold">Быстро. Стабильно. По честной цене.</span>
+        <h1>ALTLINK VPN</h1>
+        <p class="muted">
+          Быстрый и стабильный VPN без сложных настроек. 
+          Выбирайте тариф, пополняйте баланс и управляйте доступом через сайт или Telegram-бота.
+        </p>
+        <div class="landing-actions">
+          <a class="button" href="{{ portal_login_url }}">Открыть личный кабинет</a>
+          {% if client_bot_url %}
+          <a class="button ghost" href="{{ client_bot_url }}" target="_blank" rel="noreferrer">Открыть Telegram-бота</a>
+          {% endif %}
+        </div>
+        <div class="landing-feature-list">
+          <span class="badge">от 25 ₽ в неделю</span>
+          <span class="badge">высокая скорость на основных серверах</span>
+          <span class="badge">быстрое подключение по ссылке и QR</span>
+          <span class="badge">кабинет и бот работают синхронно</span>
+        </div>
+        <div class="landing-metrics">
+          <article class="card">
+            <div class="muted">Тариф Start</div>
+            <strong>25 ₽ / неделя</strong>
+          </article>
+          <article class="card">
+            <div class="muted">Тариф Pro</div>
+            <strong>199 ₽ / месяц</strong>
+          </article>
+          <article class="card">
+            <div class="muted">Поддержка</div>
+            <strong>{{ support_username or '@support_placeholder' }}</strong>
+          </article>
+        </div>
+      </div>
+      <div
+        class="landing-hero-mark"
+        aria-hidden="true"
+        style="
+          position: absolute;
+          top: 50%;
+          right: -18rem;
+          width: min(66rem, 96vw);
+          height: min(66rem, 245%);
+          transform: translateY(-50%);
+          z-index: 0;
+          opacity: 0.115;
+          pointer-events: none;
+          background: url('{{ url_for('media', path='logo without background.png') }}') right center / contain no-repeat;
+          filter: blur(0.35px) saturate(0.82) drop-shadow(0 14px 22px rgba(13, 143, 119, 0.08));
+        "></div>
+
+    </section>
+
+    <section class="grid-three landing-benefits">
+      <article class="panel stack">
+        <span class="badge">Скорость</span>
+        <h3>Быстрые основные серверы</h3>
+        <p class="muted">
+          Основной трафик идёт через быстрые серверы для повседневной работы, браузера и стриминга,
+          без ощущения тяжёлого и перегруженного VPN.
+        </p>
+      </article>
+      <article class="panel stack">
+        <span class="badge gold">Стабильность</span>
+        <h3>Подключение, на которое можно рассчитывать</h3>
+        <p class="muted">
+          Даже если нужно сменить тариф, пополнить баланс или заново импортировать конфиг,
+          всё остаётся под рукой и не требует лишних действий.
+        </p>
+      </article>
+      <article class="panel stack">
+        <span class="badge warning">Цена</span>
+        <h3>Низкий вход и понятные тарифы</h3>
+        <p class="muted">
+          Можно начать с короткого периода, проверить качество связи и только потом перейти
+          на постоянный формат без перегруженной сетки тарифов и лишних ограничений.
+        </p>
+      </article>
+    </section>
+
+    <section class="panel stack landing-latency">
+      <div class="split landing-latency-head">
+        <div class="stack compact">
+          <span class="badge">Проверка задержки</span>
+          <h2>Измерьте отклик от {{ latency_target_label }}</h2>
+        </div>
+        <button class="button" type="button" id="latency-button">Проверить задержку</button>
+      </div>
+      <div class="landing-latency-card" id="latency-card">
+        <strong id="latency-value">—</strong>
+        <div class="muted" id="latency-hint">Нажмите кнопку, чтобы запустить измерение.</div>
+        <div class="landing-latency-list" id="latency-list"></div>
+      </div>
+      <p class="muted latency-disclaimer">{{ latency_disclaimer }}</p>
+    </section>
+
+    <section class="panel stack landing-story">
+      <div class="split">
+        <h2>Что получает пользователь</h2>
+        <span class="badge">Без сложного старта</span>
+      </div>
+      <div class="grid-two">
+        <article class="panel stack landing-story-card">
+          <h3>Простой вход</h3>
+          <p class="muted">
+            Зарегистрировались, подтвердили доступ и сразу видите свою подписку, баланс и ссылку для подключения.
+            Никакой лишней настройки перед первым запуском.
+          </p>
+        </article>
+        <article class="panel stack landing-story-card">
+          <h3>Управление там, где удобно</h3>
+          <p class="muted">
+            Telegram-бот и кабинет работают как единая система, но это остаётся удобным дополнением.
+            Главное здесь — качество соединения, а не лишняя сложность вокруг него.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel stack">
+      <div class="split">
+        <h2>Тарифы</h2>
+        <span class="badge gold">С выбором срока внутри тарифа</span>
+      </div>
+      <div class="grid-two">
+        {% for group in portal_plan_groups %}
+        <article class="panel plan-card">
+          <div class="split">
+            <h3>{{ group.title }}</h3>
+            <span class="badge">до {{ group.device_limit or '—' }} устройств</span>
+          </div>
+          <p>{{ group.description }}</p>
+          <div class="stack compact">
+            {% for period in group.periods %}
+            <div class="plan-period landing-plan-period">
+              <div>
+                <strong>{{ period.label }}</strong>
+                <div class="muted">{{ period.caption }}</div>
+              </div>
+              <div class="plan-period-price">{{ period.price_rub }} ₽</div>
+            </div>
+            {% endfor %}
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (() => {
+      const button = document.getElementById("latency-button");
+      const value = document.getElementById("latency-value");
+      const hint = document.getElementById("latency-hint");
+      const card = document.getElementById("latency-card");
+      const list = document.getElementById("latency-list");
+      const endpoint = {{ latency_api_url | tojson }};
+      const disclaimer = {{ latency_disclaimer | tojson }};
+
+      if (!button || !value || !hint || !card || !list) {
+        return;
+      }
+
+      button.addEventListener("click", async () => {
+        button.disabled = true;
+        value.textContent = "…";
+        hint.textContent = "Измеряем задержку от российского сервера ALTLINK до зарубежных нод.";
+        list.innerHTML = "";
+        card.classList.remove("is-error");
+        try {
+          const response = await fetch(`${endpoint}?ts=${Date.now()}`, {
+            cache: "no-store",
+            headers: { "X-Requested-With": "latency-check" },
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const payload = await response.json();
+          const probes = Array.isArray(payload.probes) ? payload.probes : [];
+          const reachable = probes.filter((item) => item.reachable && typeof item.latency_ms === "number");
+          const best = reachable.length ? Math.min(...reachable.map((item) => item.latency_ms)) : null;
+          const recheckedCount = probes.filter((item) => item.rechecked).length;
+
+          value.textContent = best === null ? "н/д" : `${best} мс`;
+          hint.textContent = probes.length
+            ? `Панель проверила ${probes.length} зарубежных серверов.`
+            : "Сейчас нет доступных зарубежных серверов для замера.";
+
+          list.innerHTML = probes.map((item) => {
+            const latency = item.reachable && typeof item.latency_ms === "number"
+              ? `${item.latency_ms} мс`
+              : "недоступно";
+            return `
+              <div class="landing-latency-item${item.reachable ? "" : " is-error"}">
+                <span>${item.name} · ${item.country_code}</span>
+                <strong>${latency}</strong>
+              </div>
+            `;
+          }).join("");
+        } catch (error) {
+          value.textContent = "—";
+          hint.textContent = `Не удалось получить данные по зарубежным серверам. Попробуйте ещё раз. ${disclaimer}`;
+          list.innerHTML = "";
+          card.classList.add("is-error");
+        } finally {
+          button.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

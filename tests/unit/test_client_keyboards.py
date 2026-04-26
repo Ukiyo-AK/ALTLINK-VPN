@@ -1,0 +1,128 @@
+from __future__ import annotations
+
+from altlink.domain.plans import (
+    SINGLE_10GBIT_MONTHLY_PRICE_RUB,
+    SINGLE_10GBIT_WEEKLY_PRICE_RUB,
+    UNLIMITED_MONTHLY_PRICE_RUB,
+    UNLIMITED_WEEKLY_PRICE_RUB,
+)
+from altlink.presentation.bots.client_keyboards import (
+    agreement_actions,
+    balance_actions,
+    channel_actions,
+    main_menu,
+    menu_actions,
+    plan_actions,
+    plan_period_actions,
+    subscription_actions,
+)
+
+
+def keyboard_rows(markup) -> list[list[str]]:
+    return [[button.text for button in row] for row in markup.keyboard]
+
+
+def inline_rows(markup) -> list[list[str]]:
+    return [[button.text for button in row] for row in markup.inline_keyboard]
+
+
+def inline_buttons(markup) -> list[dict]:
+    return [button.model_dump(exclude_none=True) for row in markup.inline_keyboard for button in row]
+
+
+def test_main_menu_matches_new_navigation():
+    markup = main_menu()
+    assert keyboard_rows(markup) == [["Меню", "Поддержка"], ["Профиль", "Сайт"]]
+    assert markup.is_persistent is True
+
+
+def test_menu_actions_include_trial_and_styles():
+    markup = menu_actions(show_trial=True, share_url="https://example.com").as_markup()
+    rows = inline_rows(markup)
+    flat = [text for row in rows for text in row]
+    buttons = inline_buttons(markup)
+    assert "Баланс" in flat
+    assert "Подписка" in flat
+    assert "Поддержка" in flat
+    assert "Поделиться VPN" in flat
+    assert "Тест на 2 дня" in flat
+    assert rows[-1] == ["Тест на 2 дня"]
+    balance_button = next(button for button in buttons if button["text"] == "Баланс")
+    share_button = next(button for button in buttons if button["text"] == "Поделиться VPN")
+    support_button = next(button for button in buttons if button["text"] == "Поддержка")
+    trial_button = next(button for button in buttons if button["text"] == "Тест на 2 дня")
+    assert balance_button["style"] == "primary"
+    assert share_button["style"] == "success"
+    assert support_button["style"] == "primary"
+    assert trial_button["style"] == "success"
+
+
+def test_balance_actions_make_history_primary():
+    buttons = inline_buttons(balance_actions().as_markup())
+    history_button = next(button for button in buttons if button["text"] == "История платежей")
+    assert history_button["style"] == "primary"
+
+
+def test_agreement_actions_change_after_confirmation():
+    pending = agreement_actions(consent_accepted=False).as_markup()
+    pending_flat = [text for row in inline_rows(pending) for text in row]
+    assert pending_flat == ["Подтвердить соглашение"]
+    assert inline_buttons(pending)[0]["style"] == "success"
+
+    accepted = agreement_actions(consent_accepted=True).as_markup()
+    accepted_flat = [text for row in inline_rows(accepted) for text in row]
+    assert accepted_flat == ["Соглашение подтверждено", "Меню"]
+
+
+def test_channel_actions_include_subscription_check():
+    markup = channel_actions("https://t.me/altlink_channel").as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+    buttons = inline_buttons(markup)
+    assert "Подписаться на канал" in flat
+    assert "Проверить подписку" in flat
+    subscribe_button = next(button for button in buttons if button["text"] == "Подписаться на канал")
+    check_button = next(button for button in buttons if button["text"] == "Проверить подписку")
+    assert subscribe_button["style"] == "primary"
+    assert check_button["style"] == "success"
+
+
+def test_subscription_actions_render_cancel_and_hide_traffic():
+    metered_flat = [
+        text
+        for row in inline_rows(
+            subscription_actions(show_traffic=True, can_cancel=True, auto_renew_disabled=False).as_markup()
+        )
+        for text in row
+    ]
+    assert "Трафик и списания" in metered_flat
+    assert "Отказаться от подписки" in metered_flat
+
+    unlimited_flat = [
+        text
+        for row in inline_rows(
+            subscription_actions(show_traffic=False, can_cancel=False, auto_renew_disabled=False).as_markup()
+        )
+        for text in row
+    ]
+    assert "Трафик и списания" not in unlimited_flat
+
+
+def test_plan_actions_switch_to_two_step_flow():
+    markup = plan_actions().as_markup()
+    rows = inline_rows(markup)
+    flat = [text for row in rows for text in row]
+    assert rows[0] == ["Start", "Pro"]
+    assert "Меню" in flat
+
+
+def test_plan_period_actions_show_expected_prices():
+    ten_gbit_markup = plan_period_actions("10gbit").as_markup()
+    ten_gbit_flat = [text for row in inline_rows(ten_gbit_markup) for text in row]
+    assert f"На месяц • {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽" in ten_gbit_flat
+    assert f"На неделю • {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽" in ten_gbit_flat
+    assert "Назад к тарифам" in ten_gbit_flat
+
+    unlimited_markup = plan_period_actions("unlimited").as_markup()
+    unlimited_flat = [text for row in inline_rows(unlimited_markup) for text in row]
+    assert f"На месяц • {UNLIMITED_MONTHLY_PRICE_RUB} ₽" in unlimited_flat
+    assert f"На неделю • {UNLIMITED_WEEKLY_PRICE_RUB} ₽" in unlimited_flat

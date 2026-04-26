@@ -1,68 +1,217 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from altlink.domain.enums import PlanCode
+from altlink.domain.plans import (
+    SINGLE_10GBIT_MONTHLY_PRICE_RUB,
+    SINGLE_10GBIT_WEEKLY_PRICE_RUB,
+    UNLIMITED_MONTHLY_PRICE_RUB,
+    UNLIMITED_WEEKLY_PRICE_RUB,
+)
 
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Профиль"), KeyboardButton(text="Подписка")],
-            [KeyboardButton(text="Баланс"), KeyboardButton(text="Серверы")],
-            [KeyboardButton(text="Сайт"), KeyboardButton(text="Помощь")],
+            [KeyboardButton(text="Меню"), KeyboardButton(text="Поддержка")],
+            [KeyboardButton(text="Профиль"), KeyboardButton(text="Сайт")],
         ],
+        input_field_placeholder="Выберите раздел",
+        is_persistent=True,
         resize_keyboard=True,
     )
 
 
-def channel_gate_actions(channel_url: str | None = None) -> InlineKeyboardBuilder:
+def channel_actions(channel_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if channel_url:
-        builder.row(InlineKeyboardButton(text="Подписаться на канал", url=channel_url))
-    builder.button(text="Проверить подписку", callback_data="client:check_channel")
-    builder.adjust(1)
+        builder.button(text="Подписаться на канал", url=channel_url, style="primary")
+    builder.button(text="Проверить подписку", callback_data="client:check_channel", style="success")
+    builder.adjust(2)
+    return builder
+
+
+def agreement_actions(consent_accepted: bool = False) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="Соглашение подтверждено" if consent_accepted else "Подтвердить соглашение",
+        callback_data="client:complete_registration",
+        style="success",
+    )
+    if consent_accepted:
+        builder.button(text="Меню", callback_data="client:home", style="primary")
+        builder.adjust(1, 1)
+    else:
+        builder.adjust(1)
+    return builder
+
+
+def menu_actions(*, show_trial: bool, share_url: str | None = None) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Баланс", callback_data="client:balance", style="primary")
+    builder.button(text="Подписка", callback_data="client:subscription", style="primary")
+    if share_url:
+        builder.button(text="Поделиться VPN", url=share_url, style="success")
+    builder.button(text="Поддержка", callback_data="client:support", style="primary")
+    if show_trial:
+        builder.button(text="Тест на 2 дня", callback_data="client:trial_activate", style="success")
+    row_sizes = [2, 2 if share_url else 1]
+    if show_trial:
+        row_sizes.append(1)
+    builder.adjust(*row_sizes)
     return builder
 
 
 def balance_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Пополнить баланс", callback_data="client:topup_menu")
-    builder.button(text="История платежей", callback_data="client:my_topups")
-    builder.adjust(1)
+    builder.button(text="Пополнить баланс", callback_data="client:topup_menu", style="success")
+    builder.button(text="История платежей", callback_data="client:my_topups", style="primary")
+    builder.button(text="Промокод", callback_data="client:promo_prompt", style="primary")
+    builder.button(text="Рефералка", callback_data="client:referral", style="success")
+    builder.button(text="Меню", callback_data="client:home")
+    builder.adjust(2, 2, 1)
     return builder
 
 
-def subscription_actions() -> InlineKeyboardBuilder:
+def profile_actions(
+    *,
+    agreement_url: str | None = None,
+    privacy_url: str | None = None,
+    share_url: str | None = None,
+) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Выбрать тариф", callback_data="client:plan_menu")
-    builder.button(text="Запустить тест на 2 дня", callback_data="client:trial_activate")
-    builder.button(text="Моя ссылка", callback_data="client:subscription_link")
-    builder.button(text="QR-код", callback_data="client:subscription_qr")
-    builder.button(text="Трафик и списания", callback_data="client:traffic")
-    builder.adjust(1)
+    if agreement_url:
+        builder.button(text="Пользовательское соглашение", url=agreement_url, style="primary")
+    if privacy_url:
+        builder.button(text="Политика конфиденциальности", url=privacy_url)
+    if share_url:
+        builder.button(text="Поделиться VPN", url=share_url, style="success")
+    builder.button(text="Подписка", callback_data="client:subscription", style="primary")
+    builder.button(text="Меню", callback_data="client:home")
+    row_sizes: list[int] = []
+    if agreement_url or privacy_url:
+        row_sizes.append(2 if agreement_url and privacy_url else 1)
+    if share_url:
+        row_sizes.append(1)
+    row_sizes.extend([1, 1])
+    builder.adjust(*row_sizes)
+    return builder
+
+
+def subscription_actions(
+    *,
+    show_traffic: bool,
+    can_cancel: bool,
+    auto_renew_disabled: bool,
+) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Выбрать тариф", callback_data="client:plan_menu", style="primary")
+    builder.button(text="Моя ссылка", callback_data="client:subscription_link", style="primary")
+    if show_traffic:
+        builder.button(text="Трафик и списания", callback_data="client:traffic")
+    if can_cancel and not auto_renew_disabled:
+        builder.button(text="Отказаться от подписки", callback_data="client:subscription_cancel", style="danger")
+    if can_cancel and auto_renew_disabled:
+        builder.button(text="Включить продление", callback_data="client:subscription_resume", style="success")
+    builder.button(text="Меню", callback_data="client:home")
+    rows = [2]
+    second_row = int(show_traffic) + int(can_cancel)
+    if second_row:
+        rows.append(second_row)
+    rows.append(1)
+    builder.adjust(*rows)
+    return builder
+
+
+def subscription_link_actions(*, show_traffic: bool, help_url: str | None = None) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    if help_url:
+        builder.button(text="Помощь по подключению", url=help_url, style="primary")
+    if show_traffic:
+        builder.button(text="Трафик и списания", callback_data="client:traffic")
+    builder.button(text="Подписка", callback_data="client:subscription", style="primary")
+    builder.button(text="Меню", callback_data="client:home")
+    row_sizes: list[int] = []
+    if help_url:
+        row_sizes.append(1)
+    row_sizes.append(2 if show_traffic else 1)
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
+    return builder
+
+
+def support_actions(support_url: str | None = None) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    if support_url:
+        builder.button(text="Аккаунт поддержки", url=support_url, style="primary")
+    builder.button(text="Не работает VPN?", callback_data="client:support_issue", style="primary")
+    builder.button(text="Меню", callback_data="client:home")
+    builder.adjust(2, 1)
+    return builder
+
+
+def site_actions(site_url: str | None = None, portal_url: str | None = None) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    if site_url:
+        builder.button(text="Открыть сайт", url=site_url, style="primary")
+    if portal_url:
+        builder.button(text="Личный кабинет", url=portal_url, style="success")
+    builder.button(text="Меню", callback_data="client:home")
+    row_sizes: list[int] = []
+    links_count = int(bool(site_url)) + int(bool(portal_url))
+    if links_count:
+        row_sizes.append(links_count)
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
     return builder
 
 
 def plan_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="Один сервер 10 Гбит • 69 ₽",
-        callback_data=f"client:activate_plan:{PlanCode.SINGLE_10GBIT.value}",
-    )
-    builder.button(
-        text="Безлимит • 200 ₽",
-        callback_data=f"client:activate_plan:{PlanCode.UNLIMITED.value}",
-    )
-    builder.adjust(1)
+    builder.button(text="Start", callback_data="client:plan_family:10gbit", style="primary")
+    builder.button(text="Pro", callback_data="client:plan_family:unlimited", style="primary")
+    builder.button(text="Меню", callback_data="client:home")
+    builder.adjust(2, 1)
+    return builder
+
+
+def plan_period_actions(family: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    if family == "10gbit":
+        builder.button(
+            text=f"На месяц • {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
+            callback_data=f"client:activate_plan:{PlanCode.SINGLE_10GBIT.value}",
+            style="primary",
+        )
+        builder.button(
+            text=f"На неделю • {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽",
+            callback_data=f"client:activate_plan:{PlanCode.SINGLE_10GBIT_WEEKLY.value}",
+            style="primary",
+        )
+    else:
+        builder.button(
+            text=f"На месяц • {UNLIMITED_MONTHLY_PRICE_RUB} ₽",
+            callback_data=f"client:activate_plan:{PlanCode.UNLIMITED.value}",
+            style="primary",
+        )
+        builder.button(
+            text=f"На неделю • {UNLIMITED_WEEKLY_PRICE_RUB} ₽",
+            callback_data=f"client:activate_plan:{PlanCode.UNLIMITED_WEEKLY.value}",
+            style="primary",
+        )
+    builder.button(text="Назад к тарифам", callback_data="client:plan_menu")
+    builder.button(text="Меню", callback_data="client:home")
+    builder.adjust(1, 1, 1, 1)
     return builder
 
 
 def topup_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     for amount in (100, 300, 500, 1000):
-        builder.button(text=f"{amount} ₽", callback_data=f"client:topup_amount:{amount}")
-    builder.button(text="Своя сумма", callback_data="client:topup_custom")
-    builder.adjust(2, 2, 1)
+        builder.button(text=f"{amount} ₽", callback_data=f"client:topup_amount:{amount}", style="success")
+    builder.button(text="Своя сумма", callback_data="client:topup_custom", style="primary")
+    builder.button(text="Меню", callback_data="client:home")
+    builder.adjust(2, 2, 1, 1)
     return builder

@@ -20,6 +20,9 @@ from altlink.application.services.billing import BillingService
 from altlink.application.services.catalog import CatalogService
 from altlink.application.services.dashboard import DashboardService
 from altlink.application.services.notifications import NotificationService
+from altlink.application.services.online import OnlineService
+from altlink.application.services.promos import PromoService
+from altlink.application.services.support import SupportService
 from altlink.application.services.topups import TopupService
 from altlink.db import session_scope
 from altlink.domain.enums import ServerType
@@ -79,6 +82,7 @@ class FakeRemnawave:
             short_uuid=short_uuid,
             status=payload.get("status", "ACTIVE"),
             traffic_limit_bytes=int(payload.get("trafficLimitBytes", 0)),
+            hwid_device_limit=payload.get("hwidDeviceLimit"),
             active_squads=payload.get("activeInternalSquads", []),
         )
         self.users[user_uuid] = remote
@@ -96,6 +100,7 @@ class FakeRemnawave:
             short_uuid=remote.shortUuid,
             status=payload.get("status", remote.status),
             traffic_limit_bytes=int(payload.get("trafficLimitBytes", remote.trafficLimitBytes)),
+            hwid_device_limit=payload.get("hwidDeviceLimit", remote.hwidDeviceLimit),
             used_bytes=remote.userTraffic.usedTrafficBytes,
             lifetime_used_bytes=remote.userTraffic.lifetimeUsedTrafficBytes,
             active_squads=payload.get("activeInternalSquads", [item.uuid for item in remote.activeInternalSquads]),
@@ -113,6 +118,7 @@ class FakeRemnawave:
             short_uuid=user.shortUuid,
             status="ACTIVE",
             traffic_limit_bytes=user.trafficLimitBytes,
+            hwid_device_limit=user.hwidDeviceLimit,
             used_bytes=user.userTraffic.usedTrafficBytes,
             lifetime_used_bytes=user.userTraffic.lifetimeUsedTrafficBytes,
             active_squads=[item.uuid for item in user.activeInternalSquads],
@@ -129,6 +135,7 @@ class FakeRemnawave:
             short_uuid=user.shortUuid,
             status="DISABLED",
             traffic_limit_bytes=user.trafficLimitBytes,
+            hwid_device_limit=user.hwidDeviceLimit,
             used_bytes=user.userTraffic.usedTrafficBytes,
             lifetime_used_bytes=user.userTraffic.lifetimeUsedTrafficBytes,
             active_squads=[item.uuid for item in user.activeInternalSquads],
@@ -145,6 +152,7 @@ class FakeRemnawave:
             short_uuid=user.shortUuid,
             status=user.status,
             traffic_limit_bytes=user.trafficLimitBytes,
+            hwid_device_limit=user.hwidDeviceLimit,
             used_bytes=0,
             lifetime_used_bytes=user.userTraffic.lifetimeUsedTrafficBytes,
             active_squads=[item.uuid for item in user.activeInternalSquads],
@@ -360,6 +368,7 @@ class FakeRemnawave:
         short_uuid: str,
         status: str,
         traffic_limit_bytes: int,
+        hwid_device_limit: int | None = None,
         used_bytes: int = 0,
         lifetime_used_bytes: int = 0,
         active_squads: list[str] | None = None,
@@ -382,7 +391,7 @@ class FakeRemnawave:
             email=None,
             description=None,
             tag=None,
-            hwidDeviceLimit=None,
+            hwidDeviceLimit=hwid_device_limit,
             externalSquadUuid=None,
             trojanPassword="trojan-password",
             vlessUuid=str(uuid4()),
@@ -418,6 +427,9 @@ class TestServices:
             notifications = NotificationService(session, self.settings, self.remnawave)
             accounts = AccountService(session, self.settings, self.remnawave)
             catalog = CatalogService(session, self.settings, self.remnawave)
+            online = OnlineService(session, self.settings, self.remnawave)
+            support = SupportService(session, self.settings, self.remnawave)
+            promos = PromoService(session=session, settings=self.settings, remnawave=self.remnawave, accounts=accounts)
             billing = BillingService(
                 session=session,
                 settings=self.settings,
@@ -425,6 +437,7 @@ class TestServices:
                 accounts=accounts,
                 catalog=catalog,
                 notifications=notifications,
+                promos=promos,
             )
             topups = TopupService(
                 session=session,
@@ -441,6 +454,9 @@ class TestServices:
                 notifications=notifications,
                 accounts=accounts,
                 catalog=catalog,
+                online=online,
+                support=support,
+                promos=promos,
                 billing=billing,
                 topups=topups,
                 dashboard=dashboard,

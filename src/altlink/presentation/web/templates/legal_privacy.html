@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} | ALTLINK VPN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <div class="portal-shell">
+    <header class="portal-topbar">
+      <a class="brand" href="/" style="margin: 0;">
+        <img class="brand-logo" src="{{ url_for('media', path='logo.png') }}" alt="ALTLINK VPN">
+        <div>
+          <strong>ALTLINK VPN</strong>
+          <div class="muted">Юридические документы</div>
+        </div>
+      </a>
+      <div class="toolbar" style="margin-bottom: 0;">
+        <a class="button ghost" href="/">Главная</a>
+        <a class="button ghost" href="/help/connect">Подключение</a>
+        <a class="button ghost" href="/portal">Личный кабинет</a>
+      </div>
+    </header>
+
+    <section class="hero">
+      <article class="hero-panel">
+        <span class="badge">Документ</span>
+        <h1>{{ title }}</h1>
+        <p class="muted">{{ document_excerpt }}</p>
+      </article>
+    </section>
+
+    <section class="panel document-body">
+      {{ document_html }}
+    </section>
+  </div>
+</body>
+</html>

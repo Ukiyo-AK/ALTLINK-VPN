@@ -8,6 +8,8 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY media ./media
+COPY document ./document
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY BOT_USAGE.md ADMIN_USAGE.md DEPLOYMENT.md ./
@@ -15,4 +17,3 @@ COPY BOT_USAGE.md ADMIN_USAGE.md DEPLOYMENT.md ./
 RUN pip install --upgrade pip && pip install .
 
 CMD ["python", "-m", "altlink.main", "backend"]
-

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} | ALTLINK VPN</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+  <div class="portal-shell">
+    <header class="portal-topbar">
+      <a class="brand" href="/" style="margin: 0;">
+        <img class="brand-logo" src="{{ url_for('media', path='logo.png') }}" alt="ALTLINK VPN">
+        <div>
+          <strong>ALTLINK VPN</strong>
+          <div class="muted">Подключение к VPN</div>
+        </div>
+      </a>
+      <div class="toolbar" style="margin-bottom: 0;">
+        <a href="/legal/agreement" class="button ghost">Соглашение</a>
+        <a href="/legal/privacy" class="button ghost">Конфиденциальность</a>
+        <a href="/portal" class="button ghost">Личный кабинет</a>
+      </div>
+    </header>
+
+    <section class="hero">
+      <article class="hero-panel">
+        <span class="badge">Подключение</span>
+        <h1>Как быстро подключить ALTLINK VPN</h1>
+        <p class="muted">
+          Откройте в боте раздел <code>Подписка → Моя ссылка</code>, затем импортируйте персональную ссылку в VPN-клиент
+          или отсканируйте QR-код. Ссылка уже содержит ваш текущий доступ и обновляется вместе с тарифом.
+        </p>
+      </article>
+    </section>
+
+    <section class="grid-two">
+      <article class="panel stack">
+        <h2>iPhone и iPad</h2>
+        <ol class="stack">
+          <li>Установите <code>Shadowrocket</code>, <code>Streisand</code> или другой клиент с импортом ссылок.</li>
+          <li>Откройте персональную ссылку из бота или вставьте её в клиент вручную.</li>
+          <li>При желании импортируйте конфиг через QR-код.</li>
+          <li>Сохраните профиль и включите соединение.</li>
+        </ol>
+      </article>
+
+      <article class="panel stack">
+        <h2>Android</h2>
+        <ol class="stack">
+          <li>Подойдут <code>Hiddify Next</code>, <code>v2rayNG</code> и <code>NekoBox</code>.</li>
+          <li>Выберите импорт по ссылке, из буфера обмена или по QR-коду.</li>
+          <li>Добавьте персональную ссылку VPN и сохраните профиль.</li>
+          <li>После импорта включите подключение.</li>
+        </ol>
+      </article>
+
+      <article class="panel stack">
+        <h2>Windows</h2>
+        <ol class="stack">
+          <li>Установите <code>Hiddify Next</code>, <code>v2rayN</code> или <code>NekoBox</code>.</li>
+          <li>Скопируйте персональную ссылку из бота или кабинета.</li>
+          <li>Импортируйте её через URL или буфер обмена.</li>
+          <li>Запустите подключение после сохранения профиля.</li>
+        </ol>
+      </article>
+
+      <article class="panel stack">
+        <h2>macOS</h2>
+        <ol class="stack">
+          <li>Используйте <code>Hiddify Next</code>, <code>Streisand</code> или другой совместимый клиент.</li>
+          <li>Импортируйте персональную ссылку через меню добавления профиля.</li>
+          <li>Если удобнее, подключите доступ через QR-код.</li>
+          <li>Сохраните профиль и активируйте VPN.</li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="panel stack">
+      <h2>Если VPN не подключается</h2>
+      <p class="muted">
+        Проверьте, что тариф активен, ссылка скопирована полностью, а подписка на канал проекта подтверждена.
+        Если проблема остаётся, напишите в поддержку: {{ support_username or '@support_placeholder' }}.
+      </p>
+      <p class="muted">
+        Если заметили баг или странное поведение сервиса, тоже обязательно сообщите о нём в поддержку.
+      </p>
+    </section>
+  </div>
+</body>
+</html>

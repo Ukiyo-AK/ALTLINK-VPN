@@ -31,5 +31,6 @@ def enum_values(enum_cls: type) -> Enum:
     return Enum(
         enum_cls,
         native_enum=False,
+        length=max(len(member.value) for member in enum_cls),
         values_callable=lambda members: [member.value for member in members],
     )

@@ -25,7 +25,9 @@ class SubscriptionStatus(StrEnum):
 class PlanCode(StrEnum):
     TRIAL = "trial"
     SINGLE_10GBIT = "single_10gbit"
+    SINGLE_10GBIT_WEEKLY = "single_10gbit_weekly"
     UNLIMITED = "unlimited"
+    UNLIMITED_WEEKLY = "unlimited_weekly"
 
 
 class ServerType(StrEnum):
@@ -46,6 +48,8 @@ class BalanceTransactionType(StrEnum):
     SUBSCRIPTION_CHARGE = "subscription_charge"
     MANUAL_ADJUSTMENT = "manual_adjustment"
     REFUND = "refund"
+    PROMO_BONUS = "promo_bonus"
+    REFERRAL_BONUS = "referral_bonus"
 
 
 class NotificationType(StrEnum):
@@ -59,12 +63,25 @@ class NotificationType(StrEnum):
     TRAFFIC_THRESHOLD = "traffic_threshold"
     TRAFFIC_EXCEEDED = "traffic_exceeded"
     TRIAL_ENDED = "trial_ended"
+    PROMO_CODE = "promo_code"
+    REFERRAL_BONUS = "referral_bonus"
+    BROADCAST = "broadcast"
 
 
 class NotificationStatus(StrEnum):
     PENDING = "pending"
     SENT = "sent"
     FAILED = "failed"
+
+
+class SupportRequestStatus(StrEnum):
+    NEW = "new"
+    RESOLVED = "resolved"
+
+
+class PromoRewardKind(StrEnum):
+    BALANCE = "balance"
+    PLAN_DISCOUNT = "plan_discount"
 
 
 class AccessStatus(StrEnum):

@@ -11,13 +11,8 @@ from altlink.application.services.accounts import AccountService
 from altlink.application.services.base import BaseService, ConflictError, NotFoundError
 from altlink.application.services.catalog import CatalogService
 from altlink.application.services.notifications import NotificationService
-from altlink.domain.billing import (
-    bytes_to_gb_cost,
-    compute_period_end,
-    compute_prorated_daily_charge,
-    evaluate_renewal,
-    quantize_money,
-)
+from altlink.application.services.promos import PromoService
+from altlink.domain.billing import bytes_to_gb_cost, compute_period_end, quantize_money
 from altlink.domain.enums import (
     AccessStatus,
     BalanceTransactionType,
@@ -30,13 +25,11 @@ from altlink.domain.enums import (
 )
 from altlink.domain.notifications import (
     blocked_message,
-    grace_reminder_message,
-    grace_started_message,
     low_balance_message,
     trial_ended_message,
     upcoming_renewal_message,
 )
-from altlink.domain.plans import WHITELIST_GB_PRICE_RUB
+from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code
 from altlink.infrastructure.db.models import Plan, Server, Subscription, TrafficSnapshot, TrialPeriod, User
 from altlink.utils.time import ensure_utc, utc_now
 
@@ -53,11 +46,13 @@ class BillingService(BaseService):
         accounts: AccountService,
         catalog: CatalogService,
         notifications: NotificationService,
+        promos: PromoService,
     ) -> None:
         super().__init__(session, settings, remnawave)
         self.accounts = accounts
         self.catalog = catalog
         self.notifications = notifications
+        self.promos = promos
 
     async def activate_trial(self, user_id: str) -> Subscription:
         user = await self.accounts.get_user(user_id)
@@ -91,6 +86,7 @@ class BillingService(BaseService):
             whitelist_traffic_used_bytes=0,
             whitelist_traffic_billed_bytes=0,
             last_traffic_reset_at=now,
+            auto_renew=False,
         )
         subscription.plan = plan
         self.session.add(subscription)
@@ -127,56 +123,90 @@ class BillingService(BaseService):
         if plan.is_trial:
             raise ConflictError("Для тестового периода используйте отдельный сценарий.")
 
-        first_day_charge = compute_prorated_daily_charge(Decimal(plan.price_rub), plan.period_days, 1)
-        if charge_user and Decimal(user.balance_rub) < first_day_charge:
-            raise ConflictError(
-                f"Недостаточно средств. Для старта тарифа нужно минимум {first_day_charge:.2f} ₽."
+        existing = await self.accounts.get_current_subscription(user_id)
+        discount_rub = Decimal("0.00")
+        discount_promo = None
+        discount_redemption = None
+        if charge_user:
+            discount_rub, discount_promo, discount_redemption = await self.promos.calculate_discount(
+                user.id,
+                Decimal(plan.price_rub),
+            )
+        discounted_price = quantize_money(Decimal(plan.price_rub) - discount_rub)
+        carryover_credit_rub = self._calculate_residual_credit_rub(existing)
+
+        if charge_user and carryover_credit_rub > 0:
+            await self.accounts.adjust_balance(
+                user_id=user.id,
+                amount_rub=carryover_credit_rub,
+                transaction_type=BalanceTransactionType.REFUND,
+                description="Компенсация остатка прошлого тарифа при смене плана",
+                admin_id=admin_id,
             )
 
-        existing = await self.accounts.get_current_subscription(user_id)
+        upfront_charge = discounted_price
+        if charge_user and Decimal(user.balance_rub) < upfront_charge:
+            raise ConflictError(f"Недостаточно средств. Для старта тарифа нужно минимум {upfront_charge:.2f} ₽.")
+
         if existing:
             existing.status = SubscriptionStatus.CANCELED
             existing.canceled_at = utc_now()
 
-        if charge_user and first_day_charge > 0:
+        if charge_user and upfront_charge > 0:
             await self.accounts.adjust_balance(
                 user_id=user.id,
-                amount_rub=-first_day_charge,
+                amount_rub=-upfront_charge,
                 transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
-                description=f"Первое суточное списание по тарифу {plan.name}",
+                description=self._charge_description(plan, initial=True),
                 admin_id=admin_id,
             )
 
         now = utc_now()
         ends_at = compute_period_end(now, plan.period_days)
+        notes: list[str] = []
+        if discount_promo is not None and discount_rub > 0:
+            notes.append(f"Промокод {discount_promo.code}: скидка {discount_rub:.2f} ₽.")
+        if charge_user and carryover_credit_rub > 0:
+            notes.append(f"Компенсация остатка прошлого тарифа: +{carryover_credit_rub:.2f} ₽ на баланс.")
         subscription = Subscription(
             user_id=user.id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE,
             started_at=now,
             ends_at=ends_at,
-            next_billing_at=now + timedelta(days=1),
+            next_billing_at=ends_at,
             billing_anchor_at=now,
-            cycle_days_processed=1,
+            cycle_days_processed=plan.period_days,
             accrued_debt_rub=Decimal("0"),
             traffic_limit_bytes=plan.traffic_limit_bytes,
             traffic_used_bytes=0,
             whitelist_traffic_used_bytes=0,
             whitelist_traffic_billed_bytes=0,
             last_traffic_reset_at=now,
+            auto_renew=True,
+            notes=" ".join(notes) or None,
         )
         subscription.plan = plan
         self.session.add(subscription)
+
         existing_trial = await self.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user.id))
         if existing_trial:
             existing_trial.converted_to_subscription = True
         user.status = UserStatus.ACTIVE
 
-        if plan.code == PlanCode.SINGLE_10GBIT:
+        if is_metered_plan_code(plan.code):
             await self.catalog.assign_preferred_server(user.id)
 
         await self.catalog.rebuild_user_access_matrix()
         await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=True)
+        if discount_redemption is not None and discount_rub > 0:
+            await self.promos.consume_discount(
+                discount_redemption,
+                subscription_id=subscription.id,
+                applied_amount=discount_rub,
+            )
+        if charge_user:
+            await self.accounts.grant_referral_bonus_if_eligible(user.id)
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="plan_activated",
@@ -184,7 +214,9 @@ class BillingService(BaseService):
             payload={
                 "user_id": user.id,
                 "plan_code": plan.code.value,
-                "first_day_charge": str(first_day_charge),
+                "upfront_charge": str(upfront_charge),
+                "discount_rub": str(discount_rub),
+                "carryover_credit_rub": str(carryover_credit_rub),
             },
             actor_admin_id=admin_id,
         )
@@ -209,13 +241,38 @@ class BillingService(BaseService):
             raise NotFoundError("У пользователя нет подписки для повторной активации.")
         subscription.status = SubscriptionStatus.ACTIVE
         subscription.blocked_at = None
-        subscription.grace_started_at = None
-        subscription.grace_until = None
+        subscription.canceled_at = None
         user.status = UserStatus.ACTIVE
         plan = await self.accounts.get_plan(subscription.plan.code)
         await self.catalog.rebuild_user_access_matrix()
         await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=False)
         return user
+
+    async def cancel_subscription_renewal(self, user_id: str) -> Subscription:
+        subscription = await self.accounts.get_current_subscription(user_id)
+        if subscription is None or subscription.plan is None or subscription.plan.is_trial:
+            raise ConflictError("Отключить автопродление можно только у платной подписки.")
+        subscription.auto_renew = False
+        await self.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="subscription_auto_renew_disabled",
+            message="Автопродление подписки отключено пользователем.",
+            payload={"user_id": user_id, "subscription_id": subscription.id},
+        )
+        return subscription
+
+    async def restore_subscription_renewal(self, user_id: str) -> Subscription:
+        subscription = await self.accounts.get_current_subscription(user_id)
+        if subscription is None or subscription.plan is None or subscription.plan.is_trial:
+            raise ConflictError("Включить автопродление можно только у платной подписки.")
+        subscription.auto_renew = True
+        await self.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="subscription_auto_renew_enabled",
+            message="Автопродление подписки снова включено.",
+            payload={"user_id": user_id, "subscription_id": subscription.id},
+        )
+        return subscription
 
     async def process_due_subscriptions(self) -> None:
         now = utc_now()
@@ -230,11 +287,7 @@ class BillingService(BaseService):
                     )
                     .where(
                         Subscription.status.in_(
-                            [
-                                SubscriptionStatus.ACTIVE,
-                                SubscriptionStatus.GRACE,
-                                SubscriptionStatus.TRIAL,
-                            ]
+                            [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL, SubscriptionStatus.GRACE]
                         )
                     )
                 )
@@ -268,131 +321,58 @@ class BillingService(BaseService):
                 state_changed = True
                 continue
 
-            if subscription.status == SubscriptionStatus.GRACE and subscription.grace_until and now > ensure_utc(
-                subscription.grace_until
-            ):
-                await self._block_subscription(subscription, user)
+            if subscription.status == SubscriptionStatus.GRACE:
+                subscription.status = SubscriptionStatus.ACTIVE
+                if user.status == UserStatus.GRACE:
+                    user.status = UserStatus.ACTIVE
+
+            if subscription.status != SubscriptionStatus.ACTIVE:
+                continue
+
+            if is_metered_plan_code(plan.code):
+                await self._refresh_whitelist_usage(user, subscription)
+
+            renewal_charge = self._compute_renewal_charge(subscription, plan)
+            due_at = ensure_utc(subscription.next_billing_at)
+            if due_at <= now:
+                if not subscription.auto_renew:
+                    await self._cancel_subscription(subscription, user)
+                    state_changed = True
+                    continue
+
+                if Decimal(user.balance_rub) < renewal_charge:
+                    await self._block_subscription(subscription, user)
+                    state_changed = True
+                    continue
+
+                if renewal_charge > 0:
+                    await self.accounts.adjust_balance(
+                        user_id=user.id,
+                        amount_rub=-renewal_charge,
+                        transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
+                        description=self._charge_description(plan),
+                    )
+                await self._start_next_billing_cycle(subscription, plan)
+                user.status = UserStatus.ACTIVE
+                await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=True)
                 state_changed = True
                 continue
 
-            while subscription.status in {SubscriptionStatus.ACTIVE, SubscriptionStatus.GRACE} and ensure_utc(
-                subscription.next_billing_at
-            ) <= now:
-                await self._roll_billing_cycle_if_needed(subscription, plan)
-                if plan.code == PlanCode.SINGLE_10GBIT:
-                    await self._refresh_whitelist_usage(user, subscription)
-
-                next_day_number = subscription.cycle_days_processed + 1
-                base_daily_charge = compute_prorated_daily_charge(
-                    Decimal(plan.price_rub),
-                    plan.period_days,
-                    next_day_number,
+            if due_at - now <= timedelta(days=1):
+                await self.notifications.queue(
+                    user_id=user.id,
+                    notification_type=NotificationType.UPCOMING_RENEWAL,
+                    message=upcoming_renewal_message(renewal_charge, due_at),
+                    dedupe_key=f"renewal:{subscription.id}:{now.date().isoformat()}",
                 )
-                whitelist_charge = self._compute_whitelist_daily_charge(subscription, plan)
-                decision = evaluate_renewal(
-                    balance_rub=Decimal(user.balance_rub),
-                    charge_rub=base_daily_charge + whitelist_charge,
-                    debt_rub=Decimal(subscription.accrued_debt_rub),
-                    now=now,
-                    grace_started_at=subscription.grace_started_at,
-                    grace_days=self.settings.grace_period_days,
+            threshold = Decimal(self.settings.low_balance_threshold_rub)
+            if Decimal(user.balance_rub) <= max(threshold, renewal_charge):
+                await self.notifications.queue(
+                    user_id=user.id,
+                    notification_type=NotificationType.LOW_BALANCE,
+                    message=low_balance_message(Decimal(user.balance_rub), renewal_charge, due_at),
+                    dedupe_key=f"low-balance:{subscription.id}:{now.date().isoformat()}",
                 )
-
-                if decision.action == "charge":
-                    total_charge = quantize_money(
-                        Decimal(subscription.accrued_debt_rub) + base_daily_charge + whitelist_charge
-                    )
-                    if total_charge > 0:
-                        await self.accounts.adjust_balance(
-                            user_id=user.id,
-                            amount_rub=-total_charge,
-                            transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
-                            description=f"Суточное списание по тарифу {plan.name}",
-                        )
-                    subscription.accrued_debt_rub = Decimal("0")
-                    subscription.status = SubscriptionStatus.ACTIVE
-                    subscription.grace_started_at = None
-                    subscription.grace_until = None
-                    subscription.cycle_days_processed += 1
-                    subscription.whitelist_traffic_billed_bytes = subscription.whitelist_traffic_used_bytes
-                    subscription.next_billing_at = ensure_utc(subscription.next_billing_at) + timedelta(days=1)
-                    user.status = UserStatus.ACTIVE
-                    await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=False)
-                    state_changed = True
-                    continue
-
-                daily_due = quantize_money(base_daily_charge + whitelist_charge)
-                subscription.accrued_debt_rub = quantize_money(Decimal(subscription.accrued_debt_rub) + daily_due)
-                subscription.cycle_days_processed += 1
-                subscription.whitelist_traffic_billed_bytes = subscription.whitelist_traffic_used_bytes
-                subscription.next_billing_at = ensure_utc(subscription.next_billing_at) + timedelta(days=1)
-
-                if decision.action == "enter_grace":
-                    subscription.status = SubscriptionStatus.GRACE
-                    subscription.grace_started_at = now
-                    subscription.grace_until = decision.grace_until
-                    user.status = UserStatus.GRACE
-                    await self.notifications.queue(
-                        user_id=user.id,
-                        notification_type=NotificationType.GRACE_STARTED,
-                        message=grace_started_message(
-                            Decimal(user.balance_rub),
-                            Decimal(subscription.accrued_debt_rub),
-                            decision.grace_until,
-                        ),
-                        dedupe_key=f"grace-started:{subscription.id}",
-                    )
-                    await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=False)
-                    state_changed = True
-                    continue
-
-                if decision.action == "keep_grace":
-                    subscription.status = SubscriptionStatus.GRACE
-                    subscription.grace_until = decision.grace_until
-                    user.status = UserStatus.GRACE
-                    await self.notifications.queue(
-                        user_id=user.id,
-                        notification_type=NotificationType.GRACE_REMINDER,
-                        message=grace_reminder_message(
-                            Decimal(subscription.accrued_debt_rub),
-                            decision.grace_until,
-                        ),
-                        dedupe_key=f"grace-reminder:{subscription.id}:{now.date().isoformat()}",
-                    )
-                    state_changed = True
-                    if decision.grace_until and now > decision.grace_until:
-                        await self._block_subscription(subscription, user)
-                    continue
-
-                await self._block_subscription(subscription, user)
-                state_changed = True
-                break
-
-            if subscription.status == SubscriptionStatus.ACTIVE:
-                next_charge = compute_prorated_daily_charge(
-                    Decimal(plan.price_rub),
-                    plan.period_days,
-                    min(subscription.cycle_days_processed + 1, plan.period_days),
-                )
-                if ensure_utc(subscription.next_billing_at) - now <= timedelta(days=1):
-                    await self.notifications.queue(
-                        user_id=user.id,
-                        notification_type=NotificationType.UPCOMING_RENEWAL,
-                        message=upcoming_renewal_message(next_charge, ensure_utc(subscription.next_billing_at)),
-                        dedupe_key=f"renewal:{subscription.id}:{now.date().isoformat()}",
-                    )
-                threshold = Decimal(self.settings.low_balance_threshold_rub)
-                if Decimal(user.balance_rub) <= max(threshold, next_charge):
-                    await self.notifications.queue(
-                        user_id=user.id,
-                        notification_type=NotificationType.LOW_BALANCE,
-                        message=low_balance_message(
-                            Decimal(user.balance_rub),
-                            next_charge,
-                            ensure_utc(subscription.next_billing_at),
-                        ),
-                        dedupe_key=f"low-balance:{subscription.id}:{now.date().isoformat()}",
-                    )
 
         if state_changed:
             await self.catalog.rebuild_user_access_matrix()
@@ -428,10 +408,17 @@ class BillingService(BaseService):
                 continue
 
             subscription.traffic_used_bytes = remote_user.userTraffic.usedTrafficBytes
-            if subscription.plan and subscription.plan.code == PlanCode.SINGLE_10GBIT:
+            if subscription.plan and is_metered_plan_code(subscription.plan.code):
                 await self._refresh_whitelist_usage(user, subscription)
 
         await self.catalog.rebuild_user_access_matrix()
+
+    async def _cancel_subscription(self, subscription: Subscription, user: User) -> None:
+        subscription.status = SubscriptionStatus.CANCELED
+        subscription.canceled_at = utc_now()
+        user.status = UserStatus.CANCELED
+        if self.remnawave and user.remnawave_user_uuid:
+            await self.remnawave.disable_user(user.remnawave_user_uuid)
 
     async def _block_subscription(self, subscription: Subscription, user: User) -> None:
         subscription.status = SubscriptionStatus.BLOCKED
@@ -446,12 +433,15 @@ class BillingService(BaseService):
             dedupe_key=f"blocked:{subscription.id}",
         )
 
-    async def _roll_billing_cycle_if_needed(self, subscription: Subscription, plan: Plan) -> None:
-        if subscription.cycle_days_processed < plan.period_days:
-            return
+    async def _start_next_billing_cycle(self, subscription: Subscription, plan: Plan) -> None:
         subscription.started_at = ensure_utc(subscription.ends_at)
         subscription.ends_at = compute_period_end(subscription.started_at, plan.period_days)
-        subscription.cycle_days_processed = 0
+        subscription.next_billing_at = subscription.ends_at
+        subscription.billing_anchor_at = subscription.started_at
+        subscription.cycle_days_processed = plan.period_days
+        subscription.accrued_debt_rub = Decimal("0")
+        subscription.grace_started_at = None
+        subscription.grace_until = None
         subscription.traffic_used_bytes = 0
         subscription.whitelist_traffic_used_bytes = 0
         subscription.whitelist_traffic_billed_bytes = 0
@@ -479,11 +469,28 @@ class BillingService(BaseService):
         total = sum(node.total for node in usage.topNodes if node.uuid in whitelist_node_ids)
         subscription.whitelist_traffic_used_bytes = max(total, 0)
 
-    def _compute_whitelist_daily_charge(self, subscription: Subscription, plan: Plan) -> Decimal:
-        if plan.code != PlanCode.SINGLE_10GBIT:
+    def _compute_renewal_charge(self, subscription: Subscription, plan: Plan) -> Decimal:
+        whitelist_charge = Decimal("0.00")
+        if is_metered_plan_code(plan.code):
+            whitelist_charge = bytes_to_gb_cost(subscription.whitelist_traffic_used_bytes, WHITELIST_GB_PRICE_RUB)
+        return quantize_money(Decimal(plan.price_rub) + whitelist_charge)
+
+    def _charge_description(self, plan: Plan, *, initial: bool = False) -> str:
+        period_label = "еженедельное" if plan.period_days <= 7 else "ежемесячное"
+        prefix = "Первое" if initial else "Продление"
+        return f"{prefix} {period_label} списание по тарифу {plan.name}"
+
+    def _calculate_residual_credit_rub(self, existing: Subscription | None) -> Decimal:
+        if existing is None or existing.plan is None or existing.plan.is_trial:
             return Decimal("0.00")
-        delta_bytes = max(subscription.whitelist_traffic_used_bytes - subscription.whitelist_traffic_billed_bytes, 0)
-        return bytes_to_gb_cost(delta_bytes, WHITELIST_GB_PRICE_RUB)
+        remaining = ensure_utc(existing.ends_at) - utc_now()
+        if remaining.total_seconds() <= 0 or existing.plan.period_days <= 0:
+            return Decimal("0.00")
+        current_price = Decimal(existing.plan.price_rub)
+        if current_price <= 0:
+            return Decimal("0.00")
+        unused_share = Decimal(str(remaining.total_seconds())) / Decimal(existing.plan.period_days * 86400)
+        return max(quantize_money(current_price * unused_share), Decimal("0.00"))
 
     async def _sync_remote_state(
         self,
@@ -517,6 +524,7 @@ class BillingService(BaseService):
             "telegramId": user.telegram_id,
             "description": f"ALTLINK user {user.telegram_id}",
             "activeInternalSquads": squad_ids,
+            "hwidDeviceLimit": plan.device_limit,
         }
         try:
             if user.remnawave_user_uuid:

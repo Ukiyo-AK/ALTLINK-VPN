@@ -1,53 +1,262 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal, InvalidOperation
+import re
+from urllib.parse import quote_plus, urlparse
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, InputMediaPhoto, Message
 
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
 from altlink.domain.billing import bytes_to_gb_cost
-from altlink.domain.enums import ServerType
-from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, parse_paid_plan_code
+from altlink.domain.plans import (
+    SINGLE_10GBIT_MONTHLY_PRICE_RUB,
+    SINGLE_10GBIT_WEEKLY_PRICE_RUB,
+    UNLIMITED_MONTHLY_PRICE_RUB,
+    UNLIMITED_WEEKLY_PRICE_RUB,
+    WHITELIST_GB_PRICE_RUB,
+    is_metered_plan_code,
+    parse_paid_plan_code,
+)
+from altlink.presentation.bots.admin_keyboards import payment_request_actions
 from altlink.presentation.bots.client_keyboards import (
+    agreement_actions,
     balance_actions,
-    channel_gate_actions,
+    channel_actions,
     main_menu,
+    menu_actions,
     plan_actions,
+    plan_period_actions,
+    profile_actions,
+    site_actions,
+    subscription_link_actions,
     subscription_actions,
+    support_actions,
     topup_actions,
 )
+from altlink.utils.media import media_path
 from altlink.utils.qr import render_qr_png
 from altlink.utils.telegram_web import check_channel_membership
 
 router = Router(name="client-router")
+logger = logging.getLogger(__name__)
+TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
+CLIENT_LAST_CARD: dict[int, tuple[int, bool]] = {}
+CLIENT_REPLY_MENU_READY: set[int] = set()
 
 
 class TopupStates(StatesGroup):
     waiting_for_amount = State()
 
 
+class SupportStates(StatesGroup):
+    waiting_for_issue = State()
+
+
+class PromoStates(StatesGroup):
+    waiting_for_code = State()
+
+
+def support_username_label(settings) -> str:
+    username = (settings.support_username or "").strip()
+    if not username:
+        return "@support_placeholder"
+    return username if username.startswith("@") else f"@{username}"
+
+
+def support_profile_url(settings) -> str | None:
+    username = support_username_label(settings).lstrip("@")
+    if not username:
+        return None
+    return f"https://t.me/{username}"
+
+
+def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
+    user_name = f"@{user.username}" if getattr(user, "username", None) else f"Telegram ID {user.telegram_id}"
+    return (
+        "💳 Новый запрос на пополнение\n\n"
+        f"Пользователь: {user_name}\n"
+        f"Telegram ID: {user.telegram_id}\n"
+        f"Сумма: {Decimal(amount):.2f} ₽\n"
+        f"Номер заявки: {request_id}\n\n"
+        "Проверьте оплату и выберите действие ниже."
+    )
+
+
+async def notify_admins_about_topup_request(
+    container: AppContainer,
+    *,
+    user,
+    amount: Decimal,
+    request_id: str,
+    admin_telegram_ids: list[int],
+) -> None:
+    if not admin_telegram_ids or not container.settings.admin_bot_token:
+        return
+
+    text = admin_payment_request_text(user, amount, request_id)
+    bot = Bot(token=container.settings.admin_bot_token)
+    markup = payment_request_actions(request_id, "new").as_markup()
+    try:
+        for admin_telegram_id in admin_telegram_ids:
+            try:
+                await bot.send_message(admin_telegram_id, text, reply_markup=markup)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to notify admin about topup request %s for telegram_id=%s: %s",
+                    request_id,
+                    admin_telegram_id,
+                    exc,
+                )
+    finally:
+        await bot.session.close()
+
+
+def agreement_url(settings) -> str | None:
+    public_url = (settings.backend_public_url or "").strip()
+    parsed = urlparse(public_url)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return f"{public_url.rstrip('/')}/legal/agreement"
+    return (settings.user_agreement_telegraph_url or "").strip() or None
+
+
+def privacy_url(settings) -> str | None:
+    public_url = (settings.backend_public_url or "").strip()
+    parsed = urlparse(public_url)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return f"{public_url.rstrip('/')}/legal/privacy"
+    return (settings.privacy_policy_telegraph_url or "").strip() or None
+
+
+def billing_cycle_label(plan) -> str:
+    if plan is None:
+        return "—"
+    return "еженедельно" if plan.period_days <= 7 else "ежемесячно"
+
+
+def device_limit_label(plan) -> str:
+    if plan is None or plan.device_limit is None:
+        return "без ограничения"
+    return str(plan.device_limit)
+
+
+def can_manage_auto_renew(subscription) -> bool:
+    return bool(subscription and subscription.plan and not subscription.plan.is_trial)
+
+
+def share_vpn_target_url(settings) -> str | None:
+    bot_name = (settings.client_bot_name or "").strip().lstrip("@")
+    if bot_name and TELEGRAM_USERNAME_RE.fullmatch(bot_name):
+        return f"https://t.me/{bot_name}"
+
+    return portal_public_url(settings)
+
+
+def share_vpn_url(settings) -> str | None:
+    target_url = share_vpn_target_url(settings)
+    if target_url is None:
+        return None
+    text = "Попробуй ALTLINK VPN. Подключение, баланс и подписка доступны прямо в Telegram."
+    return f"https://t.me/share/url?url={quote_plus(target_url)}&text={quote_plus(text)}"
+
+
+def bot_public_url(settings) -> str | None:
+    bot_name = (settings.client_bot_name or "").strip().lstrip("@")
+    if bot_name and TELEGRAM_USERNAME_RE.fullmatch(bot_name):
+        return f"https://t.me/{bot_name}"
+    return None
+
+
+def site_public_url(settings) -> str | None:
+    public_url = (settings.backend_public_url or "").strip()
+    parsed = urlparse(public_url)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return public_url.rstrip("/")
+    return None
+
+
+def portal_public_url(settings) -> str | None:
+    public_url = (settings.backend_public_url or "").strip()
+    parsed = urlparse(public_url)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return f"{public_url.rstrip('/')}/portal"
+    return None
+
+
+def referral_share_vpn_url(settings, referral_code: str | None) -> str | None:
+    target_url = bot_public_url(settings)
+    if referral_code and target_url:
+        target_url = f"{target_url}?start=ref_{referral_code}"
+    elif target_url is None:
+        target_url = site_public_url(settings)
+    if target_url is None:
+        return share_vpn_url(settings)
+    text = "Попробуй ALTLINK VPN по моей ссылке и подключись через Telegram."
+    return f"https://t.me/share/url?url={quote_plus(target_url)}&text={quote_plus(text)}"
+
+
+def connection_help_url(settings) -> str | None:
+    public_url = (settings.backend_public_url or "").strip()
+    parsed = urlparse(public_url)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return f"{public_url.rstrip('/')}/help/connect"
+    return None
+
+
+def show_metered_usage(subscription) -> bool:
+    return bool(subscription and subscription.plan and is_metered_plan_code(subscription.plan.code))
+
+
+def resolve_subscription_payload(bundle: dict) -> str | None:
+    info = bundle.get("subscription_info")
+    if info:
+        return info.subscriptionUrl
+    keys = bundle.get("connection_keys")
+    if keys and keys.enabledKeys:
+        return keys.enabledKeys[0]
+    return None
+
+
+def subscription_markup(subscription):
+    return subscription_actions(
+        show_traffic=show_metered_usage(subscription),
+        can_cancel=can_manage_auto_renew(subscription),
+        auto_renew_disabled=bool(subscription and not subscription.auto_renew),
+    ).as_markup()
+
+
+def subscription_link_markup(settings, subscription):
+    return subscription_link_actions(
+        show_traffic=show_metered_usage(subscription),
+        help_url=connection_help_url(settings),
+    ).as_markup()
+
+
 async def ensure_user(telegram_user, container: AppContainer, hub=None):
     if hub is not None:
-        return await hub.accounts.get_or_create_user(
+        user = await hub.accounts.get_or_create_user(
             telegram_id=telegram_user.id,
             username=telegram_user.username,
             first_name=telegram_user.first_name,
             last_name=telegram_user.last_name,
             language_code=telegram_user.language_code,
         )
+        return await hub.accounts.get_user(user.id)
     async with container.hub() as inner_hub:
-        return await inner_hub.accounts.get_or_create_user(
+        user = await inner_hub.accounts.get_or_create_user(
             telegram_id=telegram_user.id,
             username=telegram_user.username,
             first_name=telegram_user.first_name,
             last_name=telegram_user.last_name,
             language_code=telegram_user.language_code,
         )
+        return await inner_hub.accounts.get_user(user.id)
 
 
 async def is_channel_member(telegram_id: int, container: AppContainer) -> bool:
@@ -61,275 +270,1026 @@ async def is_channel_member(telegram_id: int, container: AppContainer) -> bool:
     )
 
 
-async def ensure_channel_access(message: Message | CallbackQuery, container: AppContainer) -> bool:
-    telegram_id = message.from_user.id
-    if await is_channel_member(telegram_id, container):
-        return True
-
-    settings = container.settings
-    text = (
-        "Добро пожаловать в ALTLINK.\n\n"
-        "Перед началом работы подпишитесь на официальный Telegram-канал проекта. "
-        "Без подписки бот не открывает тарифы, тест и конфиги.\n\n"
-        "После подписки нажмите «Проверить подписку»."
-    )
-    markup = channel_gate_actions(settings.required_subscription_channel_url or None).as_markup()
+async def answer_or_edit(message: Message | CallbackQuery, text: str, *, reply_markup=None, **kwargs):
     if isinstance(message, CallbackQuery):
-        await message.message.edit_text(text, reply_markup=markup)
+        if await try_edit_tracked_client_card(message, text, reply_markup=reply_markup, media_file=None):
+            await message.answer()
+            return message.message
+        try:
+            result = await message.message.edit_text(text, reply_markup=reply_markup, **kwargs)
+            remember_client_card(message.message, has_media=False)
+        except TelegramBadRequest:
+            result = await message.message.answer(text, reply_markup=reply_markup, **kwargs)
+            remember_client_card(result, has_media=False)
         await message.answer()
-    else:
-        await message.answer(text, reply_markup=markup)
+        return result
+    result = await message.answer(text, reply_markup=reply_markup, **kwargs)
+    remember_client_card(result, has_media=False)
+    return result
+
+
+async def show_inline_card(
+    target: Message | CallbackQuery,
+    text: str,
+    *,
+    inline_markup,
+) -> None:
+    await answer_or_edit(target, text, reply_markup=inline_markup)
+
+
+def section_media_filename(section: str) -> str | None:
+    mapping = {
+        "home": "bot_image_yourMainMenu.png",
+        "balance": "bot_image_yourBalance.png",
+        "profile": "bot_image_yourProfile.png",
+        "subscription": "bot_image_yourSubscription.png",
+        "support": "logo with title.png",
+        "onboarding": "logo with title.png",
+    }
+    return mapping.get(section)
+
+
+async def send_card_with_optional_media(
+    target: Message | CallbackQuery,
+    text: str,
+    *,
+    primary_markup,
+    media_section: str | None = None,
+    fallback_markup=None,
+    force_new_message: bool = False,
+) -> None:
+    anchor = target.message if isinstance(target, CallbackQuery) else target
+    media_filename = section_media_filename(media_section) if media_section else None
+    media_file = media_path(media_filename) if media_filename else None
+    markups = [primary_markup]
+    if fallback_markup is not None and fallback_markup is not primary_markup:
+        markups.append(fallback_markup)
+
+    last_exc: TelegramBadRequest | None = None
+    for markup in markups:
+        if isinstance(target, CallbackQuery) and not force_new_message and await try_edit_tracked_client_card(
+            target,
+            text,
+            reply_markup=markup,
+            media_file=media_file,
+        ):
+            if isinstance(target, CallbackQuery):
+                await target.answer()
+            return
+
+        if media_file is not None and hasattr(anchor, "answer_photo"):
+            try:
+                sent = await anchor.answer_photo(
+                    FSInputFile(str(media_file)),
+                    caption=text,
+                    reply_markup=markup,
+                )
+                remember_client_card(sent, has_media=True)
+                if isinstance(target, CallbackQuery):
+                    await target.answer()
+                return
+            except TelegramBadRequest as exc:
+                last_exc = exc
+                logger.warning("Failed to send media card %s, retrying: %s", media_section, exc)
+
+        try:
+            if force_new_message:
+                sent = await anchor.answer(text, reply_markup=markup)
+                remember_client_card(sent, has_media=False)
+                if isinstance(target, CallbackQuery):
+                    await target.answer()
+            else:
+                await answer_or_edit(target, text, reply_markup=markup)
+            return
+        except TelegramBadRequest as exc:
+            last_exc = exc
+            logger.warning("Failed to send text card %s, retrying: %s", media_section, exc)
+
+    if last_exc is not None:
+        raise last_exc
+
+
+async def edit_or_send_dynamic_media_card(
+    callback: CallbackQuery,
+    *,
+    image_bytes: bytes,
+    filename: str,
+    caption: str,
+    reply_markup,
+) -> None:
+    anchor = callback.message
+    try:
+        await anchor.bot.edit_message_media(
+            chat_id=anchor.chat.id,
+            message_id=anchor.message_id,
+            media=InputMediaPhoto(
+                media=BufferedInputFile(image_bytes, filename=filename),
+                caption=caption,
+            ),
+            reply_markup=reply_markup,
+        )
+        remember_client_card(anchor, has_media=True)
+    except TelegramBadRequest:
+        sent = await anchor.answer_photo(
+            BufferedInputFile(image_bytes, filename=filename),
+            caption=caption,
+            reply_markup=reply_markup,
+        )
+        remember_client_card(sent, has_media=True)
+    await callback.answer()
+
+
+def remember_client_card(message: Message, *, has_media: bool) -> None:
+    chat = getattr(message, "chat", None)
+    chat_id = getattr(chat, "id", None)
+    if chat_id is None:
+        chat_id = getattr(message, "chat_id", None)
+    if chat_id is None:
+        from_user = getattr(message, "from_user", None)
+        chat_id = getattr(from_user, "id", None)
+    message_id = getattr(message, "message_id", None)
+    if chat_id is None or message_id is None:
+        return
+    CLIENT_LAST_CARD[chat_id] = (message_id, has_media)
+
+
+async def try_edit_tracked_client_card(
+    target: Message | CallbackQuery,
+    text: str,
+    *,
+    reply_markup,
+    media_file,
+) -> bool:
+    anchor = target.message if isinstance(target, CallbackQuery) else target
+    tracked = CLIENT_LAST_CARD.get(anchor.chat.id)
+    if tracked is None:
+        return False
+
+    message_id, has_media = tracked
+    try:
+        if media_file is not None and has_media:
+            await anchor.bot.edit_message_media(
+                media=InputMediaPhoto(media=FSInputFile(str(media_file)), caption=text),
+                chat_id=anchor.chat.id,
+                message_id=message_id,
+                reply_markup=reply_markup,
+            )
+            CLIENT_LAST_CARD[anchor.chat.id] = (message_id, True)
+            return True
+        if media_file is None and not has_media:
+            await anchor.bot.edit_message_text(
+                text,
+                chat_id=anchor.chat.id,
+                message_id=message_id,
+                reply_markup=reply_markup,
+            )
+            CLIENT_LAST_CARD[anchor.chat.id] = (message_id, False)
+            return True
+        if media_file is None and has_media:
+            await anchor.bot.edit_message_caption(
+                chat_id=anchor.chat.id,
+                message_id=message_id,
+                caption=text,
+                reply_markup=reply_markup,
+            )
+            CLIENT_LAST_CARD[anchor.chat.id] = (message_id, True)
+            return True
+    except TelegramBadRequest:
+        return False
     return False
 
 
-def server_badge(server_type: ServerType) -> str:
-    if server_type == ServerType.TEN_GBIT:
-        return "⚡"
-    if server_type == ServerType.WHITELIST:
-        return "WL"
-    return "•"
+def agreement_text(*, consent_accepted: bool = False) -> str:
+    intro = (
+        "Согласие уже подтверждено. Если нужно, ниже остаётся временная текстовая заглушка."
+        if consent_accepted
+        else "Подтвердите согласие, чтобы открыть доступ к меню и управлению VPN."
+    )
+    return (
+        "Шаг 1 из 2. Пользовательское соглашение\n\n"
+        f"{intro}\n\n"
+        "Сейчас в боте используется временная заглушка вместо полного текста соглашения.\n\n"
+        "Подтверждая соглашение, вы соглашаетесь с тем, что:\n"
+        "1. Используете сервис на свой аккаунт.\n"
+        "2. Самостоятельно отвечаете за безопасность своих устройств.\n"
+        "3. Соблюдаете правила Telegram и законодательства вашей страны.\n"
+        "4. Полный текст соглашения будет опубликован позже и заменит эту заглушку."
+    )
+
+
+def channel_subscription_text(*, consent_ok: bool, channel_ok: bool, settings) -> str:
+    status = (
+        "Подписка подтверждена. Можно продолжать работу в боте."
+        if channel_ok
+        else "Подпишитесь на канал и нажмите кнопку проверки подписки."
+    )
+    note = "" if consent_ok else "\n\nСначала подтвердите согласие в первом сообщении."
+    return (
+        "Шаг 2 из 2. Подписка на канал\n\n"
+        f"{status}\n"
+        "Без подписки бот не откроет меню и действия с VPN.\n"
+        f"Канал проекта: {settings.required_subscription_channel_url or settings.required_subscription_channel or 'ссылка будет добавлена позже'}"
+        f"{note}"
+    )
+
+
+def access_links_text(settings) -> str:
+    links: list[str] = []
+    bot_link = bot_public_url(settings)
+    site_link = site_public_url(settings)
+    portal_link = portal_public_url(settings)
+    if bot_link:
+        links.append(f"Бот: {bot_link}")
+    if site_link:
+        links.append(f"Сайт: {site_link}")
+    if portal_link:
+        links.append(f"Кабинет: {portal_link}")
+    return "\n".join(links) if links else "Ссылки будут доступны после настройки публичных адресов."
+
+
+def home_text(user, subscription, settings, latest_subscription=None) -> str:
+    if subscription:
+        lines = [
+            "🏠 Главное меню",
+            "",
+            f"Текущий тариф: {subscription.plan.name}",
+            f"Формат списания: {billing_cycle_label(subscription.plan)}",
+            f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+        ]
+        if subscription.notes:
+            lines.extend(["", subscription.notes])
+        lines.append("")
+        lines.append("Выберите нужный раздел кнопками ниже.")
+        return "\n".join(lines)
+
+    if user.status == "blocked" or (latest_subscription and getattr(latest_subscription, "status", None) == "blocked"):
+        return (
+            "🏠 Главное меню\n\n"
+            f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n"
+            "Доступ сейчас остановлен. Обычно это означает, что закончился баланс для продления.\n\n"
+            "Пополните баланс и заново выберите тариф или включите продление.\n\n"
+            f"{access_links_text(settings)}"
+        )
+
+    return (
+        "🏠 Главное меню\n\n"
+        f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n"
+        "Тариф пока не выбран. Можно запустить тест на 2 дня или сразу оформить Start / Pro.\n\n"
+        f"{access_links_text(settings)}"
+    )
 
 
 def profile_text(user, subscription) -> str:
     plan_name = subscription.plan.name if subscription and subscription.plan else "не выбран"
     next_billing = subscription.next_billing_at.strftime("%d.%m.%Y %H:%M") if subscription else "—"
-    debt = Decimal(subscription.accrued_debt_rub) if subscription else Decimal("0")
     assigned = user.assigned_server.name if getattr(user, "assigned_server", None) else "ещё не назначен"
+    username_line = f"Username: @{user.username}\n" if user.username else ""
+    auto_renew = (
+        "включено"
+        if subscription and subscription.plan and not subscription.plan.is_trial and subscription.auto_renew
+        else "отключено"
+    )
+    referral_line = f"Реферальный код: {user.referral_code}\n" if getattr(user, "referral_code", None) else ""
     return (
-        "Профиль\n\n"
+        "👤 Профиль\n\n"
         f"Telegram ID: {user.telegram_id}\n"
+        f"{username_line}"
+        f"{referral_line}"
         f"Статус: {user.status}\n"
         f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n"
         f"Тариф: {plan_name}\n"
+        f"Формат списания: {billing_cycle_label(subscription.plan if subscription else None)}\n"
+        f"Автопродление: {auto_renew}\n"
         f"Следующее списание: {next_billing}\n"
-        f"Задолженность: {debt:.2f} ₽\n"
+        f"Лимит устройств: {device_limit_label(subscription.plan if subscription else None)}\n"
         f"Выделенный сервер: {assigned}"
     )
 
 
-def subscription_text(bundle: dict, user_servers: list) -> str:
+def subscription_text(bundle: dict, user_servers: list, settings, latest_subscription=None, activity_summary: dict | None = None) -> str:
     user = bundle["user"]
     subscription = bundle.get("subscription")
-    if not subscription:
+    subscription_for_state = subscription or latest_subscription
+    if not subscription_for_state:
         return (
-            "Подписка пока не активирована.\n\n"
-            "Выберите тариф или запустите тестовый период на 2 дня."
+            "🔐 Подписка\n\n"
+            "У вас пока нет активного тарифа.\n"
+            "Выберите Start или Pro, либо запустите тест на 2 дня.\n\n"
+            f"{access_links_text(settings)}"
+        )
+
+    if subscription is None:
+        return (
+            "🔐 Подписка\n\n"
+            f"Последний тариф: {subscription_for_state.plan.name if subscription_for_state.plan else 'не выбран'}\n"
+            f"Статус: {subscription_for_state.status}\n"
+            f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n\n"
+            "Сейчас доступа нет. Пополните баланс и выберите тариф заново.\n\n"
+            f"{access_links_text(settings)}"
         )
 
     server_lines = []
+    whitelist_servers = 0
+    standard_servers = 0
     for access in user_servers:
         if not access.server:
             continue
-        icon = server_badge(access.server.server_type)
         type_label = {
-            ServerType.TEN_GBIT: "10 Гбит",
-            ServerType.WHITELIST: "Белые списки",
-            ServerType.REGULAR: "Обычный",
-        }[access.server.server_type]
-        server_lines.append(f"{icon} {access.server.name} • {type_label} • {access.status}")
-    whitelist_cost = bytes_to_gb_cost(
-        subscription.whitelist_traffic_used_bytes,
-        WHITELIST_GB_PRICE_RUB,
+            "ten_gbit": "Start",
+            "whitelist": "Белые списки",
+            "regular": "Обычный",
+        }[access.server.server_type.value]
+        if access.server.server_type.value == "whitelist":
+            whitelist_servers += 1
+        else:
+            standard_servers += 1
+        server_lines.append(f"{access.server.name} • {type_label} • {access.status}")
+
+    lines = [
+        "🔐 Подписка",
+        "",
+        f"Статус: {user.status}",
+        f"Тариф: {subscription.plan.name}",
+        f"Формат списания: {billing_cycle_label(subscription.plan)}",
+        f"Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
+        f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}",
+        f"Лимит устройств: {device_limit_label(subscription.plan)}",
+    ]
+    if subscription.notes:
+        lines.extend(["", subscription.notes])
+    if show_metered_usage(subscription):
+        whitelist_cost = bytes_to_gb_cost(subscription.whitelist_traffic_used_bytes, WHITELIST_GB_PRICE_RUB)
+        lines.extend(
+            [
+                f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ",
+                f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ",
+                f"Начисление за белые списки к продлению: {whitelist_cost:.2f} ₽",
+            ]
+        )
+    if whitelist_servers:
+        lines.extend(
+            [
+                "",
+                "Важно по серверам белых списков:",
+                "Используйте их только когда белые списки действительно нужны, потому что скорость на них ниже стандартных серверов.",
+            ]
+        )
+        current_is_whitelist = bool(activity_summary and activity_summary.get("current_server_type") == "whitelist")
+        if current_is_whitelist:
+            lines.append("Сейчас у вас активен сервер белых списков. Если белые списки уже не нужны, переключитесь на обычный сервер.")
+        only_whitelist_recently = bool(
+            activity_summary
+            and activity_summary.get("recent_server_types")
+            and set(activity_summary["recent_server_types"]) == {"whitelist"}
+            and standard_servers > 0
+        )
+        if only_whitelist_recently:
+            lines.append("Похоже, вы долго используете только сервер белых списков. По возможности вернитесь на стандартные серверы.")
+    lines.extend(
+        [
+            "",
+            "Доступные серверы:",
+            "\n".join(server_lines) if server_lines else "Пока нет активных серверов.",
+        ]
     )
+    return "\n".join(lines)
+
+
+def support_text(settings) -> str:
     return (
-        "Моя подписка\n\n"
-        f"Статус: {user.status}\n"
-        f"Тариф: {subscription.plan.name}\n"
-        f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}\n"
-        f"Накопленный долг: {Decimal(subscription.accrued_debt_rub):.2f} ₽\n"
-        f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ\n"
-        f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
-        f"Начисление за белые списки: {whitelist_cost:.2f} ₽\n\n"
-        "Доступные серверы:\n"
-        f"{chr(10).join(server_lines) if server_lines else 'Пока нет активных серверов.'}"
+        "🛟 Поддержка\n\n"
+        f"Аккаунт поддержки: {support_username_label(settings)}\n\n"
+        "Если VPN не работает, нажмите кнопку ниже и опишите проблему одним сообщением.\n"
+        "Если заметили баг или странное поведение сервиса, тоже обязательно сообщите об этом в поддержку."
     )
+
+
+def normalize_action_text(text: str | None) -> str:
+    return " ".join((text or "").replace("\u200b", " ").split()).casefold()
+
+
+def resolve_main_action(text: str | None) -> str | None:
+    return {
+        "меню": "menu",
+        "поддержка": "support",
+        "помощь": "support",
+        "сайт": "site",
+        "профиль": "profile",
+        "баланс": "balance",
+        "подписка": "subscription",
+        "серверы": "subscription",
+    }.get(normalize_action_text(text))
+
+
+async def get_access_state(message: Message | CallbackQuery, container: AppContainer, hub=None):
+    user = await ensure_user(message.from_user, container, hub)
+    consent_ok = bool(user.registration_completed_at and user.consent_accepted_at)
+    channel_ok = not container.settings.required_subscription_channel or bool(user.channel_verified_at)
+    if not channel_ok:
+        channel_ok = await is_channel_member(user.telegram_id, container)
+        if channel_ok and hub is not None:
+            user = await hub.accounts.mark_channel_verified(user.id)
+    return user, consent_ok, channel_ok
+
+
+async def send_reply_menu(target: Message | CallbackQuery, *, force: bool = False) -> None:
+    anchor = target.message if isinstance(target, CallbackQuery) else target
+    chat = getattr(anchor, "chat", None)
+    chat_id = getattr(chat, "id", None)
+    if chat_id is None:
+        chat_id = getattr(anchor, "chat_id", None)
+    if chat_id is None:
+        from_user = getattr(anchor, "from_user", None)
+        chat_id = getattr(from_user, "id", None)
+    if not force and chat_id in CLIENT_REPLY_MENU_READY:
+        return
+    await anchor.answer("\u2060", reply_markup=main_menu())
+    if chat_id is not None:
+        CLIENT_REPLY_MENU_READY.add(chat_id)
+
+
+async def show_pending_access_steps(
+    target: Message | CallbackQuery,
+    container: AppContainer,
+    *,
+    consent_ok: bool,
+    channel_ok: bool,
+) -> None:
+    anchor = target.message if isinstance(target, CallbackQuery) else target
+    if not consent_ok:
+        await send_card_with_optional_media(
+            anchor,
+            agreement_text(consent_accepted=False),
+            primary_markup=agreement_actions(consent_accepted=False).as_markup(),
+            media_section="onboarding",
+            force_new_message=True,
+        )
+    if not channel_ok:
+        await send_card_with_optional_media(
+            anchor,
+            channel_subscription_text(
+                consent_ok=consent_ok,
+                channel_ok=False,
+                settings=container.settings,
+            ),
+            primary_markup=channel_actions(
+                container.settings.required_subscription_channel_url or None,
+            ).as_markup(),
+            media_section="onboarding",
+            force_new_message=True,
+        )
+    if isinstance(target, CallbackQuery):
+        await target.answer()
+
+
+async def ensure_client_access(message: Message | CallbackQuery, container: AppContainer, hub=None):
+    user, consent_ok, channel_ok = await get_access_state(message, container, hub)
+    if channel_ok and consent_ok:
+        return user
+
+    await show_pending_access_steps(
+        message,
+        container,
+        consent_ok=consent_ok,
+        channel_ok=channel_ok,
+    )
+    return None
+
+
+async def show_home(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
+    user = await ensure_user(target.from_user, container, hub)
+    subscription = await hub.accounts.get_current_subscription(user.id)
+    latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
+    show_trial = await hub.accounts.can_offer_trial(user.id)
+    await send_home_card(
+        target,
+        container,
+        user=user,
+        subscription=subscription,
+        show_trial=show_trial,
+        latest_subscription=latest_subscription,
+        as_new_message=not isinstance(target, CallbackQuery),
+    )
+
+
+async def show_balance(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
+    user = await ensure_user(target.from_user, container, hub)
+    requests = await hub.topups.list_requests(user_id=user.id)
+    await send_card_with_optional_media(
+        target,
+        (
+            "Баланс\n\n"
+            f"На счёте: {Decimal(user.balance_rub):.2f} ₽\n"
+            f"Платежей в истории: {len(requests)}\n\n"
+            "Пополнение сейчас работает через тестовую заглушку и зачисляется автоматически."
+        ),
+        primary_markup=balance_actions().as_markup(),
+        media_section="balance",
+    )
+
+
+async def show_profile(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
+    user = await ensure_user(target.from_user, container, hub)
+    subscription = await hub.accounts.get_current_subscription(user.id)
+    await send_card_with_optional_media(
+        target,
+        profile_text(user, subscription),
+        primary_markup=profile_actions(
+            agreement_url=agreement_url(container.settings),
+            privacy_url=privacy_url(container.settings),
+            share_url=referral_share_vpn_url(container.settings, getattr(user, "referral_code", None)),
+        ).as_markup(),
+        media_section="profile",
+        force_new_message=not isinstance(target, CallbackQuery),
+    )
+
+
+async def show_subscription(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
+    user = await ensure_user(target.from_user, container, hub)
+    bundle = await hub.accounts.get_subscription_bundle(user.id)
+    user_servers = await hub.catalog.get_user_servers(user.id)
+    subscription = bundle.get("subscription")
+    latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
+    activity_summary = await hub.online.get_user_activity_summary(user.id) if getattr(hub, "online", None) else None
+    await send_card_with_optional_media(
+        target,
+        subscription_text(
+            bundle,
+            user_servers,
+            container.settings,
+            latest_subscription=latest_subscription,
+            activity_summary=activity_summary,
+        ),
+        primary_markup=subscription_markup(subscription),
+        media_section="subscription",
+        force_new_message=not isinstance(target, CallbackQuery),
+    )
+
+
+async def show_support(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
+    await ensure_user(target.from_user, container, hub)
+    await send_card_with_optional_media(
+        target,
+        support_text(container.settings),
+        primary_markup=support_actions(support_profile_url(container.settings)).as_markup(),
+        media_section="support",
+        force_new_message=not isinstance(target, CallbackQuery),
+    )
+
+
+async def show_balance(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
+    user = await ensure_user(target.from_user, container, hub)
+    requests = await hub.topups.list_requests(user_id=user.id)
+    pending_requests = len([item for item in requests if str(item.status) == "new"])
+    pending_discount, _, _ = await hub.promos.calculate_discount(user.id, Decimal("100"))
+    await send_card_with_optional_media(
+        target,
+        (
+            "💳 Баланс\n\n"
+            f"На счёте: {Decimal(user.balance_rub):.2f} ₽\n"
+            f"Платежей в истории: {len(requests)}\n"
+            f"Ожидают подтверждения: {pending_requests}\n"
+            f"Ваш реферальный код: {getattr(user, 'referral_code', 'будет создан позже')}\n"
+            f"Ожидающая скидка по промокоду: {pending_discount:.2f} ₽\n\n"
+            "Пополнение пока проходит вручную через администратора.\n"
+            "Промокод можно ввести кнопкой ниже, а реферальную ссылку открыть отдельно."
+        ),
+        primary_markup=balance_actions().as_markup(),
+        media_section="balance",
+        force_new_message=not isinstance(target, CallbackQuery),
+    )
+
+
+def build_home_markup(*, settings, show_trial: bool, referral_code: str | None = None, allow_share: bool = True):
+    share_url = referral_share_vpn_url(settings, referral_code) if allow_share else None
+    return menu_actions(show_trial=show_trial, share_url=share_url).as_markup()
+
+
+async def send_home_card(
+    target: Message | CallbackQuery,
+    container: AppContainer,
+    *,
+    user,
+    subscription,
+    show_trial: bool,
+    latest_subscription=None,
+    as_new_message: bool = False,
+) -> None:
+    text = home_text(user, subscription, container.settings, latest_subscription=latest_subscription)
+    primary_markup = build_home_markup(
+        settings=container.settings,
+        show_trial=show_trial,
+        referral_code=getattr(user, "referral_code", None),
+        allow_share=True,
+    )
+    fallback_markup = build_home_markup(
+        settings=container.settings,
+        show_trial=show_trial,
+        referral_code=getattr(user, "referral_code", None),
+        allow_share=False,
+    )
+    await send_card_with_optional_media(
+        target,
+        text,
+        primary_markup=primary_markup,
+        fallback_markup=fallback_markup,
+        media_section="home",
+        force_new_message=as_new_message,
+    )
+
+
+async def perform_main_action(action: str, message: Message, container: AppContainer, hub) -> None:
+    if action == "menu":
+        await show_home(message, container, hub)
+        return
+    if action == "support":
+        await show_support(message, container, hub)
+        return
+    if action == "profile":
+        await show_profile(message, container, hub)
+        return
+    if action == "balance":
+        await show_balance(message, container, hub)
+        return
+    if action == "subscription":
+        await show_subscription(message, container, hub)
+        return
+    await site_link(message, container)
+
+
+async def route_message_action(message: Message, state: FSMContext, container: AppContainer) -> bool:
+    action = resolve_main_action(message.text)
+    if action is None:
+        return False
+
+    await state.clear()
+    if action == "site":
+        if message.chat.id not in CLIENT_REPLY_MENU_READY:
+            await send_reply_menu(message)
+        await site_link(message, container)
+        return True
+
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return True
+        if message.chat.id not in CLIENT_REPLY_MENU_READY:
+            await send_reply_menu(message)
+        await perform_main_action(action, message, container, hub)
+    return True
 
 
 @router.message(CommandStart())
 async def start(message: Message, container: AppContainer):
-    await ensure_user(message.from_user, container)
-    if not await ensure_channel_access(message, container):
-        return
     async with container.hub() as hub:
-        user = await hub.accounts.get_user_by_telegram_id(message.from_user.id)
+        provisional_user = await ensure_user(message.from_user, container, hub)
+        start_payload = (message.text or "").split(maxsplit=1)
+        if len(start_payload) > 1 and start_payload[1].startswith("ref_"):
+            await hub.accounts.bind_referrer(provisional_user.id, start_payload[1].removeprefix("ref_"))
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
         subscription = await hub.accounts.get_current_subscription(user.id)
-    text = (
-        "ALTLINK VPN\n\n"
-        "Здесь можно запустить тест, выбрать тариф, пополнить внутренний баланс, "
-        "получить ссылку и QR для подключения, а также управлять подпиской с сайта."
+        latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
+        show_trial = await hub.accounts.can_offer_trial(user.id)
+    await send_reply_menu(message, force=True)
+    await send_home_card(
+        message,
+        container,
+        user=user,
+        subscription=subscription,
+        show_trial=show_trial,
+        latest_subscription=latest_subscription,
+        as_new_message=True,
     )
-    if subscription:
-        text += f"\n\nСейчас у вас активен тариф: {subscription.plan.name}"
-    await message.answer(text, reply_markup=main_menu())
+
+
+@router.message(F.text.func(lambda value: resolve_main_action(value) == "menu"))
+async def menu_reply(message: Message, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        await perform_main_action("menu", message, container, hub)
+
+
+@router.message(F.text.func(lambda value: resolve_main_action(value) == "support"))
+async def support_reply(message: Message, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        await perform_main_action("support", message, container, hub)
+
+
+@router.message(F.text.func(lambda value: resolve_main_action(value) == "site"))
+async def site_link(message: Message, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+    result = await message.answer(
+        "🌐 Сайт ALTLINK\n\n"
+        f"Главная страница: {site_public_url(container.settings) or 'ещё не настроена'}\n"
+        f"Личный кабинет: {portal_public_url(container.settings) or 'ещё не настроен'}\n\n"
+        "На сайте можно посмотреть тарифы, подключение и войти в кабинет через Telegram.",
+        reply_markup=site_actions(
+            site_public_url(container.settings),
+            portal_public_url(container.settings),
+        ).as_markup(),
+    )
+    remember_client_card(result, has_media=False)
+
+
+@router.message(F.text.func(lambda value: resolve_main_action(value) == "profile"))
+async def legacy_profile(message: Message, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        await perform_main_action("profile", message, container, hub)
+
+
+@router.message(F.text.func(lambda value: resolve_main_action(value) == "balance"))
+async def legacy_balance(message: Message, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        await perform_main_action("balance", message, container, hub)
+
+
+@router.message(F.text.func(lambda value: resolve_main_action(value) == "subscription"))
+async def legacy_subscription(message: Message, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        await perform_main_action("subscription", message, container, hub)
+
+
+@router.callback_query(F.data == "client:home")
+async def home_callback(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        await show_home(callback, container, hub)
+
+
+@router.callback_query(F.data == "client:show_agreement")
+async def show_agreement(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_user(callback.from_user, container, hub)
+        await answer_or_edit(
+            callback,
+            agreement_text(
+                consent_accepted=bool(user.registration_completed_at and user.consent_accepted_at)
+            ),
+            reply_markup=agreement_actions(
+                consent_accepted=bool(user.registration_completed_at and user.consent_accepted_at)
+            ).as_markup(),
+        )
 
 
 @router.callback_query(F.data == "client:check_channel")
 async def check_channel(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
-    await callback.message.edit_text(
-        "Подписка подтверждена. Можно продолжать работу в боте.",
-    )
-    await callback.message.answer("Открываю главное меню.", reply_markup=main_menu())
-    await callback.answer()
-
-
-@router.message(F.text == "Профиль")
-async def profile(message: Message, container: AppContainer):
-    if not await ensure_channel_access(message, container):
-        return
     async with container.hub() as hub:
-        user = await ensure_user(message.from_user, container, hub)
-        subscription = await hub.accounts.get_current_subscription(user.id)
-    await message.answer(profile_text(user, subscription), reply_markup=main_menu())
-
-
-@router.message(F.text == "Баланс")
-async def balance(message: Message, container: AppContainer):
-    if not await ensure_channel_access(message, container):
-        return
-    async with container.hub() as hub:
-        user = await ensure_user(message.from_user, container, hub)
-        requests = await hub.topups.list_requests(user_id=user.id)
-    await message.answer(
-        f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n\n"
-        f"Платежей в истории: {len(requests)}\n"
-        "Сейчас включён тестовый внешний провайдер оплаты: платёж проходит автоматически.",
-        reply_markup=balance_actions().as_markup(),
-    )
-
-
-@router.message(F.text == "Подписка")
-async def subscription(message: Message, container: AppContainer):
-    if not await ensure_channel_access(message, container):
-        return
-    async with container.hub() as hub:
-        user = await ensure_user(message.from_user, container, hub)
-        bundle = await hub.accounts.get_subscription_bundle(user.id)
-        user_servers = await hub.catalog.get_user_servers(user.id)
-    await message.answer(subscription_text(bundle, user_servers), reply_markup=subscription_actions().as_markup())
-
-
-@router.message(F.text == "Серверы")
-async def servers(message: Message, container: AppContainer):
-    if not await ensure_channel_access(message, container):
-        return
-    async with container.hub() as hub:
-        user = await ensure_user(message.from_user, container, hub)
-        user_servers = await hub.catalog.get_user_servers(user.id)
-    lines = []
-    for access in user_servers:
-        if not access.server or access.status == "blocked":
-            continue
-        icon = server_badge(access.server.server_type)
-        type_label = {
-            ServerType.TEN_GBIT: "10 Гбит",
-            ServerType.WHITELIST: "Белые списки",
-            ServerType.REGULAR: "Обычный сервер",
-        }[access.server.server_type]
-        lines.append(
-            f"{icon} {access.server.name}\n"
-            f"Локация: {access.server.country_code or '—'}\n"
-            f"Тип: {type_label}\n"
-            f"Статус: {access.status}\n"
+        user, consent_ok, channel_ok = await get_access_state(callback, container, hub)
+        subscription = await hub.accounts.get_current_subscription(user.id) if (consent_ok and channel_ok) else None
+        show_trial = await hub.accounts.can_offer_trial(user.id) if (consent_ok and channel_ok) else False
+    if not (consent_ok and channel_ok):
+        await answer_or_edit(
+            callback,
+            channel_subscription_text(
+                consent_ok=consent_ok,
+                channel_ok=channel_ok,
+                settings=container.settings,
+            ),
+            reply_markup=channel_actions(
+                container.settings.required_subscription_channel_url or None,
+            ).as_markup(),
         )
-    text = "Мои серверы\n\n" + ("\n".join(lines) if lines else "Пока нет активных серверов.")
-    await message.answer(text)
-
-
-@router.message(F.text == "Сайт")
-async def site_link(message: Message, container: AppContainer):
-    if not await ensure_channel_access(message, container):
         return
-    portal_url = f"{container.settings.backend_public_url.rstrip('/')}/portal"
-    await message.answer(
-        "Пользовательский портал ALTLINK\n\n"
-        f"{portal_url}\n\n"
-        "Вход на сайте выполняется через Telegram Login, поэтому бот и сайт работают с одним аккаунтом."
+    await send_reply_menu(callback)
+    await send_home_card(
+        callback,
+        container,
+        user=user,
+        subscription=subscription,
+        show_trial=show_trial,
+        as_new_message=False,
     )
 
 
-@router.message(F.text == "Помощь")
-async def help_screen(message: Message, container: AppContainer):
-    if not await ensure_channel_access(message, container):
-        return
-    await message.answer(
-        "Помощь\n\n"
-        "1. Сначала подпишитесь на официальный канал проекта.\n"
-        "2. Тестовый период доступен один раз на 2 дня.\n"
-        "3. Тариф 69 ₽ даёт один автоматически назначенный сервер 10 Гбит.\n"
-        "4. Серверы типа «Белые списки» тарифицируются отдельно по 4 ₽ за ГБ.\n"
-        "5. Тариф 200 ₽ открывает все доступные серверы без ограничений.\n"
-        "6. Пополнение сейчас работает через тестовую заглушку и зачисляется автоматически.\n"
-        "7. Если денег не хватает, доступ уходит в льготный период на 14 дней."
+@router.callback_query(F.data == "client:complete_registration")
+async def complete_registration(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_user(callback.from_user, container, hub)
+        await hub.accounts.complete_registration(user.id)
+        refreshed, consent_ok, channel_ok = await get_access_state(callback, container, hub)
+        subscription = await hub.accounts.get_current_subscription(refreshed.id) if (consent_ok and channel_ok) else None
+        show_trial = await hub.accounts.can_offer_trial(refreshed.id) if (consent_ok and channel_ok) else False
+    await answer_or_edit(
+        callback,
+        agreement_text(consent_accepted=True),
+        reply_markup=agreement_actions(consent_accepted=True).as_markup(),
     )
+    if not channel_ok:
+        await send_card_with_optional_media(
+            callback,
+            channel_subscription_text(
+                consent_ok=consent_ok,
+                channel_ok=False,
+                settings=container.settings,
+            ),
+            primary_markup=channel_actions(
+                container.settings.required_subscription_channel_url or None,
+            ).as_markup(),
+            media_section="onboarding",
+        )
+        return
+    if not consent_ok:
+        return
+    await send_reply_menu(callback)
+    await send_home_card(
+        callback,
+        container,
+        user=refreshed,
+        subscription=subscription,
+        show_trial=show_trial,
+        as_new_message=False,
+    )
+
+
+@router.callback_query(F.data == "client:balance")
+async def balance_callback(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        await show_balance(callback, container, hub)
+
+
+@router.callback_query(F.data == "client:profile")
+async def profile_callback(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        await show_profile(callback, container, hub)
+
+
+@router.callback_query(F.data == "client:subscription")
+async def subscription_callback(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        await show_subscription(callback, container, hub)
+
+
+@router.callback_query(F.data == "client:support")
+async def support_callback(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        await show_support(callback, container, hub)
+
+
+@router.callback_query(F.data == "client:support_issue")
+async def support_issue_prompt(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+    await state.set_state(SupportStates.waiting_for_issue)
+    await answer_or_edit(
+        callback,
+        "Опишите проблему одним сообщением.\n\n"
+        "Например: когда перестал работать VPN, на каком устройстве это происходит и что уже пробовали сделать."
+    )
+
+
+@router.message(SupportStates.waiting_for_issue)
+async def support_issue_submit(message: Message, state: FSMContext, container: AppContainer):
+    if await route_message_action(message, state, container):
+        return
+
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        try:
+            item = await hub.support.create_request(user_id=user.id, message=message.text or "")
+        except ConflictError as exc:
+            await answer_or_edit(message, str(exc))
+            return
+        await state.clear()
+        await answer_or_edit(
+            message,
+            "Запрос в поддержку создан.\n\n"
+            f"Номер запроса: {item.id}\n"
+            "Мы передали сообщение администраторам. Если нужно, дополнительно напишите в аккаунт поддержки.",
+            reply_markup=support_actions(support_profile_url(container.settings)).as_markup(),
+        )
 
 
 @router.callback_query(F.data == "client:topup_menu")
 async def topup_menu(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
-    await callback.message.edit_text(
-        "Выберите сумму пополнения. Сейчас работает тестовая заглушка внешнего платёжного сервиса.",
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+    await answer_or_edit(
+        callback,
+        "Выберите сумму пополнения.\n\n"
+        "Заявка уйдёт администратору на ручное подтверждение. После одобрения баланс обновится автоматически.",
         reply_markup=topup_actions().as_markup(),
     )
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("client:topup_amount:"))
 async def topup_amount(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
     amount = Decimal(callback.data.split(":")[-1])
     async with container.hub() as hub:
-        user = await ensure_user(callback.from_user, container, hub)
-        request = await hub.topups.create_request(user.id, amount, auto_complete=True)
-        await hub.session.refresh(user)
-    await callback.message.edit_text(
-        f"Платёж на {amount:.2f} ₽ проведён в тестовом режиме.\n"
-        f"Баланс пополнен автоматически.\n\n"
-        f"Номер платежа: {request.id}"
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        request = await hub.topups.create_request(user.id, amount, auto_complete=False)
+        admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
+    await notify_admins_about_topup_request(
+        container,
+        user=user,
+        amount=amount,
+        request_id=request.id,
+        admin_telegram_ids=admin_telegram_ids,
     )
-    await callback.answer()
+    await answer_or_edit(
+        callback,
+        (
+            f"🧾 Заявка на пополнение создана.\n\n"
+            f"Сумма: {amount:.2f} ₽\n"
+            f"Номер заявки: {request.id}\n"
+            "Администратор проверит запрос и подтвердит или отклонит его."
+        ),
+        reply_markup=balance_actions().as_markup(),
+    )
 
 
 @router.callback_query(F.data == "client:topup_custom")
 async def topup_custom(callback: CallbackQuery, state: FSMContext, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
     await state.set_state(TopupStates.waiting_for_amount)
-    await callback.message.answer("Введите сумму пополнения в рублях, например: 350")
-    await callback.answer()
+    await answer_or_edit(callback, "Введите сумму пополнения в рублях, например: 350")
 
 
 @router.message(TopupStates.waiting_for_amount)
 async def topup_custom_value(message: Message, state: FSMContext, container: AppContainer):
-    if not await ensure_channel_access(message, container):
+    if await route_message_action(message, state, container):
         return
+
     try:
-        amount = Decimal(message.text.replace(",", "."))
+        amount = Decimal((message.text or "").replace(",", "."))
     except (InvalidOperation, AttributeError):
-        await message.answer("Не удалось распознать сумму. Попробуйте ещё раз.")
+        await answer_or_edit(message, "Не удалось распознать сумму. Попробуйте ещё раз.")
         return
+
     async with container.hub() as hub:
-        user = await ensure_user(message.from_user, container, hub)
-        request = await hub.topups.create_request(user.id, amount, auto_complete=True)
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        request = await hub.topups.create_request(user.id, amount, auto_complete=False)
+        admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
+    await notify_admins_about_topup_request(
+        container,
+        user=user,
+        amount=amount,
+        request_id=request.id,
+        admin_telegram_ids=admin_telegram_ids,
+    )
     await state.clear()
-    await message.answer(
-        f"Платёж #{request.id} на сумму {amount:.2f} ₽ успешно зачислен.",
-        reply_markup=main_menu(),
+    await answer_or_edit(
+        message,
+        f"🧾 Заявка #{request.id} на сумму {amount:.2f} ₽ отправлена администратору.\n"
+        "После подтверждения деньги появятся на балансе автоматически.",
+        reply_markup=balance_actions().as_markup(),
     )
 
 
 @router.callback_query(F.data == "client:my_topups")
 async def my_topups(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
     async with container.hub() as hub:
-        user = await ensure_user(callback.from_user, container, hub)
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
         requests = await hub.topups.list_requests(user_id=user.id)
     if not requests:
-        text = "У вас пока нет платежей."
+        text = "История платежей\n\nПлатежей пока нет."
     else:
         text = "История платежей\n\n" + "\n".join(
             [
@@ -337,134 +1297,341 @@ async def my_topups(callback: CallbackQuery, container: AppContainer):
                 for item in requests[:10]
             ]
         )
-    await callback.message.edit_text(text)
-    await callback.answer()
+    await answer_or_edit(callback, text, reply_markup=balance_actions().as_markup())
+
+
+@router.callback_query(F.data == "client:promo_prompt")
+async def promo_prompt(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+    await state.set_state(PromoStates.waiting_for_code)
+    await answer_or_edit(callback, "Введите промокод одним сообщением, например: START100")
+
+
+@router.message(PromoStates.waiting_for_code)
+async def promo_submit(message: Message, state: FSMContext, container: AppContainer):
+    if await route_message_action(message, state, container):
+        return
+
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        try:
+            _, _, result_text = await hub.promos.redeem_code(user.id, message.text or "")
+        except ConflictError as exc:
+            await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
+            return
+
+    await state.clear()
+    await answer_or_edit(message, result_text, reply_markup=balance_actions().as_markup())
+
+
+@router.callback_query(F.data == "client:referral")
+async def referral_info(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+    share_url = referral_share_vpn_url(container.settings, getattr(user, "referral_code", None))
+    text = (
+        "Рефералка\n\n"
+        f"Ваш код: {getattr(user, 'referral_code', 'будет создан позже')}\n"
+        "За пользователя, который придёт по вашей ссылке и оформит первый платный тариф, вы получите +100 ₽ на баланс."
+    )
+    markup = balance_actions().as_markup()
+    if share_url:
+        await answer_or_edit(callback, f"{text}\n\nСсылка уже подготовлена в кнопке «Поделиться VPN» в меню и профиле.", reply_markup=markup)
+    else:
+        await answer_or_edit(callback, text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "client:plan_menu")
-async def plan_menu(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
-    await callback.message.edit_text(
-        "Выберите тариф.\n\n"
-        "Один сервер 10 Гбит: 69 ₽ в месяц, списание происходит ежедневно по частям.\n"
-        "Белые списки: 4 ₽ за каждый ГБ отдельно.\n"
-        "Безлимит: 200 ₽ в месяц, доступны все серверы.",
+async def plan_menu_v2(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+    await answer_or_edit(
+        callback,
+        (
+            "Тарифы\n\n"
+            "Сначала выберите тариф.\n"
+            "После этого бот предложит оформить его на месяц или на неделю.\n\n"
+            "Start: один основной сервер, 2 устройства.\n"
+            "Белые списки для него считаются отдельно по 4 ₽ за ГБ.\n\n"
+            "Pro: все активные серверы, 8 устройств."
+        ),
         reply_markup=plan_actions().as_markup(),
     )
-    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("client:plan_family:"))
+async def plan_family_menu(callback: CallbackQuery, container: AppContainer):
+    family = callback.data.split(":")[-1]
+    if family not in {"10gbit", "unlimited"}:
+        await callback.answer("Неизвестный тариф.", show_alert=True)
+        return
+
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+
+    if family == "10gbit":
+        text = (
+            "Start\n\n"
+            f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽.\n"
+            f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽.\n"
+            "Лимит: 2 устройства.\n"
+            "Белые списки оплачиваются отдельно по 4 ₽ за ГБ."
+        )
+    else:
+        text = (
+            "Pro\n\n"
+            f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽.\n"
+            f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽.\n"
+            "Лимит: 8 устройств.\n"
+            "Трафик и белые списки отдельно не тарифицируются."
+        )
+
+    await answer_or_edit(
+        callback,
+        text,
+        reply_markup=plan_period_actions(family).as_markup(),
+    )
+
+
+@router.callback_query(F.data == "client:plan_menu_legacy")
+async def plan_menu(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+    await answer_or_edit(
+        callback,
+        (
+            "Тарифы\n\n"
+            "10 Гбит:\n"
+            "• 69 ₽ в месяц, 2 устройства.\n"
+            "• 22.43 ₽ в неделю, в пересчёте на месяц на 30% дороже.\n\n"
+            "Безлимит:\n"
+            "• 200 ₽ в месяц, 8 устройств.\n"
+            "• 65 ₽ в неделю, в пересчёте на месяц на 30% дороже.\n\n"
+            "Для тарифа 10 Гбит белые списки считаются отдельно по 4 ₽ за ГБ."
+        ),
+        reply_markup=plan_actions().as_markup(),
+    )
+    return
+    await answer_or_edit(
+        callback,
+        (
+            "Тарифы\n\n"
+            "Один сервер 10 Гбит: 69 ₽ в месяц.\n"
+            "Белые списки: 4 ₽ за каждый ГБ отдельно.\n"
+            "Безлимит: 200 ₽ в месяц."
+        ),
+        reply_markup=plan_actions().as_markup(),
+    )
 
 
 @router.callback_query(F.data == "client:trial_activate")
 async def trial_activate(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
     async with container.hub() as hub:
-        user = await ensure_user(callback.from_user, container, hub)
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
         try:
             subscription = await hub.billing.activate_trial(user.id)
             text = (
-                "Тестовый период на 2 дня успешно активирован.\n"
-                f"Доступ будет работать до {subscription.ends_at:%d.%m.%Y %H:%M}."
+                "Тестовый период Pro активирован.\n\n"
+                f"Доступ ко всем активным серверам будет работать до {subscription.ends_at:%d.%m.%Y %H:%M}.\n"
+                f"Лимит устройств: {device_limit_label(subscription.plan)}"
             )
         except ConflictError as exc:
             text = str(exc)
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
-    await callback.message.edit_text(text)
-    await callback.answer()
+    await answer_or_edit(
+        callback,
+        text,
+        reply_markup=subscription_actions(
+            show_traffic=False,
+            can_cancel=False,
+            auto_renew_disabled=False,
+        ).as_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("client:activate_plan:"))
 async def activate_plan(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
     plan_code = parse_paid_plan_code(callback.data.split(":")[-1])
     if plan_code is None:
-        await callback.message.edit_text(
-            "Этот тариф больше не поддерживается или кнопка устарела.\n\n"
-            "Откройте меню тарифов заново и выберите один из актуальных вариантов."
+        await answer_or_edit(
+            callback,
+            "Этот тариф больше не поддерживается. Откройте раздел тарифов заново и выберите актуальный вариант.",
+            reply_markup=plan_actions().as_markup(),
         )
-        await callback.answer()
         return
+    current_subscription = None
     async with container.hub() as hub:
-        user = await ensure_user(callback.from_user, container, hub)
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
         try:
             subscription = await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
             text = (
-                f"Тариф «{subscription.plan.name}» активирован.\n"
-                f"Следующее ежедневное списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}"
+                f"Тариф «{subscription.plan.name}» активирован.\n\n"
+                f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}\n"
+                f"Формат списания: {billing_cycle_label(subscription.plan)}\n"
+                f"Лимит устройств: {device_limit_label(subscription.plan)}"
             )
+            current_subscription = subscription
         except ConflictError as exc:
             text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
-    await callback.message.edit_text(text)
-    await callback.answer()
+        if current_subscription is None:
+            current_subscription = await hub.accounts.get_current_subscription(user.id)
+    await answer_or_edit(callback, text, reply_markup=subscription_markup(current_subscription))
+    return
+    current_subscription = None
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        try:
+            subscription = await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
+            text = (
+                f"Тариф «{subscription.plan.name}» активирован.\n\n"
+                f"Следующее ежедневное списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}"
+            )
+            current_subscription = subscription
+        except ConflictError as exc:
+            text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
+        except (NotFoundError, ServiceError) as exc:
+            text = str(exc)
+        if current_subscription is None:
+            current_subscription = await hub.accounts.get_current_subscription(user.id)
+    await answer_or_edit(callback, text, reply_markup=subscription_markup(current_subscription))
+
+
+@router.callback_query(F.data == "client:subscription_cancel")
+async def subscription_cancel(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        try:
+            subscription = await hub.billing.cancel_subscription_renewal(user.id)
+            text = (
+                "Автопродление отключено.\n\n"
+                f"Доступ сохранится до {subscription.ends_at:%d.%m.%Y %H:%M}, после этого подписка завершится."
+            )
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            text = str(exc)
+            subscription = await hub.accounts.get_current_subscription(user.id)
+    await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
+
+
+@router.callback_query(F.data == "client:subscription_resume")
+async def subscription_resume(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        try:
+            subscription = await hub.billing.restore_subscription_renewal(user.id)
+            text = "Автопродление снова включено."
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            text = str(exc)
+            subscription = await hub.accounts.get_current_subscription(user.id)
+    await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
 
 
 @router.callback_query(F.data == "client:subscription_link")
 async def subscription_link(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
     async with container.hub() as hub:
-        user = await ensure_user(callback.from_user, container, hub)
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
         bundle = await hub.accounts.get_subscription_bundle(user.id)
-        info = bundle.get("subscription_info")
-        if not info:
-            text = "Ссылка пока недоступна. Сначала активируйте тестовый период или тариф."
-        else:
-            text = (
-                "Персональная подписочная ссылка Remnawave:\n\n"
-                f"{info.subscriptionUrl}\n\n"
-                "Ссылка уже учитывает доступные вам серверы по текущему тарифу."
+        subscription = bundle.get("subscription")
+        payload = resolve_subscription_payload(bundle)
+        if not payload:
+            await answer_or_edit(
+                callback,
+                "Ссылка пока недоступна. Сначала активируйте тестовый период или тариф.",
+                reply_markup=subscription_link_markup(container.settings, subscription),
+                disable_web_page_preview=True,
             )
-    await callback.message.edit_text(text)
-    await callback.answer()
+            return
+        image = render_qr_png(payload)
+        await edit_or_send_dynamic_media_card(
+            callback,
+            image_bytes=image,
+            filename="altlink-vpn-qr.png",
+            caption=(
+                "🔗 Ваша персональная ссылка VPN\n\n"
+                f"{payload}\n\n"
+                "Откройте ссылку в VPN-клиенте или отсканируйте QR-код."
+            ),
+            reply_markup=subscription_link_markup(container.settings, subscription),
+        )
 
 
 @router.callback_query(F.data == "client:subscription_qr")
 async def subscription_qr(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
-    async with container.hub() as hub:
-        user = await ensure_user(callback.from_user, container, hub)
-        bundle = await hub.accounts.get_subscription_bundle(user.id)
-        info = bundle.get("subscription_info")
-        keys = bundle.get("connection_keys")
-        payload = info.subscriptionUrl if info else None
-        if payload is None and keys and keys.enabledKeys:
-            payload = keys.enabledKeys[0]
-        if payload is None:
-            await callback.message.answer("QR-код пока недоступен. Сначала активируйте доступ.")
-            await callback.answer()
-            return
-        image = render_qr_png(payload)
-        await callback.message.answer_photo(
-            BufferedInputFile(image, filename="altlink-qr.png"),
-            caption="QR-код для подключения.",
-        )
-    await callback.answer()
+    await subscription_link(callback, container)
 
 
 @router.callback_query(F.data == "client:traffic")
 async def traffic(callback: CallbackQuery, container: AppContainer):
-    if not await ensure_channel_access(callback, container):
-        return
     async with container.hub() as hub:
-        user = await ensure_user(callback.from_user, container, hub)
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
         subscription = await hub.accounts.get_current_subscription(user.id)
         if not subscription:
-            text = "У вас пока нет активной подписки."
+            text = "Трафик и списания\n\nУ вас пока нет активной подписки."
+        elif not show_metered_usage(subscription):
+            text = (
+                "Трафик и списания\n\n"
+                "Для текущего тарифа этот раздел скрыт, потому что трафик и начисления по белым спискам не актуальны."
+            )
         else:
             white_cost = bytes_to_gb_cost(subscription.whitelist_traffic_used_bytes, WHITELIST_GB_PRICE_RUB)
             text = (
-                "Трафик и начисления\n\n"
+                "Трафик и списания\n\n"
+                f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ\n"
+                f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
+                f"Начисление к следующему продлению: {white_cost:.2f} ₽\n"
+                f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}"
+            )
+    await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
+    return
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        subscription = await hub.accounts.get_current_subscription(user.id)
+        if not subscription:
+            text = "Трафик и списания\n\nУ вас пока нет активной подписки."
+        elif not show_metered_usage(subscription):
+            text = (
+                "Трафик и списания\n\n"
+                "Для текущего тарифа этот раздел скрыт, потому что трафик и начисления по белым спискам не актуальны."
+            )
+        else:
+            white_cost = bytes_to_gb_cost(subscription.whitelist_traffic_used_bytes, WHITELIST_GB_PRICE_RUB)
+            text = (
+                "Трафик и списания\n\n"
                 f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ\n"
                 f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
                 f"Начислено за белые списки: {white_cost:.2f} ₽\n"
                 f"Накопленный долг: {Decimal(subscription.accrued_debt_rub):.2f} ₽\n"
                 f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}"
             )
-    await callback.message.edit_text(text)
-    await callback.answer()
+    await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))

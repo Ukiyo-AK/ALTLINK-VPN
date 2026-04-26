@@ -4,12 +4,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from altlink.domain.enums import (
     BalanceTransactionType,
     PlanCode,
+    PromoRewardKind,
     SubscriptionStatus,
     TopupStatus,
 )
@@ -28,6 +29,7 @@ class Plan(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     price_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     period_days: Mapped[int] = mapped_column(Integer, nullable=False)
     traffic_limit_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    device_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_trial: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -120,3 +122,47 @@ class TrialPeriod(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     converted_to_subscription: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="trial_period")
+
+
+class PromoCode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "promo_codes"
+
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    reward_kind: Mapped[PromoRewardKind] = mapped_column(enum_values(PromoRewardKind), nullable=False)
+    reward_value: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    usage_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    new_users_only: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    created_by_admin_id: Mapped[str | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    created_by_admin: Mapped["AdminUser | None"] = relationship(back_populates="promo_codes")
+    redemptions: Mapped[list["PromoCodeRedemption"]] = relationship(back_populates="promo_code")
+
+
+class PromoCodeRedemption(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "promo_code_redemptions"
+    __table_args__ = (UniqueConstraint("promo_code_id", "user_id", name="uq_promo_code_redemption_user"),)
+
+    promo_code_id: Mapped[str] = mapped_column(
+        ForeignKey("promo_codes.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    applied_subscription_id: Mapped[str | None] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reward_value_applied: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+
+    promo_code: Mapped["PromoCode"] = relationship(back_populates="redemptions")
+    user: Mapped["User"] = relationship(back_populates="promo_redemptions")
+    applied_subscription: Mapped["Subscription | None"] = relationship()

@@ -1,20 +1,26 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
+import asyncio
 import base64
+import contextlib
 import json
+import re
+import time
 from decimal import Decimal
+from html import escape
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from altlink.domain.billing import bytes_to_gb_cost
-from altlink.domain.enums import BalanceTransactionType, ServerType, TopupStatus
-from altlink.domain.plans import parse_paid_plan_code
+from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType, TopupStatus
+from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
 from altlink.infrastructure.db.models import Subscription, SystemSetting, User
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.utils.qr import render_qr_png
@@ -23,6 +29,28 @@ from altlink.utils.telegram_web import check_channel_membership, verify_telegram
 
 router = APIRouter(tags=["web"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+DOCUMENT_FILENAMES = {
+    "agreement": "altlink_user_agreement.md",
+    "privacy": "altlink_privacy_policy.md",
+}
+DOCUMENT_KEYWORDS = {
+    "agreement": ("agreement", "user_agreement", "соглаш"),
+    "privacy": ("privacy", "policy", "конфиден", "privacy_policy"),
+}
+
+
+LATENCY_RECHECK_THRESHOLD_MS = 250
+
+
+def latency_target_label() -> str:
+    return "российского сервера ALTLINK до доступных зарубежных серверов"
+
+
+def latency_disclaimer_text() -> str:
+    return (
+        "Замер идёт от российского сервера ALTLINK до зарубежных серверов. "
+        "Это не пинг от вашего устройства, поэтому фактическая задержка может отличаться."
+    )
 
 
 def get_csrf_token(request: Request) -> str:
@@ -126,6 +154,226 @@ async def portal_channel_state(request: Request, user: User) -> bool:
     )
 
 
+def portal_plan_family(plan) -> str | None:
+    raw_code = getattr(plan.code, "value", plan.code)
+    if raw_code in {PlanCode.SINGLE_10GBIT.value, PlanCode.SINGLE_10GBIT_WEEKLY.value}:
+        return "10gbit"
+    if raw_code in {PlanCode.UNLIMITED.value, PlanCode.UNLIMITED_WEEKLY.value}:
+        return "unlimited"
+    return None
+
+
+def group_portal_plans(plans) -> list[dict]:
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+
+    for plan in sorted(plans, key=lambda item: item.sort_order):
+        if plan.is_trial:
+            continue
+        family = portal_plan_family(plan)
+        if family is None:
+            continue
+        if family not in groups:
+            groups[family] = {
+                "family": family,
+                "title": "Start" if family == "10gbit" else "Pro",
+                "description": plan.description,
+                "device_limit": plan.device_limit,
+                "periods": [],
+            }
+            order.append(family)
+        groups[family]["periods"].append(
+            {
+                "label": "На неделю" if plan.period_days <= 7 else "На месяц",
+                "caption": "Гибкое продление" if plan.period_days <= 7 else "Основной формат",
+                "price_rub": plan.price_rub,
+                "plan_code": getattr(plan.code, "value", plan.code),
+                "period_days": plan.period_days,
+            }
+        )
+
+    for family in order:
+        groups[family]["periods"].sort(key=lambda item: item["period_days"], reverse=True)
+    return [groups[family] for family in order]
+
+
+def document_root() -> Path:
+    candidates = [
+        Path("/app/document"),
+        Path(__file__).resolve().parents[4] / "document",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[-1]
+
+
+def resolve_document_path(kind: str) -> Path:
+    root = document_root()
+    direct_path = root / DOCUMENT_FILENAMES[kind]
+    if direct_path.exists():
+        return direct_path
+
+    keywords = DOCUMENT_KEYWORDS.get(kind, ())
+    markdown_files = sorted(root.glob("*.md"))
+    for path in markdown_files:
+        normalized_name = path.stem.casefold()
+        if any(keyword.casefold() in normalized_name for keyword in keywords):
+            return path
+    return direct_path
+
+
+def load_document_text(kind: str) -> str:
+    path = resolve_document_path(kind)
+    if not path.exists():
+        available = list(document_root().glob("*.md"))
+        if available:
+            return "Документ пока не опубликован. Проверьте названия файлов в папке document."
+        return "Документ пока не опубликован."
+    return path.read_text(encoding="utf-8-sig").strip()
+
+
+def is_foreign_latency_target(server) -> bool:
+    country_code = (getattr(server, "country_code", "") or "").upper()
+    return bool(country_code and country_code != "RU")
+
+
+def server_probe_port(server) -> int:
+    for inbound in getattr(server, "inbounds", None) or []:
+        if getattr(inbound, "is_active", True) and getattr(inbound, "port", None):
+            return int(inbound.port)
+    return 443
+
+
+async def single_probe_server_latency(server, *, timeout_seconds: float = 2.5) -> dict:
+    started = time.perf_counter()
+    writer = None
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(server.address, server_probe_port(server)),
+            timeout=timeout_seconds,
+        )
+        latency_ms = max(1, round((time.perf_counter() - started) * 1000))
+        return {
+            "name": server.name,
+            "country_code": (server.country_code or "").upper(),
+            "latency_ms": latency_ms,
+            "reachable": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "name": server.name,
+            "country_code": (server.country_code or "").upper(),
+            "latency_ms": None,
+            "reachable": False,
+            "error": str(exc),
+        }
+    finally:
+        if writer is not None:
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
+
+
+async def probe_server_latency(server, *, timeout_seconds: float = 2.5) -> dict:
+    first_probe = await single_probe_server_latency(server, timeout_seconds=timeout_seconds)
+    first_latency = first_probe.get("latency_ms")
+    if not first_probe.get("reachable") or first_latency is None or first_latency < LATENCY_RECHECK_THRESHOLD_MS:
+        first_probe["rechecked"] = False
+        first_probe["attempts"] = 1
+        return first_probe
+
+    second_probe = await single_probe_server_latency(server, timeout_seconds=timeout_seconds)
+    result = dict(first_probe)
+    result["rechecked"] = True
+    result["attempts"] = 2
+    result["initial_latency_ms"] = first_latency
+    if second_probe.get("reachable") and second_probe.get("latency_ms") is not None:
+        result["latency_ms"] = second_probe["latency_ms"]
+        result["second_latency_ms"] = second_probe["latency_ms"]
+        result.pop("error", None)
+    else:
+        result["second_latency_ms"] = None
+        if second_probe.get("error"):
+            result["recheck_error"] = second_probe["error"]
+    return result
+
+
+def render_markdown_inline(text: str) -> str:
+    rendered = escape(text)
+    rendered = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", rendered)
+    rendered = re.sub(r"`(.+?)`", r"<code>\1</code>", rendered)
+    return rendered
+
+
+def markdown_to_html(markdown_text: str) -> Markup:
+    blocks: list[str] = []
+    list_items: list[str] = []
+    quote_lines: list[str] = []
+    paragraph_lines: list[str] = []
+
+    def flush_list() -> None:
+        nonlocal list_items
+        if list_items:
+            blocks.append("<ul>" + "".join(f"<li>{item}</li>" for item in list_items) + "</ul>")
+            list_items = []
+
+    def flush_quote() -> None:
+        nonlocal quote_lines
+        if quote_lines:
+            blocks.append("<blockquote>" + "<br>".join(quote_lines) + "</blockquote>")
+            quote_lines = []
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph_lines
+        if paragraph_lines:
+            blocks.append(f"<p>{'<br>'.join(paragraph_lines)}</p>")
+            paragraph_lines = []
+
+    for raw_line in markdown_text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            flush_list()
+            flush_quote()
+            flush_paragraph()
+            continue
+        if stripped in {"---", "***"}:
+            flush_list()
+            flush_quote()
+            flush_paragraph()
+            blocks.append("<hr>")
+            continue
+        if stripped.startswith(">"):
+            flush_list()
+            flush_paragraph()
+            quote_lines.append(render_markdown_inline(stripped.lstrip(">").strip()))
+            continue
+        if stripped.startswith(("- ", "* ")):
+            flush_quote()
+            flush_paragraph()
+            list_items.append(render_markdown_inline(stripped[2:].strip()))
+            continue
+        heading_level = 0
+        while heading_level < len(stripped) and stripped[heading_level] == "#":
+            heading_level += 1
+        if 1 <= heading_level <= 4 and stripped[heading_level:heading_level + 1] == " ":
+            flush_list()
+            flush_quote()
+            flush_paragraph()
+            content = render_markdown_inline(stripped[heading_level + 1 :].strip())
+            blocks.append(f"<h{heading_level}>{content}</h{heading_level}>")
+            continue
+        flush_list()
+        flush_quote()
+        paragraph_lines.append(render_markdown_inline(stripped))
+
+    flush_list()
+    flush_quote()
+    flush_paragraph()
+    return Markup("\n".join(blocks))
+
+
 async def build_portal_context(request: Request, hub, user: User) -> dict:
     bundle = await hub.accounts.get_subscription_bundle(user.id)
     subscription = bundle.get("subscription")
@@ -133,6 +381,8 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
     plans = await hub.dashboard.list_plans()
     payments = await hub.topups.list_requests(user_id=user.id)
     channel_ok = await portal_channel_state(request, user)
+    show_usage_details = bool(subscription and subscription.plan and is_metered_plan_code(subscription.plan.code))
+    trial_available = await hub.accounts.can_offer_trial(user.id)
 
     qr_data_uri = None
     info = bundle.get("subscription_info")
@@ -144,17 +394,32 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         qr_png = render_qr_png(payload)
         qr_data_uri = f"data:image/png;base64,{base64.b64encode(qr_png).decode('ascii')}"
 
+    current_plan = subscription.plan if subscription else None
+    current_plan_code = getattr(current_plan.code, "value", current_plan.code) if current_plan else None
+
     return {
         "title": "Личный кабинет",
         "portal_user": user,
         "portal_subscription": subscription,
+        "portal_current_plan_code": current_plan_code,
+        "portal_current_plan_family": portal_plan_family(current_plan),
         "portal_bundle": bundle,
         "portal_servers": user_servers,
         "portal_plans": plans,
+        "portal_plan_groups": group_portal_plans(plans),
         "portal_payments": payments,
         "portal_qr_data_uri": qr_data_uri,
         "portal_channel_ok": channel_ok,
+        "portal_show_usage_details": show_usage_details,
+        "portal_trial_available": trial_available,
         "portal_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/portal",
+        "client_bot_url": f"https://t.me/{request.app.state.settings.client_bot_name.lstrip('@')}" if request.app.state.settings.client_bot_name else None,
+        "connection_help_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/help/connect",
+        "agreement_page_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/legal/agreement",
+        "privacy_page_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/legal/privacy",
+        "latency_api_url": "/api/latency",
+        "latency_target_label": latency_target_label(),
+        "latency_disclaimer": latency_disclaimer_text(),
         "required_channel_url": request.app.state.settings.required_subscription_channel_url,
         "whitelist_price_per_gb": request.app.state.settings.whitelist_price_per_gb_rub,
         "whitelist_cost_rub": bytes_to_gb_cost(
@@ -163,6 +428,96 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         ),
         "telegram_login_bot": request.app.state.settings.client_bot_name.lstrip("@"),
     }
+
+
+@router.get("/")
+async def landing_page(request: Request):
+    async with request.app.state.container.hub() as hub:
+        plans = await hub.dashboard.list_plans()
+    settings = request.app.state.settings
+    return render(
+        request,
+        "landing.html",
+        title="ALTLINK VPN",
+        portal_plan_groups=group_portal_plans(plans),
+        portal_login_url="/portal/login",
+        connection_help_url=f"{settings.backend_public_url.rstrip('/')}/help/connect",
+        agreement_page_url=f"{settings.backend_public_url.rstrip('/')}/legal/agreement",
+        privacy_page_url=f"{settings.backend_public_url.rstrip('/')}/legal/privacy",
+        client_bot_url=f"https://t.me/{settings.client_bot_name.lstrip('@')}" if settings.client_bot_name else None,
+        support_username=settings.support_username,
+        latency_api_url="/api/latency",
+        latency_target_label=latency_target_label(),
+        latency_disclaimer=latency_disclaimer_text(),
+    )
+
+
+@router.get("/api/latency")
+async def latency_probe(request: Request) -> JSONResponse:
+    async with request.app.state.container.hub() as hub:
+        servers = await hub.catalog.list_servers()
+    targets = [
+        server
+        for server in servers
+        if getattr(server, "is_available", False)
+        and getattr(server, "is_connected", False)
+        and is_foreign_latency_target(server)
+    ]
+    probes = await asyncio.gather(*(probe_server_latency(server) for server in targets))
+    probes = sorted(
+        probes,
+        key=lambda item: (
+            not item.get("reachable", False),
+            item.get("latency_ms") if item.get("latency_ms") is not None else 10**9,
+            item.get("name", ""),
+        ),
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "target": "foreign_servers",
+            "source": "российский сервер ALTLINK",
+            "count": len(probes),
+            "recheck_threshold_ms": LATENCY_RECHECK_THRESHOLD_MS,
+            "disclaimer": latency_disclaimer_text(),
+            "probes": probes,
+        },
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.get("/help/connect")
+async def connect_help_page(request: Request):
+    return render(
+        request,
+        "portal_help.html",
+        title="Подключение VPN",
+        support_username=request.app.state.settings.support_username,
+    )
+
+
+@router.get("/legal/agreement")
+async def agreement_page(request: Request):
+    document_text = load_document_text("agreement")
+    return render(
+        request,
+        "legal_agreement.html",
+        title="Пользовательское соглашение",
+        document_html=markdown_to_html(document_text),
+        document_excerpt=document_text.splitlines()[0] if document_text else "",
+    )
+
+
+@router.get("/legal/privacy")
+async def privacy_page(request: Request):
+    document_text = load_document_text("privacy")
+    return render(
+        request,
+        "legal_privacy.html",
+        title="Политика конфиденциальности",
+        document_html=markdown_to_html(document_text),
+        document_excerpt=document_text.splitlines()[0] if document_text else "",
+    )
 
 
 @router.get("/admin/login")
@@ -694,15 +1049,11 @@ async def portal_plan(request: Request):
 
 @router.post("/portal/topup")
 async def portal_topup(request: Request):
-    form = dict(await request.form())
-    validate_csrf(request, form)
-    amount = Decimal(str(form.get("amount", "0")))
     async with request.app.state.container.hub() as hub:
         user = await resolve_portal_user(request, hub)
         if user is None:
             return portal_login_redirect()
-        await hub.topups.create_request(user.id, amount, auto_complete=True)
-        set_flash(request, f"Баланс пополнен на {amount:.2f} ₽ через тестовую заглушку.")
+    set_flash(request, "Пополнение через сайт пока скрыто. Используйте клиентский бот.", "warning")
     return RedirectResponse("/portal", status_code=303)
 
 
@@ -717,3 +1068,4 @@ async def portal_check_channel(request: Request):
         else:
             set_flash(request, "Подписка на канал пока не найдена.", "danger")
     return RedirectResponse("/portal", status_code=303)
+

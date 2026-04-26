@@ -2,11 +2,11 @@
 {% block content %}
 <section class="cards">
   <article class="card"><div class="muted">Активные</div><strong>{{ overview.active_users }}</strong></article>
-  <article class="card"><div class="muted">Grace period</div><strong>{{ overview.grace_users }}</strong></article>
+  <article class="card"><div class="muted">Без продления</div><strong>{{ overview.renewal_disabled_users }}</strong></article>
   <article class="card"><div class="muted">Заблокированные</div><strong>{{ overview.blocked_users }}</strong></article>
   <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>
   <article class="card"><div class="muted">Платежи за 30 дней</div><strong>{{ overview.payments_total_rub }} ₽</strong></article>
-  <article class="card"><div class="muted">Суммарный долг</div><strong>{{ overview.debt_total_rub }} ₽</strong></article>
+  <article class="card"><div class="muted">Трафик</div><strong>{{ '%.2f'|format(overview.total_traffic_bytes / 1024**3) }} ГБ</strong></article>
 </section>
 
 <section class="grid-two">
@@ -49,14 +49,14 @@
   <article class="panel">
     <h2>Топ по трафику</h2>
     <table class="table">
-      <thead><tr><th>Пользователь</th><th>Тариф</th><th>Трафик</th><th>Долг</th></tr></thead>
+      <thead><tr><th>Пользователь</th><th>Тариф</th><th>Трафик</th><th>Автопродление</th></tr></thead>
       <tbody>
         {% for item in overview.top_users %}
         <tr>
           <td>{{ item.user.username or item.user.telegram_id }}</td>
           <td>{{ item.plan.name }}</td>
           <td>{{ '%.2f'|format(item.traffic_used_bytes / 1024**3) }} ГБ</td>
-          <td>{{ item.accrued_debt_rub }} ₽</td>
+          <td>{{ 'вкл' if item.auto_renew else 'выкл' }}</td>
         </tr>
         {% else %}
         <tr><td colspan="4" class="muted">Пока пусто.</td></tr>

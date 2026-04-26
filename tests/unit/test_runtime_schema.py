@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from sqlalchemy import inspect
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from altlink.db import ensure_runtime_schema
+from altlink.domain.enums import PlanCode
+from altlink.infrastructure.db.models.base import enum_values
+
+
+@pytest.mark.asyncio
+async def test_runtime_schema_adds_missing_user_registration_columns(tmp_path: Path):
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}"
+    engine = create_async_engine(database_url, future=True)
+
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                telegram_id BIGINT NOT NULL,
+                username VARCHAR(255),
+                first_name VARCHAR(255),
+                last_name VARCHAR(255),
+                language_code VARCHAR(16),
+                balance_rub NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                status VARCHAR(16) NOT NULL,
+                remnawave_user_uuid VARCHAR(64),
+                remnawave_username VARCHAR(64),
+                remnawave_short_uuid VARCHAR(64),
+                assigned_server_id TEXT,
+                last_seen_at DATETIME
+            )
+            """
+        )
+
+    await ensure_runtime_schema(engine)
+
+    async with engine.begin() as connection:
+        column_names = await connection.run_sync(
+            lambda sync_connection: {column["name"] for column in inspect(sync_connection).get_columns("users")}
+        )
+
+    await engine.dispose()
+
+    assert "registration_completed_at" in column_names
+    assert "consent_accepted_at" in column_names
+    assert "consent_version" in column_names
+    assert "channel_verified_at" in column_names
+
+
+def test_enum_values_tracks_longest_enum_member_length():
+    enum_type = enum_values(PlanCode)
+
+    assert enum_type.length == max(len(member.value) for member in PlanCode)

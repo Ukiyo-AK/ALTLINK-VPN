@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.base import BaseService, NotFoundError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType, SubscriptionStatus, SystemEventLevel, UserStatus
+from altlink.domain.plans import is_metered_plan_code, is_unlimited_plan_code
 from altlink.infrastructure.db.models import Server, ServerInbound, Subscription, User, UserServerAccess
 from altlink.utils.time import utc_now
 
@@ -239,16 +240,16 @@ class CatalogService(BaseService):
         servers: Sequence[Server],
     ) -> set[str]:
         available_servers = [server for server in servers if server.is_available and self._server_has_active_inbounds(server)]
-        if subscription.plan.code == PlanCode.UNLIMITED:
+        if subscription.plan.code == PlanCode.TRIAL or is_unlimited_plan_code(subscription.plan.code):
             return {server.id for server in available_servers}
 
-        if subscription.plan.code in {PlanCode.TRIAL, PlanCode.SINGLE_10GBIT}:
+        if is_metered_plan_code(subscription.plan.code):
             assigned_server = next((server for server in available_servers if server.id == user.assigned_server_id), None)
             if assigned_server is None or assigned_server.server_type != ServerType.TEN_GBIT:
                 assigned_server = await self._pick_least_loaded_ten_gbit_server(servers)
                 user.assigned_server_id = assigned_server.id
             desired_server_ids = {assigned_server.id}
-            if subscription.plan.code == PlanCode.SINGLE_10GBIT:
+            if is_metered_plan_code(subscription.plan.code):
                 desired_server_ids.update(
                     server.id for server in available_servers if server.server_type == ServerType.WHITELIST
                 )
@@ -334,6 +335,7 @@ class CatalogService(BaseService):
                     "expireAt": expire_at.isoformat(),
                     "trafficLimitBytes": int(subscription.traffic_limit_bytes or 0),
                     "trafficLimitStrategy": "NO_RESET",
+                    "hwidDeviceLimit": subscription.plan.device_limit,
                     "telegramId": user.telegram_id,
                     "description": f"ALTLINK user {user.telegram_id}",
                     "activeInternalSquads": squad_ids,

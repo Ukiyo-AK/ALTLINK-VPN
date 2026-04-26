@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -16,6 +16,7 @@ from altlink.logging_config import configure_logging
 from altlink.presentation.api.routes.admin_api import router as admin_api_router
 from altlink.presentation.web.routes import router as admin_web_router
 from altlink.settings import get_settings
+from altlink.utils.media import media_root
 
 
 class SimpleRateLimitMiddleware(BaseHTTPMiddleware):
@@ -59,13 +60,12 @@ def create_app() -> FastAPI:
 
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+    shared_media_dir = media_root()
+    if shared_media_dir.exists():
+        app.mount("/media", StaticFiles(directory=shared_media_dir), name="media")
 
     app.include_router(admin_api_router)
     app.include_router(admin_web_router)
-
-    @app.get("/")
-    async def root() -> RedirectResponse:
-        return RedirectResponse("/portal", status_code=303)
 
     @app.get("/health/live")
     async def health_live() -> dict:

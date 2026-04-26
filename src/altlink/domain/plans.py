@@ -2,10 +2,24 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from altlink.domain.billing import quantize_money
 from altlink.domain.enums import PlanCode
 
 GIGABYTE = 1024**3
 WHITELIST_GB_PRICE_RUB = Decimal("4")
+WEEKLY_BILLING_MULTIPLIER = Decimal("1.30")
+
+SINGLE_10GBIT_MONTHLY_PRICE_RUB = Decimal("69")
+UNLIMITED_MONTHLY_PRICE_RUB = Decimal("199")
+# Weekly 10 Gbit is intentionally rounded to a clean customer-facing price.
+SINGLE_10GBIT_WEEKLY_PRICE_RUB = Decimal("25")
+UNLIMITED_WEEKLY_PRICE_RUB = quantize_money(
+    (UNLIMITED_MONTHLY_PRICE_RUB * WEEKLY_BILLING_MULTIPLIER) / Decimal("4")
+)
+
+TEN_GBIT_PLAN_CODES = {PlanCode.SINGLE_10GBIT, PlanCode.SINGLE_10GBIT_WEEKLY}
+UNLIMITED_PLAN_CODES = {PlanCode.UNLIMITED, PlanCode.UNLIMITED_WEEKLY}
+PAID_PLAN_CODES = TEN_GBIT_PLAN_CODES | UNLIMITED_PLAN_CODES
 
 DEFAULT_PLAN_SEEDS = [
     {
@@ -14,32 +28,61 @@ DEFAULT_PLAN_SEEDS = [
         "price_rub": Decimal("0"),
         "period_days": 2,
         "traffic_limit_bytes": None,
+        "device_limit": 8,
         "is_trial": True,
-        "description": "Бесплатный доступ на 2 дня с автоматическим назначением одного 10 Гбит сервера.",
+        "description": "Бесплатный доступ на 2 дня с уровнем Pro: все активные серверы и лимит до 8 устройств.",
         "sort_order": 0,
     },
     {
         "code": PlanCode.SINGLE_10GBIT,
-        "name": "Один сервер 10 Гбит",
-        "price_rub": Decimal("69"),
+        "name": "Start • ежемесячно",
+        "price_rub": SINGLE_10GBIT_MONTHLY_PRICE_RUB,
         "period_days": 30,
         "traffic_limit_bytes": None,
+        "device_limit": 2,
         "is_trial": False,
         "description": (
             "Один автоматически назначенный 10 Гбит сервер. "
-            "Серверы типа «Белые списки» доступны отдельно и тарифицируются по 4 ₽ за ГБ."
+            "Серверы типа «Белые списки» доступны отдельно и тарифицируются по 4 ₽ за ГБ. "
+            "Лимит — 2 устройства."
         ),
         "sort_order": 10,
     },
     {
+        "code": PlanCode.SINGLE_10GBIT_WEEKLY,
+        "name": "Start • еженедельно",
+        "price_rub": SINGLE_10GBIT_WEEKLY_PRICE_RUB,
+        "period_days": 7,
+        "traffic_limit_bytes": None,
+        "device_limit": 2,
+        "is_trial": False,
+        "description": (
+            "Тот же доступ к 10 Гбит серверу, но с еженедельным списанием. "
+            "В пересчёте на месяц стоит на 30% дороже. Лимит — 2 устройства."
+        ),
+        "sort_order": 15,
+    },
+    {
         "code": PlanCode.UNLIMITED,
-        "name": "Безлимит",
-        "price_rub": Decimal("200"),
+        "name": "Pro • ежемесячно",
+        "price_rub": UNLIMITED_MONTHLY_PRICE_RUB,
         "period_days": 30,
         "traffic_limit_bytes": None,
+        "device_limit": 8,
         "is_trial": False,
-        "description": "Полный доступ ко всем активным серверам без ограничений по трафику.",
+        "description": "Полный доступ ко всем активным серверам без ограничений по трафику. Лимит — 8 устройств.",
         "sort_order": 20,
+    },
+    {
+        "code": PlanCode.UNLIMITED_WEEKLY,
+        "name": "Pro • еженедельно",
+        "price_rub": UNLIMITED_WEEKLY_PRICE_RUB,
+        "period_days": 7,
+        "traffic_limit_bytes": None,
+        "device_limit": 8,
+        "is_trial": False,
+        "description": "Безлимит на все серверы с еженедельным списанием. В пересчёте на месяц стоит на 30% дороже. Лимит — 8 устройств.",
+        "sort_order": 25,
     },
 ]
 
@@ -57,4 +100,12 @@ def parse_paid_plan_code(raw_value: str | None) -> PlanCode | None:
     plan_code = parse_plan_code(raw_value)
     if plan_code in {None, PlanCode.TRIAL}:
         return None
-    return plan_code
+    return plan_code if plan_code in PAID_PLAN_CODES else None
+
+
+def is_metered_plan_code(plan_code: PlanCode | None) -> bool:
+    return plan_code in TEN_GBIT_PLAN_CODES
+
+
+def is_unlimited_plan_code(plan_code: PlanCode | None) -> bool:
+    return plan_code in UNLIMITED_PLAN_CODES
