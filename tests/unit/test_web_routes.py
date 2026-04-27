@@ -48,7 +48,7 @@ def test_group_portal_plans_merges_monthly_and_weekly_variants():
             plan(PlanCode.SINGLE_10GBIT, sort_order=10, price_rub="69", period_days=30, description="10g", device_limit=2),
             plan(PlanCode.SINGLE_10GBIT_WEEKLY, sort_order=15, price_rub="25", period_days=7, description="10g weekly", device_limit=2),
             plan(PlanCode.UNLIMITED, sort_order=20, price_rub="199", period_days=30, description="unlimited", device_limit=8),
-            plan(PlanCode.UNLIMITED_WEEKLY, sort_order=25, price_rub="64.68", period_days=7, description="unlimited weekly", device_limit=8),
+            plan(PlanCode.UNLIMITED_WEEKLY, sort_order=25, price_rub="65", period_days=7, description="unlimited weekly", device_limit=8),
         ]
     )
 
@@ -149,15 +149,10 @@ async def test_probe_server_latency_rechecks_high_values(monkeypatch):
 @pytest.mark.asyncio
 async def test_latency_probe_disables_cache_and_returns_sorted_probes(monkeypatch):
     servers = [
-        SimpleNamespace(name="RU Main", country_code="RU", is_available=True, is_connected=True, inbounds=[]),
-        SimpleNamespace(name="NL Node", country_code="NL", is_available=True, is_connected=True, inbounds=[]),
-        SimpleNamespace(name="DE Node", country_code="DE", is_available=True, is_connected=True, inbounds=[]),
+        SimpleNamespace(id="ru-1", name="RU Main", address="ru.example.com", country_code="RU", is_available=True, is_connected=True, inbounds=[]),
+        SimpleNamespace(id="nl-1", name="NL Node", address="nl.example.com", country_code="NL", is_available=True, is_connected=True, inbounds=[]),
+        SimpleNamespace(id="de-1", name="DE Node", address="de.example.com", country_code="DE", is_available=True, is_connected=True, inbounds=[]),
     ]
-
-    async def fake_probe(server, *, timeout_seconds: float = 2.5):
-        if server.name == "NL Node":
-            return {"name": server.name, "country_code": server.country_code, "latency_ms": 42, "reachable": True}
-        return {"name": server.name, "country_code": server.country_code, "latency_ms": None, "reachable": False}
 
     async def fake_list_servers():
         return servers
@@ -166,15 +161,70 @@ async def test_latency_probe_disables_cache_and_returns_sorted_probes(monkeypatc
     async def fake_hub():
         yield SimpleNamespace(catalog=SimpleNamespace(list_servers=fake_list_servers))
 
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))))
-    monkeypatch.setattr("altlink.presentation.web.routes.probe_server_latency", fake_probe)
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                container=SimpleNamespace(hub=fake_hub),
+                settings=SimpleNamespace(
+                    latency_probe_scheme="https",
+                    latency_probe_port=44443,
+                    latency_probe_path="/ping",
+                    browser_latency_timeout_ms=4000,
+                ),
+            )
+        )
+    )
 
     response = await latency_probe(request)
 
     assert response.status_code == 200
     assert response.headers["Cache-Control"].startswith("no-store")
-    assert b"foreign_servers" in response.body
+    assert b"browser_rtt" in response.body
+    assert b"timeout_ms" in response.body
     assert b"recheck_threshold_ms" in response.body
     assert b"disclaimer" in response.body
     assert b"NL Node" in response.body
+    assert b"server_id\":\"nl-1" in response.body
+    assert b"probe_url\":\"https://nl.example.com:44443/ping" in response.body
     assert b"RU Main" not in response.body
+
+
+@pytest.mark.asyncio
+async def test_latency_probe_can_limit_to_requested_servers_and_include_local(monkeypatch):
+    servers = [
+        SimpleNamespace(id="ru-1", name="RU Main", address="ru.example.com", country_code="RU", is_available=True, is_connected=True, inbounds=[]),
+        SimpleNamespace(id="nl-1", name="NL Node", address="nl.example.com", country_code="NL", is_available=True, is_connected=True, inbounds=[]),
+        SimpleNamespace(id="de-1", name="DE Node", address="de.example.com", country_code="DE", is_available=True, is_connected=False, inbounds=[]),
+    ]
+
+    async def fake_list_servers():
+        return servers
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(catalog=SimpleNamespace(list_servers=fake_list_servers))
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                container=SimpleNamespace(hub=fake_hub),
+                settings=SimpleNamespace(
+                    latency_probe_scheme="https",
+                    latency_probe_port=44443,
+                    latency_probe_path="/ping",
+                    browser_latency_timeout_ms=3500,
+                ),
+            )
+        ),
+        query_params={"server_ids": "ru-1,de-1", "include_local": "1"},
+    )
+
+    response = await latency_probe(request)
+
+    assert response.status_code == 200
+    assert b"RU Main" in response.body
+    assert b"server_id\":\"ru-1" in response.body
+    assert b"probe_url\":\"https://ru.example.com:44443/ping" in response.body
+    assert b"3500" in response.body
+    assert b"DE Node" not in response.body
+    assert b"NL Node" not in response.body

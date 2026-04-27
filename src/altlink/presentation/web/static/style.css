@@ -693,6 +693,47 @@ textarea {
   gap: 1rem;
 }
 
+.portal-server-table th:last-child,
+.portal-server-table td:last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.server-latency-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 7.5rem;
+  padding: 0.34rem 0.72rem;
+  border-radius: 999px;
+  border: 1px solid rgba(203, 187, 165, 0.75);
+  background: rgba(255, 255, 255, 0.82);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.server-latency-chip-pending {
+  color: var(--muted);
+  background: rgba(241, 232, 219, 0.72);
+}
+
+.server-latency-chip-ready {
+  color: var(--accent-strong);
+  background: rgba(219, 244, 237, 0.8);
+  border-color: rgba(13, 143, 119, 0.2);
+}
+
+.server-latency-chip-muted {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.server-latency-chip-error {
+  color: var(--danger);
+  background: rgba(253, 230, 232, 0.78);
+  border-color: rgba(188, 77, 84, 0.22);
+}
+
 .portal-latency-box {
   margin-top: 0.35rem;
   padding-top: 0.25rem;

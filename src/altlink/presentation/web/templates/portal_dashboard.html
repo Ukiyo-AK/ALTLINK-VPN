@@ -210,11 +210,11 @@
           <h2>Доступные серверы</h2>
           <span class="badge warning">Локальная матрица доступа</span>
         </div>
-        <table class="table">
-          <thead><tr><th>Сервер</th><th>Тип</th><th>Статус</th></tr></thead>
+        <table class="table portal-server-table" id="portal-server-table">
+          <thead><tr><th>Сервер</th><th>Тип</th><th>Статус</th><th>Пинг</th></tr></thead>
           <tbody>
             {% for access in portal_servers if access.server %}
-            <tr>
+            <tr data-server-id="{{ access.server.id }}" data-country-code="{{ (access.server.country_code or '')|upper }}">
               <td>{{ access.server.name }}</td>
               <td>
                 {% if access.server.server_type.value == 'ten_gbit' %}⚡ Start{% endif %}
@@ -222,9 +222,10 @@
                 {% if access.server.server_type.value == 'regular' %}Обычный сервер{% endif %}
               </td>
               <td>{{ access.status }}</td>
+              <td><span class="server-latency-chip server-latency-chip-pending" data-latency-cell>Не измерен</span></td>
             </tr>
             {% else %}
-            <tr><td colspan="3" class="muted">Серверы появятся после активации доступа.</td></tr>
+            <tr><td colspan="4" class="muted">Серверы появятся после активации доступа.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -233,17 +234,12 @@
           <div class="split portal-latency-head">
             <div class="stack compact">
               <span class="badge">Проверка маршрута</span>
-              <p class="muted">
-                Панель измеряет пинг от {{ latency_target_label }}. При слишком высокой задержке
-                система автоматически выполняет повторный замер.
-              </p>
             </div>
             <button class="button compact" type="button" id="portal-latency-button">Измерить пинг</button>
           </div>
           <div class="landing-latency-card portal-latency-card" id="portal-latency-card">
             <strong id="portal-latency-value">—</strong>
-            <div class="muted" id="portal-latency-hint">Нажмите кнопку, чтобы проверить отклик по доступным зарубежным узлам.</div>
-            <div class="landing-latency-list" id="portal-latency-list"></div>
+            <div class="muted" id="portal-latency-hint">Нажмите кнопку, чтобы обновить пинг прямо в списке доступных серверов.</div>
           </div>
           <p class="muted latency-disclaimer">{{ latency_disclaimer }}</p>
         </div>
@@ -279,22 +275,109 @@
       const value = document.getElementById("portal-latency-value");
       const hint = document.getElementById("portal-latency-hint");
       const card = document.getElementById("portal-latency-card");
-      const list = document.getElementById("portal-latency-list");
+      const table = document.getElementById("portal-server-table");
       const endpoint = {{ latency_api_url | tojson }};
       const disclaimer = {{ latency_disclaimer | tojson }};
+      const serverRows = Array.from(table?.querySelectorAll("tbody tr[data-server-id]") || []);
 
-      if (!button || !value || !hint || !card || !list) {
+      if (!button || !value || !hint || !card || !table) {
         return;
       }
 
+      if (!serverRows.length) {
+        button.disabled = true;
+        return;
+      }
+
+      const latencyCells = new Map(
+        serverRows
+          .map((row) => [row.dataset.serverId, row.querySelector("[data-latency-cell]")])
+          .filter((entry) => entry[0] && entry[1])
+      );
+
+      const setLatencyState = (cell, label, state) => {
+        cell.textContent = label;
+        cell.className = "server-latency-chip";
+        cell.classList.add(`server-latency-chip-${state}`);
+      };
+
+      const measureOnce = async (probeUrl, timeoutMs) => {
+        const started = performance.now();
+        const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+        const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+        try {
+          const separator = probeUrl.includes("?") ? "&" : "?";
+          const url = `${probeUrl}${separator}ts=${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          await fetch(url, {
+            mode: "no-cors",
+            cache: "no-store",
+            credentials: "omit",
+            signal: controller?.signal,
+          });
+          return {
+            reachable: true,
+            latency_ms: Math.max(1, Math.round(performance.now() - started)),
+          };
+        } catch (error) {
+          const timeout = error?.name === "AbortError";
+          return {
+            reachable: false,
+            latency_ms: null,
+            error: timeout ? "timeout" : (error?.message || "network_error"),
+          };
+        } finally {
+          if (timer) {
+            window.clearTimeout(timer);
+          }
+        }
+      };
+
+      const measureProbe = async (probe, timeoutMs, recheckThresholdMs) => {
+        const first = await measureOnce(probe.probe_url, timeoutMs);
+        if (!first.reachable || typeof first.latency_ms !== "number" || first.latency_ms < recheckThresholdMs) {
+          return { ...probe, ...first, rechecked: false, attempts: 1 };
+        }
+        const second = await measureOnce(probe.probe_url, timeoutMs);
+        const result = {
+          ...probe,
+          ...first,
+          rechecked: true,
+          attempts: 2,
+          initial_latency_ms: first.latency_ms,
+        };
+        if (second.reachable && typeof second.latency_ms === "number") {
+          result.latency_ms = second.latency_ms;
+          result.second_latency_ms = second.latency_ms;
+          delete result.error;
+        } else {
+          result.second_latency_ms = null;
+          if (second.error) {
+            result.recheck_error = second.error;
+          }
+        }
+        return result;
+      };
+
       button.addEventListener("click", async () => {
+        const previousStates = serverRows
+          .map((row) => row.querySelector("[data-latency-cell]"))
+          .filter(Boolean)
+          .map((cell) => ({ cell, text: cell.textContent, className: cell.className }));
+        const serverIds = serverRows.map((row) => row.dataset.serverId).filter(Boolean);
+
         button.disabled = true;
         value.textContent = "…";
-        hint.textContent = "Измеряем пинг от российского сервера ALTLINK до зарубежных узлов.";
-        list.innerHTML = "";
+        hint.textContent = "Обновляем пинг и подставляем значения рядом с каждым доступным сервером.";
         card.classList.remove("is-error");
+        latencyCells.forEach((cell) => setLatencyState(cell, "Измеряем…", "pending"));
+
         try {
-          const response = await fetch(`${endpoint}?ts=${Date.now()}`, {
+          const params = new URLSearchParams({
+            ts: String(Date.now()),
+            include_local: "1",
+            server_ids: serverIds.join(","),
+          });
+          const response = await fetch(`${endpoint}?${params.toString()}`, {
             cache: "no-store",
             headers: { "X-Requested-With": "latency-check" },
           });
@@ -303,32 +386,38 @@
           }
 
           const payload = await response.json();
-          const probes = Array.isArray(payload.probes) ? payload.probes : [];
+          const targets = Array.isArray(payload.probes) ? payload.probes : [];
+          const probes = await Promise.all(
+            targets.map((item) => measureProbe(item, payload.timeout_ms || 4000, payload.recheck_threshold_ms || 250))
+          );
           const reachable = probes.filter((item) => item.reachable && typeof item.latency_ms === "number");
           const best = reachable.length ? Math.min(...reachable.map((item) => item.latency_ms)) : null;
-          const recheckedCount = probes.filter((item) => item.rechecked).length;
+
+          latencyCells.forEach((cell) => setLatencyState(cell, "Нет данных", "muted"));
+          probes.forEach((item) => {
+            const cell = latencyCells.get(item.server_id);
+            if (!cell) {
+              return;
+            }
+            if (item.reachable && typeof item.latency_ms === "number") {
+              const label = item.rechecked ? `${item.latency_ms} мс` : `${item.latency_ms} мс`;
+              setLatencyState(cell, label, "ready");
+              return;
+            }
+            setLatencyState(cell, "Недоступно", "error");
+          });
 
           value.textContent = best === null ? "н/д" : `${best} мс`;
           hint.textContent = probes.length
-            ? `Панель проверила ${probes.length} зарубежных серверов.${recheckedCount ? ` Повторный замер выполнен для ${recheckedCount} узлов.` : ""}`
-            : "Сейчас нет доступных зарубежных серверов для замера.";
-
-          list.innerHTML = probes.map((item) => {
-            const latency = item.reachable && typeof item.latency_ms === "number"
-              ? `${item.latency_ms} мс`
-              : "недоступно";
-            const note = item.rechecked ? `<span class="latency-recheck-note">повторный замер</span>` : "";
-            return `
-              <div class="landing-latency-item${item.reachable ? "" : " is-error"}">
-                <span>${item.name} · ${item.country_code || "—"} ${note}</span>
-                <strong>${latency}</strong>
-              </div>
-            `;
-          }).join("");
+            ? `Пинг измерен из вашего браузера для ${probes.length} серверов.`
+            : "Сейчас нет доступных серверов для замера.";
         } catch (error) {
+          previousStates.forEach(({ cell, text, className }) => {
+            cell.textContent = text;
+            cell.className = className;
+          });
           value.textContent = "—";
-          hint.textContent = `Не удалось получить данные по зарубежным серверам. Попробуйте ещё раз. ${disclaimer}`;
-          list.innerHTML = "";
+          hint.textContent = `Не удалось получить данные по серверам. Попробуйте ещё раз. ${disclaimer}`;
           card.classList.add("is-error");
         } finally {
           button.disabled = false;

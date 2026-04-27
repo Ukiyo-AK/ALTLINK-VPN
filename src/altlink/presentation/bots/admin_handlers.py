@@ -29,12 +29,20 @@ from altlink.domain.enums import (
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
 from altlink.infrastructure.db.models import PromoCode
 from altlink.presentation.bots.admin_keyboards import (
+    DATABASE_BACKUP_CANCEL_IMPORT,
+    DATABASE_BACKUP_CONFIRM_IMPORT,
+    DATABASE_BACKUP_EXPORT,
+    DATABASE_BACKUP_IMPORT,
+    DATABASE_BACKUP_OPEN,
     PROMO_TOGGLE_PREFIX,
     PAYMENT_APPROVE_PREFIX,
+    PAYMENT_PAGE_PREFIX,
     PAYMENT_REFRESH_PREFIX,
     PAYMENT_REJECT_PREFIX,
     USER_ACTIVATE_PREFIX,
     USER_BALANCE_PREFIX,
+    USER_MESSAGE_CANCEL_PREFIX,
+    USER_MESSAGE_PREFIX,
     USER_DEACTIVATE_PREFIX,
     USER_DELETE_CONFIRM_PREFIX,
     USER_DELETE_PREFIX,
@@ -44,8 +52,11 @@ from altlink.presentation.bots.admin_keyboards import (
     USER_TRIAL_PREFIX,
     admin_menu,
     broadcast_media_actions,
+    database_backup_actions,
+    database_import_confirmation_actions,
+    database_import_prompt_actions,
     broadcast_preview_actions,
-    payment_request_actions,
+    payment_browser_actions,
     promo_list_actions,
     server_actions,
     support_request_actions,
@@ -54,6 +65,7 @@ from altlink.presentation.bots.admin_keyboards import (
     user_actions,
     user_delete_confirmation_actions,
     user_lookup_actions,
+    user_message_prompt_actions,
     user_subscription_actions,
 )
 from altlink.utils.media import media_path
@@ -78,6 +90,7 @@ ADMIN_MENU_TEXTS = {
     "Создать промокод",
     "Рассылка",
     "Логи",
+    "База данных",
     "Помощь",
 }
 TOP_METRIC_LABELS = {
@@ -100,6 +113,7 @@ SHORT_PLAN_CODES = {
 
 ADMIN_LAST_CARD: dict[int, int] = {}
 ADMIN_MODE: dict[int, str] = {}
+ADMIN_PENDING_DATABASE_IMPORTS: dict[int, bytes] = {}
 
 
 class BalanceStates(StatesGroup):
@@ -117,6 +131,15 @@ class PromoStates(StatesGroup):
 class BroadcastStates(StatesGroup):
     waiting_for_text = State()
     waiting_for_media = State()
+
+
+class DirectMessageStates(StatesGroup):
+    waiting_for_text = State()
+
+
+class DatabaseImportStates(StatesGroup):
+    waiting_for_document = State()
+    waiting_for_confirmation = State()
 
 
 async def is_admin(telegram_id: int, container: AppContainer) -> bool:
@@ -152,6 +175,18 @@ def admin_mode(telegram_id: int) -> str | None:
     return ADMIN_MODE.get(telegram_id)
 
 
+def clear_pending_database_import(telegram_id: int) -> None:
+    ADMIN_PENDING_DATABASE_IMPORTS.pop(telegram_id, None)
+
+
+def set_pending_database_import(telegram_id: int, payload: bytes) -> None:
+    ADMIN_PENDING_DATABASE_IMPORTS[telegram_id] = payload
+
+
+def get_pending_database_import(telegram_id: int) -> bytes | None:
+    return ADMIN_PENDING_DATABASE_IMPORTS.get(telegram_id)
+
+
 async def render_admin(
     target: Message | CallbackQuery,
     text: str,
@@ -174,6 +209,46 @@ async def render_admin(
     if isinstance(target, CallbackQuery):
         await target.answer()
     return result
+
+
+def format_database_backup_screen() -> str:
+    return (
+        "База данных\n\n"
+        "Экспорт отправит JSON backup текущей локальной базы.\n"
+        "Импорт полностью заменит текущую локальную базу содержимым backup-файла.\n\n"
+        "Remnawave и внешние сервисы отдельно не импортируются."
+    )
+
+
+def format_database_backup_summary(summary: dict, *, title: str) -> str:
+    counts = summary.get("table_counts") or {}
+    interesting_tables = [
+        ("admin_users", "Админы"),
+        ("users", "Пользователи"),
+        ("subscriptions", "Подписки"),
+        ("servers", "Серверы"),
+        ("topup_requests", "Платежи"),
+        ("system_events", "События"),
+    ]
+    lines = [
+        title,
+        "",
+        f"Формат: {summary.get('format', 'unknown')}",
+        f"Экспортирован: {summary.get('exported_at', 'n/a')}",
+        f"Источник БД: {summary.get('database_dialect', 'unknown')}",
+        f"Всего записей: {summary.get('total_rows', 0)}",
+    ]
+    for table_name, label in interesting_tables:
+        if table_name in counts:
+            lines.append(f"{label}: {counts[table_name]}")
+    return "\n".join(lines)
+
+
+def format_database_import_confirmation(summary: dict) -> str:
+    return (
+        format_database_backup_summary(summary, title="Резервная копия загружена")
+        + "\n\nИмпорт заменит текущую локальную базу целиком. Продолжить?"
+    )
 
 
 def compact_text(value: object, limit: int = 96) -> str:
@@ -320,6 +395,25 @@ def format_payment_request(item) -> str:
     return "\n".join(lines)
 
 
+def format_payment_browser(items, active_index: int) -> str:
+    if not items:
+        return "Платежи\n\nПлатежей пока нет."
+
+    current = items[active_index]
+    counts = Counter(str(item.status) for item in items)
+    lines = [
+        f"Платежи {active_index + 1}/{len(items)}",
+        "",
+        f"Ожидают решения: {counts.get('new', 0)}",
+        f"Подтверждены: {counts.get('approved', 0)}",
+        f"Отклонены: {counts.get('rejected', 0)}",
+    ]
+    if counts.get("canceled", 0):
+        lines.append(f"Отменены: {counts.get('canceled', 0)}")
+    lines.extend(["", format_payment_request(current)])
+    return "\n".join(lines)
+
+
 def format_panel_status(status: dict) -> list[str]:
     remnawave_label = "OK" if status.get("remnawave_ok") else "ошибка"
     return [
@@ -336,14 +430,25 @@ def format_server_card(server) -> str:
         ServerType.WHITELIST: "Whitelist",
         ServerType.REGULAR: "Обычный",
     }.get(getattr(server, "server_type", ServerType.REGULAR), "Обычный")
+    capacity = getattr(server, "max_clients", 0) or 0
+    access_count = getattr(server, "current_clients", 0) or 0
+    online_count = getattr(server, "users_online", 0) or 0
+    if capacity > 0:
+        load_label = f"{getattr(server, 'load_percent', 0)}% ({online_count}/{capacity} online)"
+        capacity_label = str(capacity)
+    else:
+        load_label = "не рассчитывается, пока не задана ёмкость"
+        capacity_label = "не задана"
     return (
         f"{getattr(server, 'name', 'Сервер')}\n"
         f"Адрес: {getattr(server, 'address', '—')}\n"
         f"Тип: {type_label}\n"
         f"Локально: {'включён' if getattr(server, 'is_available', False) else 'выключен'}\n"
         f"Статус: {'online' if getattr(server, 'is_connected', False) else 'offline'}\n"
-        f"Клиенты: {getattr(server, 'current_clients', 0)}/{getattr(server, 'max_clients', None) or 'n/a'}\n"
-        f"Нагрузка: {getattr(server, 'load_percent', 0)}%"
+        f"Выдан доступ: {access_count}\n"
+        f"Онлайн сейчас: {online_count}\n"
+        f"Ёмкость: {capacity_label}\n"
+        f"Нагрузка: {load_label}"
     )
 
 
@@ -412,9 +517,18 @@ async def route_admin_menu_action(message: Message, state: FSMContext, container
         await broadcast_prompt(message, state, container)
     elif text == "Логи":
         await system_logs_screen(message, container)
+    elif text == "База данных":
+        await database_backup_screen(message, state, container)
     else:
         await admin_help(message, container)
     return True
+
+
+async def database_backup_screen(target: Message | CallbackQuery, state: FSMContext, container: AppContainer) -> None:
+    if hasattr(target, "from_user") and getattr(target.from_user, "id", None) is not None:
+        clear_pending_database_import(target.from_user.id)
+    await state.clear()
+    await render_admin(target, format_database_backup_screen(), reply_markup=database_backup_actions().as_markup())
 
 
 async def show_user_card(target: Message | CallbackQuery, user_id: str, container: AppContainer):
@@ -497,6 +611,20 @@ async def show_subscription_controls(target: Message | CallbackQuery, user_id: s
     await render_admin(target, text, reply_markup=user_subscription_actions(user_id).as_markup())
 
 
+async def show_direct_message_prompt(target: Message | CallbackQuery, user_id: str, container: AppContainer):
+    async with container.hub() as hub:
+        user = await hub.accounts.get_user(user_id)
+    await render_admin(
+        target,
+        "Личное сообщение клиенту\n\n"
+        f"Пользователь: {user_label(user)}\n"
+        f"Telegram ID: {user.telegram_id}\n\n"
+        "Отправьте текст, файл, медиа, gif, голосовое, кружок или стикер следующим сообщением.\n"
+        "Если нужен текст вместе с вложением, добавьте подпись. Сообщение уйдёт от имени клиентского бота.",
+        reply_markup=user_message_prompt_actions(user_id).as_markup(),
+    )
+
+
 async def show_delete_warning(target: Message | CallbackQuery, user_id: str, container: AppContainer):
     async with container.hub() as hub:
         user = await hub.accounts.get_user(user_id)
@@ -562,6 +690,36 @@ async def process_user_lookup(target: Message | CallbackQuery, container: AppCon
             "Не удалось открыть карточку пользователя.\n\nПопробуйте ещё раз или посмотрите раздел «Логи».",
         )
         return False
+
+
+async def render_payment_browser(
+    target: Message | CallbackQuery,
+    container: AppContainer,
+    *,
+    index: int = 0,
+    request_id: str | None = None,
+) -> None:
+    async with container.hub() as hub:
+        items = await hub.topups.list_requests()
+
+    if not items:
+        await render_admin(target, "Платежи\n\nПлатежей пока нет.")
+        return
+
+    active_index = max(0, min(index, len(items) - 1))
+    if request_id is not None:
+        active_index = next((idx for idx, item in enumerate(items) if item.id == request_id), active_index)
+    current = items[active_index]
+    await render_admin(
+        target,
+        format_payment_browser(items, active_index),
+        reply_markup=payment_browser_actions(
+            request_id=current.id,
+            status=str(current.status),
+            index=active_index,
+            total=len(items),
+        ).as_markup(),
+    )
 
 
 def build_promo_list_markup(items) -> object:
@@ -691,6 +849,177 @@ def broadcast_logo_path() -> Path | None:
     return media_path("logo with title.png") or media_path("logo.png")
 
 
+def outbound_message_text(message: Message) -> str:
+    return ((message.text or message.caption or "") if message is not None else "").strip()
+
+
+def outbound_attachment_label(kind: str | None) -> str:
+    return {
+        "photo": "фото",
+        "video": "видео",
+        "document": "файл",
+        "animation": "gif / анимация",
+        "audio": "аудио",
+        "voice": "голосовое",
+        "video_note": "кружок",
+        "sticker": "стикер",
+    }.get(kind or "", "вложение")
+
+
+def outbound_attachment_supports_caption(kind: str | None) -> bool:
+    return kind in {"photo", "video", "document", "animation", "audio", "voice"}
+
+
+def outbound_attachment_filename(kind: str, file_name: str | None = None, *, is_animated: bool = False, is_video: bool = False) -> str:
+    if file_name:
+        return file_name
+    defaults = {
+        "photo": "attachment.jpg",
+        "video": "attachment.mp4",
+        "document": "attachment.bin",
+        "animation": "attachment.mp4",
+        "audio": "attachment.mp3",
+        "voice": "attachment.ogg",
+        "video_note": "attachment.mp4",
+    }
+    if kind == "sticker":
+        if is_video:
+            return "attachment.webm"
+        if is_animated:
+            return "attachment.tgs"
+        return "attachment.webp"
+    return defaults.get(kind, "attachment.bin")
+
+
+def extract_outbound_attachment(message: Message) -> dict | None:
+    photo = getattr(message, "photo", None)
+    if photo:
+        item = photo[-1]
+        return {"kind": "photo", "file_id": item.file_id, "filename": outbound_attachment_filename("photo")}
+
+    animation = getattr(message, "animation", None)
+    if animation:
+        return {
+            "kind": "animation",
+            "file_id": animation.file_id,
+            "filename": outbound_attachment_filename("animation", getattr(animation, "file_name", None)),
+        }
+
+    document = getattr(message, "document", None)
+    if document:
+        return {
+            "kind": "document",
+            "file_id": document.file_id,
+            "filename": outbound_attachment_filename("document", getattr(document, "file_name", None)),
+        }
+
+    video = getattr(message, "video", None)
+    if video:
+        return {
+            "kind": "video",
+            "file_id": video.file_id,
+            "filename": outbound_attachment_filename("video", getattr(video, "file_name", None)),
+        }
+
+    audio = getattr(message, "audio", None)
+    if audio:
+        return {
+            "kind": "audio",
+            "file_id": audio.file_id,
+            "filename": outbound_attachment_filename("audio", getattr(audio, "file_name", None)),
+        }
+
+    voice = getattr(message, "voice", None)
+    if voice:
+        return {
+            "kind": "voice",
+            "file_id": voice.file_id,
+            "filename": outbound_attachment_filename("voice", getattr(voice, "file_name", None)),
+        }
+
+    video_note = getattr(message, "video_note", None)
+    if video_note:
+        return {
+            "kind": "video_note",
+            "file_id": video_note.file_id,
+            "filename": outbound_attachment_filename("video_note", getattr(video_note, "file_name", None)),
+        }
+
+    sticker = getattr(message, "sticker", None)
+    if sticker:
+        is_animated = bool(getattr(sticker, "is_animated", False))
+        is_video = bool(getattr(sticker, "is_video", False))
+        return {
+            "kind": "sticker",
+            "file_id": sticker.file_id,
+            "filename": outbound_attachment_filename(
+                "sticker",
+                getattr(sticker, "file_name", None),
+                is_animated=is_animated,
+                is_video=is_video,
+            ),
+        }
+
+    return None
+
+
+async def download_outbound_attachment(bot: Bot, attachment: dict | None) -> bytes | None:
+    if not attachment or not attachment.get("file_id"):
+        return None
+    buffer = BytesIO()
+    await bot.download(attachment["file_id"], destination=buffer)
+    return buffer.getvalue()
+
+
+async def send_client_bot_payload(
+    bot: Bot,
+    chat_id: int,
+    *,
+    text: str,
+    attachment: dict | None = None,
+    attachment_bytes: bytes | None = None,
+    local_photo_path: Path | None = None,
+) -> None:
+    kind = attachment.get("kind") if attachment else None
+    if local_photo_path is not None:
+        await bot.send_photo(chat_id, photo=FSInputFile(str(local_photo_path)), caption=text or None)
+        return
+    if attachment is None:
+        await bot.send_message(chat_id, text)
+        return
+    filename = attachment.get("filename") or "attachment.bin"
+    media = BufferedInputFile(attachment_bytes or b"", filename=filename)
+    if kind == "photo":
+        await bot.send_photo(chat_id, photo=media, caption=text or None)
+        return
+    if kind == "animation":
+        await bot.send_animation(chat_id, animation=media, caption=text or None)
+        return
+    if kind == "document":
+        await bot.send_document(chat_id, document=media, caption=text or None)
+        return
+    if kind == "video":
+        await bot.send_video(chat_id, video=media, caption=text or None)
+        return
+    if kind == "audio":
+        await bot.send_audio(chat_id, audio=media, caption=text or None)
+        return
+    if kind == "voice":
+        await bot.send_voice(chat_id, voice=media, caption=text or None)
+        return
+    if kind == "video_note":
+        await bot.send_video_note(chat_id, video_note=media)
+        if text:
+            await bot.send_message(chat_id, text)
+        return
+    if kind == "sticker":
+        await bot.send_sticker(chat_id, sticker=media)
+        if text:
+            await bot.send_message(chat_id, text)
+        return
+    raise ValueError(f"Unsupported attachment kind: {kind}")
+
+
 def broadcast_failure_reason(exc: Exception) -> str:
     message = str(exc).casefold()
     if "chat not found" in message:
@@ -711,9 +1040,14 @@ def broadcast_failure_reason(exc: Exception) -> str:
 async def load_broadcast_media_bytes(callback: CallbackQuery, file_id: str | None) -> bytes | None:
     if not file_id:
         return None
-    buffer = BytesIO()
-    await callback.bot.download(file_id, destination=buffer)
-    return buffer.getvalue()
+    return await download_outbound_attachment(
+        callback.bot,
+        {
+            "kind": "photo",
+            "file_id": file_id,
+            "filename": outbound_attachment_filename("photo"),
+        },
+    )
 
 
 async def show_broadcast_preview(
@@ -724,28 +1058,22 @@ async def show_broadcast_preview(
 ) -> None:
     data = await state.get_data()
     text = (data.get("broadcast_text") or "").strip()
+    attachment = data.get("broadcast_attachment")
     file_id = data.get("broadcast_file_id")
-    preview_text = (
-        "Предпросмотр рассылки\n\n"
-        f"{text}\n\n"
-        f"Изображение: {'кастомное' if file_id else 'логотип по умолчанию' if use_default_logo else 'нет'}"
+    if attachment is None and file_id:
+        attachment = {"kind": "photo", "file_id": file_id, "filename": outbound_attachment_filename("photo")}
+    attachment_label = (
+        f"кастомное: {outbound_attachment_label(attachment.get('kind'))}"
+        if attachment
+        else "логотип по умолчанию"
+        if use_default_logo
+        else "нет"
     )
-    if file_id or use_default_logo:
-        anchor = target.message if isinstance(target, CallbackQuery) else target
-        if file_id:
-            await anchor.answer_photo(photo=file_id, caption=preview_text, reply_markup=broadcast_preview_actions().as_markup())
-        else:
-            logo = broadcast_logo_path()
-            if logo is not None:
-                await anchor.answer_photo(
-                    photo=FSInputFile(str(logo)),
-                    caption=preview_text,
-                    reply_markup=broadcast_preview_actions().as_markup(),
-                )
-            else:
-                await render_admin(target, preview_text, reply_markup=broadcast_preview_actions().as_markup(), force_new=True)
-    else:
-        await render_admin(target, preview_text, reply_markup=broadcast_preview_actions().as_markup(), force_new=True)
+    preview_text = "Предпросмотр рассылки\n\n"
+    if text:
+        preview_text += f"{text}\n\n"
+    preview_text += f"Вложение: {attachment_label}"
+    await render_admin(target, preview_text, reply_markup=broadcast_preview_actions().as_markup(), force_new=True)
 
 
 @router.message(CommandStart())
@@ -756,7 +1084,7 @@ async def start(message: Message, container: AppContainer):
     clear_admin_mode(message.from_user.id)
     await message.answer(
         "admin altlink bot готов к работе.\n\n"
-        "Здесь можно искать пользователей, смотреть их подписки, баланс, online-сессии, логи, серверы, промокоды и рассылки.",
+        "Здесь можно искать пользователей, смотреть их подписки, баланс, online-сессии, логи, серверы, промокоды, бэкапы базы и рассылки.",
         reply_markup=admin_menu(),
     )
 
@@ -769,40 +1097,39 @@ async def admin_help(message: Message, container: AppContainer):
         message,
         "Помощь по admin bot\n\n"
         "Пользователи: поиск по Telegram ID, @username, локальному UUID и Remnawave UUID.\n"
-        "Карточка пользователя: подписка, баланс, online, удаление аккаунта.\n"
+        "Карточка пользователя: подписка, баланс, online, удаление аккаунта и личные сообщения с любыми вложениями.\n"
         "Промокоды: создание и быстрый контроль активности.\n"
-        "Рассылка: сообщение всем пользователям с вашей картинкой или логотипом сервиса.\n"
+        "Рассылка: сообщение всем пользователям с текстом, файлами, медиа, gif, голосовыми, кружками и стикерами.\n"
         "Логи: последние системные события приложения.\n"
+        "База данных: экспорт JSON backup и импорт с подтверждением через админ-бота.\n"
         "Если нужно быстро найти пользователя, просто нажмите «Пользователи» и отправьте ID, username или UUID.",
     )
+
+
+@router.message(F.text == "База данных")
+async def database_backup_menu(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    await database_backup_screen(message, state, container)
 
 
 @router.message(F.text == "Платежи")
 async def payments_screen(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
-    async with container.hub() as hub:
-        items = await hub.topups.list_requests()
-    if not items:
-        await render_admin(message, "Последние платежи\n\nПлатежей пока нет.")
+    await render_payment_browser(message, container)
+
+
+@router.callback_query(F.data.startswith(f"{PAYMENT_PAGE_PREFIX}:"))
+async def payment_page(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
         return
-    pending_count = len([item for item in items if str(item.status) == "new"])
-    approved_count = len([item for item in items if str(item.status) == "approved"])
-    rejected_count = len([item for item in items if str(item.status) == "rejected"])
-    await render_admin(
-        message,
-        "Платежи\n\n"
-        f"Ожидают решения: {pending_count}\n"
-        f"Подтверждены: {approved_count}\n"
-        f"Отклонены: {rejected_count}\n\n"
-        "Ниже показаны последние заявки на пополнение.",
-    )
-    for item in items[:8]:
-        sent = await message.answer(
-            format_payment_request(item),
-            reply_markup=payment_request_actions(item.id, str(item.status)).as_markup(),
-        )
-        remember_admin_card(sent)
+    try:
+        index = int(callback.data.split(":")[-1])
+    except ValueError:
+        await callback.answer("Не удалось открыть платёж.", show_alert=True)
+        return
+    await render_payment_browser(callback, container, index=index)
 
 
 @router.callback_query(F.data.startswith(f"{PAYMENT_REFRESH_PREFIX}:"))
@@ -810,13 +1137,7 @@ async def payment_refresh(callback: CallbackQuery, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
         return
     request_id = callback.data.split(":")[-1]
-    async with container.hub() as hub:
-        item = await hub.topups.get_request(request_id)
-    await render_admin(
-        callback,
-        format_payment_request(item),
-        reply_markup=payment_request_actions(item.id, str(item.status)).as_markup(),
-    )
+    await render_payment_browser(callback, container, request_id=request_id)
 
 
 @router.callback_query(F.data.startswith(f"{PAYMENT_APPROVE_PREFIX}:"))
@@ -826,12 +1147,8 @@ async def payment_approve(callback: CallbackQuery, container: AppContainer):
     request_id = callback.data.split(":")[-1]
     async with container.hub() as hub:
         admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
-        item = await hub.topups.approve(request_id, admin_id=admin.id if admin else None, comment="Подтверждено в admin bot")
-    await render_admin(
-        callback,
-        format_payment_request(item),
-        reply_markup=payment_request_actions(item.id, str(item.status)).as_markup(),
-    )
+        await hub.topups.approve(request_id, admin_id=admin.id if admin else None, comment="Подтверждено в admin bot")
+    await render_payment_browser(callback, container, request_id=request_id)
 
 
 @router.callback_query(F.data.startswith(f"{PAYMENT_REJECT_PREFIX}:"))
@@ -841,12 +1158,8 @@ async def payment_reject(callback: CallbackQuery, container: AppContainer):
     request_id = callback.data.split(":")[-1]
     async with container.hub() as hub:
         admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
-        item = await hub.topups.reject(request_id, admin_id=admin.id if admin else None, comment="Отклонено в admin bot")
-    await render_admin(
-        callback,
-        format_payment_request(item),
-        reply_markup=payment_request_actions(item.id, str(item.status)).as_markup(),
-    )
+        await hub.topups.reject(request_id, admin_id=admin.id if admin else None, comment="Отклонено в admin bot")
+    await render_payment_browser(callback, container, request_id=request_id)
 
 
 @router.message(F.text == "Пользователи")
@@ -868,6 +1181,27 @@ async def open_user_subscription_actions(callback: CallbackQuery, container: App
     if not await is_admin(callback.from_user.id, container):
         return
     await show_subscription_controls(callback, callback.data.split(":")[-1], container)
+
+
+@router.callback_query(F.data.startswith(f"{USER_MESSAGE_PREFIX}:"))
+async def open_user_direct_message(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    if not container.settings.client_bot_token:
+        await callback.answer("CLIENT_BOT_TOKEN не задан.", show_alert=True)
+        return
+    user_id = callback.data.split(":")[-1]
+    await state.set_state(DirectMessageStates.waiting_for_text)
+    await state.update_data(direct_message_user_id=user_id)
+    await show_direct_message_prompt(callback, user_id, container)
+
+
+@router.callback_query(F.data.startswith(f"{USER_MESSAGE_CANCEL_PREFIX}:"))
+async def cancel_user_direct_message(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await state.clear()
+    await show_user_card(callback, callback.data.split(":")[-1], container)
 
 
 @router.callback_query(F.data.startswith(f"{USER_DELETE_PREFIX}:"))
@@ -985,6 +1319,85 @@ async def user_balance_apply(message: Message, state: FSMContext, container: App
         )
     await state.clear()
     await show_user_card(message, user_id, container)
+
+
+@router.message(DirectMessageStates.waiting_for_text)
+async def user_direct_message_submit(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    if await route_admin_menu_action(message, state, container):
+        return
+
+    data = await state.get_data()
+    user_id = data.get("direct_message_user_id")
+    if not user_id:
+        await state.clear()
+        await render_admin(message, "Сценарий личного сообщения потерян. Откройте карточку пользователя заново.")
+        return
+
+    text = outbound_message_text(message)
+    attachment = extract_outbound_attachment(message)
+    if not text and attachment is None:
+        await render_admin(
+            message,
+            "Отправьте текст, файл, медиа, gif, голосовое, кружок или стикер.",
+            reply_markup=user_message_prompt_actions(user_id).as_markup(),
+        )
+        return
+    if not container.settings.client_bot_token:
+        await state.clear()
+        await render_admin(message, "CLIENT_BOT_TOKEN не задан. Личное сообщение отправить нельзя.")
+        return
+
+    async with container.hub() as hub:
+        user = await hub.accounts.get_user(user_id)
+        admin = await hub.accounts.get_admin_by_telegram_id(message.from_user.id)
+        client_bot = Bot(token=container.settings.client_bot_token)
+        try:
+            attachment_bytes = await download_outbound_attachment(message.bot, attachment) if attachment else None
+            await send_client_bot_payload(
+                client_bot,
+                user.telegram_id,
+                text=text,
+                attachment=attachment,
+                attachment_bytes=attachment_bytes,
+            )
+        except Exception as exc:  # noqa: BLE001
+            reason = broadcast_failure_reason(exc)
+            await render_admin(
+                message,
+                "Не удалось отправить личное сообщение.\n\n"
+                f"Пользователь: {user_label(user)}\n"
+                f"Telegram ID: {user.telegram_id}\n"
+                f"Причина: {reason}",
+                reply_markup=user_message_prompt_actions(user_id).as_markup(),
+            )
+            return
+        finally:
+            await client_bot.session.close()
+
+        await hub.accounts.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="direct_message_sent",
+            message="Администратор отправил личное сообщение пользователю.",
+            payload={
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "text_preview": compact_text(text, 120) if text else None,
+                "attachment_kind": attachment.get("kind") if attachment else None,
+            },
+            actor_admin_id=admin.id if admin else None,
+        )
+
+    await state.clear()
+    await render_admin(
+        message,
+        "Личное сообщение отправлено.\n\n"
+        f"Пользователь: {user_label(user)}\n"
+        f"Telegram ID: {user.telegram_id}\n"
+        f"Текст: {compact_text(text, 220)}",
+        reply_markup=user_actions(user_id).as_markup(),
+    )
 
 
 @router.message(F.text == "Серверы")
@@ -1254,10 +1667,18 @@ async def broadcast_prompt(message: Message, state: FSMContext, container: AppCo
     if not await is_admin(message.from_user.id, container):
         return
     await state.set_state(BroadcastStates.waiting_for_text)
-    await state.update_data(broadcast_text=None, broadcast_file_id=None, broadcast_use_default=False)
+    await state.update_data(
+        broadcast_text=None,
+        broadcast_file_id=None,
+        broadcast_attachment=None,
+        broadcast_use_default=False,
+    )
     await render_admin(
         message,
-        "Рассылка\n\nОтправьте текст сообщения. Следующим шагом можно будет приложить свою картинку или использовать логотип сервиса.",
+        "Рассылка\n\n"
+        "Сначала отправьте текст сообщения.\n"
+        "Либо сразу отправьте файл, медиа, gif, голосовое, кружок или стикер. "
+        "Текст тогда возьмётся из подписи, если она есть.",
     )
 
 
@@ -1267,15 +1688,28 @@ async def broadcast_text_submit(message: Message, state: FSMContext, container: 
         return
     if await route_admin_menu_action(message, state, container):
         return
-    text = (message.text or "").strip()
+    text = outbound_message_text(message)
+    attachment = extract_outbound_attachment(message)
+    if attachment is not None:
+        await state.update_data(
+            broadcast_text=text,
+            broadcast_file_id=attachment["file_id"] if attachment.get("kind") == "photo" else None,
+            broadcast_attachment=attachment,
+            broadcast_use_default=False,
+        )
+        await state.set_state(BroadcastStates.waiting_for_media)
+        await show_broadcast_preview(message, state, use_default_logo=False)
+        return
     if not text:
         await render_admin(message, "Текст рассылки не должен быть пустым.")
         return
-    await state.update_data(broadcast_text=text)
+    await state.update_data(broadcast_text=text, broadcast_attachment=None, broadcast_file_id=None)
     await state.set_state(BroadcastStates.waiting_for_media)
     await render_admin(
         message,
-        "Текст рассылки сохранён.\n\nТеперь отправьте фото одним сообщением или нажмите кнопку ниже, чтобы использовать логотип сервиса.",
+        "Текст рассылки сохранён.\n\n"
+        "Теперь отправьте файл, медиа, gif, голосовое, кружок или стикер.\n"
+        "Если вложение не нужно, нажмите «Без вложения». Для фото-рассылки с фирменной картинкой можно выбрать логотип сервиса.",
         reply_markup=broadcast_media_actions().as_markup(),
     )
 
@@ -1284,8 +1718,16 @@ async def broadcast_text_submit(message: Message, state: FSMContext, container: 
 async def broadcast_use_default(callback: CallbackQuery, state: FSMContext, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
         return
-    await state.update_data(broadcast_use_default=True, broadcast_file_id=None)
+    await state.update_data(broadcast_use_default=True, broadcast_file_id=None, broadcast_attachment=None)
     await show_broadcast_preview(callback, state, use_default_logo=True)
+
+
+@router.callback_query(F.data == "admin:broadcast:text_only")
+async def broadcast_text_only(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await state.update_data(broadcast_use_default=False, broadcast_file_id=None, broadcast_attachment=None)
+    await show_broadcast_preview(callback, state, use_default_logo=False)
 
 
 @router.callback_query(F.data == "admin:broadcast:cancel")
@@ -1296,28 +1738,26 @@ async def broadcast_cancel(callback: CallbackQuery, state: FSMContext, container
     await render_admin(callback, "Создание рассылки отменено.")
 
 
-@router.message(BroadcastStates.waiting_for_media, F.photo)
-async def broadcast_media_submit(message: Message, state: FSMContext, container: AppContainer):
-    if not await is_admin(message.from_user.id, container):
-        return
-    await state.update_data(
-        broadcast_file_id=message.photo[-1].file_id,
-        broadcast_use_default=False,
-    )
-    await show_broadcast_preview(message, state, use_default_logo=False)
-
-
 @router.message(BroadcastStates.waiting_for_media)
-async def broadcast_media_fallback(message: Message, state: FSMContext, container: AppContainer):
+async def broadcast_media_submit(message: Message, state: FSMContext, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
     if await route_admin_menu_action(message, state, container):
         return
-    await render_admin(
-        message,
-        "Ожидается фото или кнопка «Использовать логотип». Если картинка не нужна, нажмите кнопку ниже.",
-        reply_markup=broadcast_media_actions().as_markup(),
+    attachment = extract_outbound_attachment(message)
+    if attachment is None:
+        await render_admin(
+            message,
+            "Ожидается файл, медиа, gif, голосовое, кружок или стикер. Если вложение не нужно, нажмите кнопку ниже.",
+            reply_markup=broadcast_media_actions().as_markup(),
+        )
+        return
+    await state.update_data(
+        broadcast_file_id=attachment["file_id"] if attachment.get("kind") == "photo" else None,
+        broadcast_attachment=attachment,
+        broadcast_use_default=False,
     )
+    await show_broadcast_preview(message, state, use_default_logo=False)
 
 
 @router.callback_query(F.data == "admin:broadcast:confirm")
@@ -1329,15 +1769,21 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
         return
     data = await state.get_data()
     text = (data.get("broadcast_text") or "").strip()
+    attachment = data.get("broadcast_attachment")
     file_id = data.get("broadcast_file_id")
     use_default_logo = bool(data.get("broadcast_use_default"))
-    if not text:
-        await callback.answer("Текст рассылки потерян, начните заново.", show_alert=True)
+    if attachment is None and file_id:
+        attachment = {
+            "kind": "photo",
+            "file_id": file_id,
+            "filename": f"broadcast-{datetime.now(UTC):%Y%m%d%H%M%S}.jpg",
+        }
+    if not text and attachment is None and not use_default_logo:
+        await callback.answer("Нет ни текста, ни вложения для рассылки. Начните заново.", show_alert=True)
         await state.clear()
         return
 
-    media_bytes = await load_broadcast_media_bytes(callback, file_id)
-    media_filename = f"broadcast-{datetime.now(UTC):%Y%m%d%H%M%S}.jpg"
+    attachment_bytes = await download_outbound_attachment(callback.bot, attachment) if attachment else None
     failure_counts: Counter[str] = Counter()
     failure_examples: list[str] = []
 
@@ -1350,16 +1796,14 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
         try:
             for user in users:
                 try:
-                    if media_bytes is not None:
-                        await client_bot.send_photo(
-                            user.telegram_id,
-                            photo=BufferedInputFile(media_bytes, filename=media_filename),
-                            caption=text,
-                        )
-                    elif logo is not None:
-                        await client_bot.send_photo(user.telegram_id, photo=FSInputFile(str(logo)), caption=text)
-                    else:
-                        await client_bot.send_message(user.telegram_id, text)
+                    await send_client_bot_payload(
+                        client_bot,
+                        user.telegram_id,
+                        text=text,
+                        attachment=attachment,
+                        attachment_bytes=attachment_bytes,
+                        local_photo_path=logo,
+                    )
                     sent_count += 1
                 except Exception as exc:  # noqa: BLE001
                     failed_count += 1
@@ -1378,6 +1822,7 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
                 "sent": sent_count,
                 "failed": failed_count,
                 "failure_reasons": dict(failure_counts),
+                "attachment_kind": attachment.get("kind") if attachment else ("photo" if logo is not None else None),
             },
         )
     await state.clear()
@@ -1417,6 +1862,134 @@ async def refresh_system_logs(callback: CallbackQuery, container: AppContainer):
     await render_admin(callback, format_system_log_screen(status, events), reply_markup=system_logs_actions().as_markup())
 
 
+@router.callback_query(F.data == DATABASE_BACKUP_OPEN)
+async def database_backup_open(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await database_backup_screen(callback, state, container)
+
+
+@router.callback_query(F.data == DATABASE_BACKUP_EXPORT)
+async def database_backup_export(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    async with container.hub() as hub:
+        artifact = await hub.backups.export_database()
+    sent = await callback.message.answer_document(
+        BufferedInputFile(artifact.content, filename=artifact.filename),
+        caption=format_database_backup_summary(artifact.summary, title="Экспорт базы готов"),
+    )
+    remember_admin_card(sent)
+    await callback.answer("Резервная копия отправлена.")
+
+
+@router.callback_query(F.data == DATABASE_BACKUP_IMPORT)
+async def database_backup_import_prompt(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    clear_pending_database_import(callback.from_user.id)
+    await state.set_state(DatabaseImportStates.waiting_for_document)
+    await render_admin(
+        callback,
+        "Импорт базы данных\n\nОтправьте сюда JSON backup-файл. После проверки бот покажет сводку и попросит подтверждение.\n\nТекущая база пока не изменяется.",
+        reply_markup=database_import_prompt_actions().as_markup(),
+    )
+
+
+@router.message(DatabaseImportStates.waiting_for_document, F.document)
+async def database_backup_import_document(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    buffer = BytesIO()
+    await message.bot.download(message.document, destination=buffer)
+    payload = buffer.getvalue()
+    async with container.hub() as hub:
+        try:
+            summary = await hub.backups.inspect_database_backup(payload)
+        except ServiceError as exc:
+            await render_admin(
+                message,
+                f"{exc}\n\nОтправьте корректный JSON backup-файл или нажмите «Назад».",
+                reply_markup=database_import_prompt_actions().as_markup(),
+            )
+            return
+    set_pending_database_import(message.from_user.id, payload)
+    await state.set_state(DatabaseImportStates.waiting_for_confirmation)
+    await state.update_data(database_import_summary=summary)
+    await render_admin(
+        message,
+        format_database_import_confirmation(summary),
+        reply_markup=database_import_confirmation_actions().as_markup(),
+    )
+
+
+@router.message(DatabaseImportStates.waiting_for_document)
+async def database_backup_import_document_fallback(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    if await route_admin_menu_action(message, state, container):
+        return
+    await render_admin(
+        message,
+        "Ожидается JSON backup-файл Telegram-документом. Текущая база пока не изменяется.",
+        reply_markup=database_import_prompt_actions().as_markup(),
+    )
+
+
+@router.callback_query(F.data == DATABASE_BACKUP_CONFIRM_IMPORT)
+async def database_backup_import_confirm(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    payload = get_pending_database_import(callback.from_user.id)
+    if payload is None:
+        await state.clear()
+        await callback.answer("Файл резервной копии не найден, загрузите его заново.", show_alert=True)
+        await render_admin(
+            callback,
+            "Импорт нужно начать заново: отправьте backup-файл ещё раз.",
+            reply_markup=database_import_prompt_actions().as_markup(),
+        )
+        await state.set_state(DatabaseImportStates.waiting_for_document)
+        return
+    async with container.hub() as hub:
+        try:
+            summary = await hub.backups.import_database(payload)
+        except ServiceError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+    clear_pending_database_import(callback.from_user.id)
+    await state.clear()
+    await render_admin(
+        callback,
+        format_database_backup_summary(summary, title="Импорт базы завершён")
+        + "\n\nТекущая локальная база заменена данными из backup-файла.",
+        reply_markup=database_backup_actions().as_markup(),
+    )
+
+
+@router.callback_query(F.data == DATABASE_BACKUP_CANCEL_IMPORT)
+async def database_backup_import_cancel(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    clear_pending_database_import(callback.from_user.id)
+    await database_backup_screen(callback, state, container)
+
+
+@router.message(DatabaseImportStates.waiting_for_confirmation)
+async def database_backup_import_confirmation_fallback(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    if await route_admin_menu_action(message, state, container):
+        return
+    data = await state.get_data()
+    summary = data.get("database_import_summary") or {}
+    await render_admin(
+        message,
+        format_database_import_confirmation(summary) if summary else "Нажмите кнопку подтверждения или отмены импорта ниже.",
+        reply_markup=database_import_confirmation_actions().as_markup() if summary else database_import_prompt_actions().as_markup(),
+    )
+
+
 @router.message(UserLookupStates.waiting_for_query)
 async def user_lookup_state_handler(message: Message, state: FSMContext, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
@@ -1440,6 +2013,7 @@ async def admin_message_fallback(message: Message, state: FSMContext, container:
     current_state = await state.get_state()
     if current_state in {
         BalanceStates.waiting_for_amount.state,
+        DirectMessageStates.waiting_for_text.state,
         PromoStates.waiting_for_payload.state,
         BroadcastStates.waiting_for_text.state,
         BroadcastStates.waiting_for_media.state,

@@ -2,10 +2,8 @@
 
 import asyncio
 import base64
-import contextlib
 import json
 import re
-import time
 from decimal import Decimal
 from html import escape
 from pathlib import Path
@@ -23,6 +21,13 @@ from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType, T
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
 from altlink.infrastructure.db.models import Subscription, SystemSetting, User
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
+from altlink.utils.latency import (
+    LATENCY_RECHECK_THRESHOLD_MS,
+    browser_probe_url,
+    is_foreign_latency_target,
+    single_probe_server_latency,
+    server_probe_port,
+)
 from altlink.utils.qr import render_qr_png
 from altlink.utils.security import generate_token
 from altlink.utils.telegram_web import check_channel_membership, verify_telegram_auth_payload
@@ -39,17 +44,14 @@ DOCUMENT_KEYWORDS = {
 }
 
 
-LATENCY_RECHECK_THRESHOLD_MS = 250
-
-
 def latency_target_label() -> str:
-    return "российского сервера ALTLINK до доступных зарубежных серверов"
+    return "вашего устройства до нод ALTLINK"
 
 
 def latency_disclaimer_text() -> str:
     return (
-        "Замер идёт от российского сервера ALTLINK до зарубежных серверов. "
-        "Это не пинг от вашего устройства, поэтому фактическая задержка может отличаться."
+        "Замер идёт прямо из вашего браузера до нод ALTLINK через отдельный probe endpoint на порту 44443. "
+        "Это ближе к реальной задержке с вашего устройства, но зависит от маршрута, браузера и доступности ноды по HTTPS."
     )
 
 
@@ -233,48 +235,6 @@ def load_document_text(kind: str) -> str:
     return path.read_text(encoding="utf-8-sig").strip()
 
 
-def is_foreign_latency_target(server) -> bool:
-    country_code = (getattr(server, "country_code", "") or "").upper()
-    return bool(country_code and country_code != "RU")
-
-
-def server_probe_port(server) -> int:
-    for inbound in getattr(server, "inbounds", None) or []:
-        if getattr(inbound, "is_active", True) and getattr(inbound, "port", None):
-            return int(inbound.port)
-    return 443
-
-
-async def single_probe_server_latency(server, *, timeout_seconds: float = 2.5) -> dict:
-    started = time.perf_counter()
-    writer = None
-    try:
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(server.address, server_probe_port(server)),
-            timeout=timeout_seconds,
-        )
-        latency_ms = max(1, round((time.perf_counter() - started) * 1000))
-        return {
-            "name": server.name,
-            "country_code": (server.country_code or "").upper(),
-            "latency_ms": latency_ms,
-            "reachable": True,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "name": server.name,
-            "country_code": (server.country_code or "").upper(),
-            "latency_ms": None,
-            "reachable": False,
-            "error": str(exc),
-        }
-    finally:
-        if writer is not None:
-            writer.close()
-            with contextlib.suppress(Exception):
-                await writer.wait_closed()
-
-
 async def probe_server_latency(server, *, timeout_seconds: float = 2.5) -> dict:
     first_probe = await single_probe_server_latency(server, timeout_seconds=timeout_seconds)
     first_latency = first_probe.get("latency_ms")
@@ -454,30 +414,60 @@ async def landing_page(request: Request):
 
 @router.get("/api/latency")
 async def latency_probe(request: Request) -> JSONResponse:
+    query_params = getattr(request, "query_params", None)
+    raw_server_ids = query_params.get("server_ids", "") if query_params is not None else ""
+    requested_server_ids = {item.strip() for item in raw_server_ids.split(",") if item.strip()}
+    include_local = (
+        str(query_params.get("include_local", "0")).strip().lower() in {"1", "true", "yes"}
+        if query_params is not None
+        else False
+    )
+
     async with request.app.state.container.hub() as hub:
         servers = await hub.catalog.list_servers()
+    settings = request.app.state.settings
     targets = [
         server
         for server in servers
         if getattr(server, "is_available", False)
         and getattr(server, "is_connected", False)
-        and is_foreign_latency_target(server)
+        and (not requested_server_ids or getattr(server, "id", None) in requested_server_ids)
+        and (include_local or is_foreign_latency_target(server))
     ]
-    probes = await asyncio.gather(*(probe_server_latency(server) for server in targets))
+    probes = [
+        {
+            "server_id": getattr(server, "id", None),
+            "name": getattr(server, "name", None),
+            "address": getattr(server, "address", None),
+            "country_code": (getattr(server, "country_code", "") or "").upper(),
+            "probe_scheme": settings.latency_probe_scheme,
+            "probe_port": settings.latency_probe_port,
+            "probe_path": settings.latency_probe_path,
+            "probe_url": browser_probe_url(
+                server,
+                scheme=settings.latency_probe_scheme,
+                port=settings.latency_probe_port,
+                path=settings.latency_probe_path,
+            ),
+        }
+        for server in targets
+    ]
+    probes = [probe for probe in probes if probe.get("server_id") and probe.get("probe_url")]
     probes = sorted(
         probes,
         key=lambda item: (
-            not item.get("reachable", False),
-            item.get("latency_ms") if item.get("latency_ms") is not None else 10**9,
+            item.get("country_code", ""),
             item.get("name", ""),
         ),
     )
     return JSONResponse(
         {
             "ok": True,
-            "target": "foreign_servers",
-            "source": "российский сервер ALTLINK",
+            "target": "node_probe_endpoints",
+            "source": "browser",
+            "measurement_mode": "browser_rtt",
             "count": len(probes),
+            "timeout_ms": settings.browser_latency_timeout_ms,
             "recheck_threshold_ms": LATENCY_RECHECK_THRESHOLD_MS,
             "disclaimer": latency_disclaimer_text(),
             "probes": probes,

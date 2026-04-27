@@ -215,3 +215,27 @@ def topup_actions() -> InlineKeyboardBuilder:
     builder.button(text="Меню", callback_data="client:home")
     builder.adjust(2, 2, 1, 1)
     return builder
+
+
+def topup_checkout_actions(
+    *,
+    payment_url: str | None = None,
+    request_id: str | None = None,
+    can_check: bool = False,
+) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    rows: list[int] = []
+    action_count = 0
+    if payment_url:
+        builder.button(text="Оплатить", url=payment_url, style="success")
+        action_count += 1
+    if can_check and request_id:
+        builder.button(text="Проверить оплату", callback_data=f"client:topup_check:{request_id}", style="primary")
+        action_count += 1
+    builder.button(text="История платежей", callback_data="client:my_topups", style="primary")
+    builder.button(text="Баланс", callback_data="client:balance")
+    if action_count:
+        rows.append(action_count)
+    rows.extend([1, 1])
+    builder.adjust(*rows)
+    return builder

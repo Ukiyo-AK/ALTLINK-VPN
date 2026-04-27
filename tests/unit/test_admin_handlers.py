@@ -333,6 +333,84 @@ async def test_broadcast_confirm_downloads_admin_photo_for_client_bot(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_broadcast_confirm_sends_sticker_and_text(monkeypatch):
+    sent_stickers: list[tuple[str, int, str]] = []
+    sent_messages: list[tuple[str, int, str]] = []
+    state_cleared = False
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_list_user_targets():
+        return [SimpleNamespace(id="u1", telegram_id=707, username="sticker_user")]
+
+    async def fake_log_event(**payload):
+        return None
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        return None
+
+    class DummyClientBot:
+        def __init__(self, token: str):
+            self.token = token
+            self.session = SimpleNamespace(close=self.close)
+
+        async def send_sticker(self, chat_id: int, sticker):
+            sent_stickers.append((self.token, chat_id, getattr(sticker, "filename", "")))
+
+        async def send_message(self, chat_id: int, text: str):
+            sent_messages.append((self.token, chat_id, text))
+
+        async def close(self):
+            return None
+
+    class DummyAdminBot:
+        async def download(self, file, destination):
+            destination.write(b"sticker-bytes")
+            destination.seek(0)
+            return destination
+
+    class DummyCallback:
+        from_user = SimpleNamespace(id=42)
+        bot = DummyAdminBot()
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    class DummyState:
+        async def get_data(self):
+            return {
+                "broadcast_text": "stickers are live",
+                "broadcast_attachment": {
+                    "kind": "sticker",
+                    "file_id": "sticker-file-id",
+                    "filename": "pack.webp",
+                },
+                "broadcast_file_id": None,
+                "broadcast_use_default": False,
+            }
+
+        async def clear(self):
+            nonlocal state_cleared
+            state_cleared = True
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(accounts=SimpleNamespace(list_user_targets=fake_list_user_targets, log_event=fake_log_event))
+
+    container = SimpleNamespace(settings=SimpleNamespace(client_bot_token="client-token"), hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+    monkeypatch.setattr(admin_handlers, "Bot", DummyClientBot)
+
+    await admin_handlers.broadcast_confirm(DummyCallback(), DummyState(), container)
+
+    assert sent_stickers == [("client-token", 707, "pack.webp")]
+    assert sent_messages == [("client-token", 707, "stickers are live")]
+    assert state_cleared is True
+
+
+@pytest.mark.asyncio
 async def test_payment_approve_updates_request_card(monkeypatch):
     rendered: list[str] = []
     approved_with: list[tuple[str, str | None, str | None]] = []
@@ -355,6 +433,19 @@ async def test_payment_approve_updates_request_card(monkeypatch):
             admin_comment=comment,
         )
 
+    async def fake_list_requests():
+        return [
+            SimpleNamespace(
+                id="req-1",
+                status="approved",
+                amount_rub=150,
+                created_at=__import__("datetime").datetime(2026, 4, 25, 10, 0),
+                user=SimpleNamespace(telegram_id=999, username="payer"),
+                user_comment=None,
+                admin_comment="Подтверждено в admin bot",
+            )
+        ]
+
     async def fake_render_admin(target, text: str, **kwargs):
         rendered.append(text)
 
@@ -369,7 +460,7 @@ async def test_payment_approve_updates_request_card(monkeypatch):
     async def fake_hub():
         yield SimpleNamespace(
             accounts=SimpleNamespace(get_admin_by_telegram_id=fake_get_admin_by_telegram_id),
-            topups=SimpleNamespace(approve=fake_approve),
+            topups=SimpleNamespace(approve=fake_approve, list_requests=fake_list_requests),
         )
 
     container = SimpleNamespace(hub=fake_hub)
@@ -380,4 +471,313 @@ async def test_payment_approve_updates_request_card(monkeypatch):
 
     assert approved_with == [("req-1", "admin-1", "Подтверждено в admin bot")]
     assert rendered
+    assert "Платежи 1/1" in rendered[0]
     assert "Статус: подтверждён" in rendered[0]
+
+
+@pytest.mark.asyncio
+async def test_payments_screen_renders_single_browser_message(monkeypatch):
+    rendered: list[str] = []
+    extra_answers: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_list_requests():
+        return [
+            SimpleNamespace(
+                id="req-1",
+                status="new",
+                amount_rub=150,
+                created_at=__import__("datetime").datetime(2026, 4, 25, 10, 0),
+                user=SimpleNamespace(telegram_id=999, username="payer1"),
+                user_comment=None,
+                admin_comment=None,
+            ),
+            SimpleNamespace(
+                id="req-2",
+                status="approved",
+                amount_rub=300,
+                created_at=__import__("datetime").datetime(2026, 4, 24, 10, 0),
+                user=SimpleNamespace(telegram_id=555, username="payer2"),
+                user_comment=None,
+                admin_comment="ok",
+            ),
+        ]
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    class DummyMessage:
+        from_user = SimpleNamespace(id=42)
+
+        async def answer(self, text: str, reply_markup=None, **kwargs):
+            extra_answers.append(text)
+            return self
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(topups=SimpleNamespace(list_requests=fake_list_requests))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+
+    await admin_handlers.payments_screen(DummyMessage(), container)
+
+    assert len(rendered) == 1
+    assert extra_answers == []
+    assert "Платежи 1/2" in rendered[0]
+    assert "Ожидают решения: 1" in rendered[0]
+
+
+@pytest.mark.asyncio
+async def test_user_direct_message_submit_sends_via_client_bot(monkeypatch):
+    rendered: list[str] = []
+    sent_messages: list[tuple[str, int, str]] = []
+    logged_payloads: list[dict] = []
+    state_cleared = False
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_get_user(user_id: str):
+        return SimpleNamespace(id=user_id, telegram_id=404, username="client404")
+
+    async def fake_get_admin_by_telegram_id(telegram_id: int):
+        return SimpleNamespace(id="admin-1")
+
+    async def fake_log_event(**payload):
+        logged_payloads.append(payload)
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    class DummyClientBot:
+        def __init__(self, token: str):
+            self.token = token
+            self.session = SimpleNamespace(close=self.close)
+
+        async def send_message(self, chat_id: int, text: str):
+            sent_messages.append((self.token, chat_id, text))
+
+        async def close(self):
+            return None
+
+    class DummyMessage:
+        text = "Нужно проверить подключение после обновления."
+        from_user = SimpleNamespace(id=42)
+
+        async def answer(self, text: str, reply_markup=None, **kwargs):
+            rendered.append(text)
+            return self
+
+    class DummyState:
+        async def get_data(self):
+            return {"direct_message_user_id": "user-404"}
+
+        async def clear(self):
+            nonlocal state_cleared
+            state_cleared = True
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            accounts=SimpleNamespace(
+                get_user=fake_get_user,
+                get_admin_by_telegram_id=fake_get_admin_by_telegram_id,
+                log_event=fake_log_event,
+            )
+        )
+
+    container = SimpleNamespace(settings=SimpleNamespace(client_bot_token="client-token"), hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+    monkeypatch.setattr(admin_handlers, "Bot", DummyClientBot)
+
+    await admin_handlers.user_direct_message_submit(DummyMessage(), DummyState(), container)
+
+    assert sent_messages == [("client-token", 404, "Нужно проверить подключение после обновления.")]
+    assert state_cleared is True
+    assert "Личное сообщение отправлено." in rendered[0]
+    assert logged_payloads[0]["event_type"] == "direct_message_sent"
+
+
+@pytest.mark.asyncio
+async def test_user_direct_message_submit_sends_document_with_caption(monkeypatch):
+    rendered: list[str] = []
+    sent_documents: list[tuple[str, int, str, str]] = []
+    logged_payloads: list[dict] = []
+    state_cleared = False
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_get_user(user_id: str):
+        return SimpleNamespace(id=user_id, telegram_id=505, username="client505")
+
+    async def fake_get_admin_by_telegram_id(telegram_id: int):
+        return SimpleNamespace(id="admin-1")
+
+    async def fake_log_event(**payload):
+        logged_payloads.append(payload)
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    class DummyClientBot:
+        def __init__(self, token: str):
+            self.token = token
+            self.session = SimpleNamespace(close=self.close)
+
+        async def send_document(self, chat_id: int, document, caption: str | None = None):
+            sent_documents.append((self.token, chat_id, caption or "", getattr(document, "filename", "")))
+
+        async def close(self):
+            return None
+
+    class DummyAdminBot:
+        async def download(self, file, destination):
+            destination.write(b"pdf-bytes")
+            destination.seek(0)
+            return destination
+
+    class DummyMessage:
+        text = None
+        caption = "Вот инструкция"
+        document = SimpleNamespace(file_id="doc-file-id", file_name="guide.pdf")
+        from_user = SimpleNamespace(id=42)
+        bot = DummyAdminBot()
+
+        async def answer(self, text: str, reply_markup=None, **kwargs):
+            rendered.append(text)
+            return self
+
+    class DummyState:
+        async def get_data(self):
+            return {"direct_message_user_id": "user-505"}
+
+        async def clear(self):
+            nonlocal state_cleared
+            state_cleared = True
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            accounts=SimpleNamespace(
+                get_user=fake_get_user,
+                get_admin_by_telegram_id=fake_get_admin_by_telegram_id,
+                log_event=fake_log_event,
+            )
+        )
+
+    container = SimpleNamespace(settings=SimpleNamespace(client_bot_token="client-token"), hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+    monkeypatch.setattr(admin_handlers, "Bot", DummyClientBot)
+
+    await admin_handlers.user_direct_message_submit(DummyMessage(), DummyState(), container)
+
+    assert sent_documents == [("client-token", 505, "Вот инструкция", "guide.pdf")]
+    assert state_cleared is True
+    assert "Личное сообщение отправлено." in rendered[0]
+    assert logged_payloads[0]["payload"]["attachment_kind"] == "document"
+
+
+@pytest.mark.asyncio
+async def test_database_backup_export_sends_document(monkeypatch):
+    sent_documents: list[tuple[str, str]] = []
+    callback_answers: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_export_database():
+        return SimpleNamespace(
+            filename="altlink-backup.json",
+            content=b'{"format":"altlink-db-backup-v1"}',
+            summary={
+                "format": "altlink-db-backup-v1",
+                "exported_at": "2026-04-27T12:00:00+00:00",
+                "database_dialect": "postgresql",
+                "table_counts": {"users": 3},
+                "total_rows": 3,
+            },
+        )
+
+    class DummyMessage:
+        async def answer_document(self, document, caption: str | None = None, **kwargs):
+            sent_documents.append((getattr(document, "filename", ""), caption or ""))
+            return self
+
+    class DummyCallback:
+        from_user = SimpleNamespace(id=42)
+        message = DummyMessage()
+
+        async def answer(self, text: str = "", **kwargs):
+            callback_answers.append(text)
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(backups=SimpleNamespace(export_database=fake_export_database))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+
+    await admin_handlers.database_backup_export(DummyCallback(), container)
+
+    assert sent_documents
+    assert sent_documents[0][0] == "altlink-backup.json"
+    assert "Экспорт базы готов" in sent_documents[0][1]
+    assert callback_answers == ["Резервная копия отправлена."]
+
+
+@pytest.mark.asyncio
+async def test_database_backup_import_confirm_replaces_database(monkeypatch):
+    imported_payloads: list[bytes] = []
+    rendered: list[str] = []
+    state_cleared = False
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_import_database(payload: bytes):
+        imported_payloads.append(payload)
+        return {
+            "format": "altlink-db-backup-v1",
+            "exported_at": "2026-04-27T12:00:00+00:00",
+            "database_dialect": "postgresql",
+            "table_counts": {"users": 2, "admin_users": 1},
+            "total_rows": 3,
+        }
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    class DummyCallback:
+        from_user = SimpleNamespace(id=42)
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    class DummyState:
+        async def clear(self):
+            nonlocal state_cleared
+            state_cleared = True
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(backups=SimpleNamespace(import_database=fake_import_database))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+    admin_handlers.set_pending_database_import(42, b'{"format":"altlink-db-backup-v1"}')
+
+    await admin_handlers.database_backup_import_confirm(DummyCallback(), DummyState(), container)
+
+    assert imported_payloads == [b'{"format":"altlink-db-backup-v1"}']
+    assert state_cleared is True
+    assert admin_handlers.get_pending_database_import(42) is None
+    assert "Импорт базы завершён" in rendered[0]
+    assert "Текущая локальная база заменена" in rendered[0]

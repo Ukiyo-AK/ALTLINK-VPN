@@ -98,7 +98,7 @@ class BillingService(BaseService):
             existing_trial.ends_at = ends_at
             existing_trial.consumed = True
 
-        await self.catalog.assign_preferred_server(user.id)
+        await self.catalog.assign_preferred_server(user.id, plan.code)
         user.status = UserStatus.TRIAL
         await self.catalog.rebuild_user_access_matrix()
         await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=True)
@@ -166,8 +166,6 @@ class BillingService(BaseService):
         notes: list[str] = []
         if discount_promo is not None and discount_rub > 0:
             notes.append(f"Промокод {discount_promo.code}: скидка {discount_rub:.2f} ₽.")
-        if charge_user and carryover_credit_rub > 0:
-            notes.append(f"Компенсация остатка прошлого тарифа: +{carryover_credit_rub:.2f} ₽ на баланс.")
         subscription = Subscription(
             user_id=user.id,
             plan_id=plan.id,
@@ -195,7 +193,7 @@ class BillingService(BaseService):
         user.status = UserStatus.ACTIVE
 
         if is_metered_plan_code(plan.code):
-            await self.catalog.assign_preferred_server(user.id)
+            await self.catalog.assign_preferred_server(user.id, plan.code)
 
         await self.catalog.rebuild_user_access_matrix()
         await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=True)

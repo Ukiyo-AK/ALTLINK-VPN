@@ -2,20 +2,17 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from altlink.domain.billing import quantize_money
 from altlink.domain.enums import PlanCode
 
 GIGABYTE = 1024**3
 WHITELIST_GB_PRICE_RUB = Decimal("4")
-WEEKLY_BILLING_MULTIPLIER = Decimal("1.30")
 
 SINGLE_10GBIT_MONTHLY_PRICE_RUB = Decimal("69")
 UNLIMITED_MONTHLY_PRICE_RUB = Decimal("199")
 # Weekly 10 Gbit is intentionally rounded to a clean customer-facing price.
 SINGLE_10GBIT_WEEKLY_PRICE_RUB = Decimal("25")
-UNLIMITED_WEEKLY_PRICE_RUB = quantize_money(
-    (UNLIMITED_MONTHLY_PRICE_RUB * WEEKLY_BILLING_MULTIPLIER) / Decimal("4")
-)
+# Weekly Pro is also pinned to a clean customer-facing price.
+UNLIMITED_WEEKLY_PRICE_RUB = Decimal("65")
 
 TEN_GBIT_PLAN_CODES = {PlanCode.SINGLE_10GBIT, PlanCode.SINGLE_10GBIT_WEEKLY}
 UNLIMITED_PLAN_CODES = {PlanCode.UNLIMITED, PlanCode.UNLIMITED_WEEKLY}

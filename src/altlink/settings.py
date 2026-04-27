@@ -3,8 +3,12 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from sqlalchemy.engine import make_url
+
+
+DEFAULT_DATABASE_URL = "postgresql+asyncpg://altlink:altlink@postgres:5432/altlink"
 
 
 class Settings(BaseSettings):
@@ -19,7 +23,7 @@ class Settings(BaseSettings):
     session_secret_key: str = "change-me-session"
     admin_api_key: str = "change-me-admin-api-key"
 
-    database_url: str = "sqlite+aiosqlite:///./data/altlink.db"
+    database_url: str = DEFAULT_DATABASE_URL
     sql_echo: bool = False
 
     backend_host: str = "0.0.0.0"
@@ -52,6 +56,12 @@ class Settings(BaseSettings):
     unlimited_plan_price_rub: int = 199
     single_server_plan_price_rub: int = 69
     whitelist_price_per_gb_rub: int = 4
+    payment_provider: str = "manual"
+    wata_api_base_url: str = "https://api.wata.pro/api/h2h"
+    wata_api_token: str = ""
+    wata_success_redirect_url: str = ""
+    wata_fail_redirect_url: str = ""
+    wata_timeout_seconds: int = 20
     traffic_notification_thresholds: Annotated[list[int], NoDecode] = Field(
         default_factory=lambda: [70, 90, 100]
     )
@@ -61,6 +71,12 @@ class Settings(BaseSettings):
     traffic_snapshot_interval_minutes: int = 30
     notification_dispatch_interval_minutes: int = 2
     online_refresh_interval_minutes: int = 30
+    remnawave_healthcheck_interval_minutes: int = 5
+    server_latency_monitor_interval_minutes: int = 360
+    latency_probe_scheme: str = "https"
+    latency_probe_port: int = 44443
+    latency_probe_path: str = "/ping"
+    browser_latency_timeout_ms: int = 4000
     heartbeat_max_age_seconds: int = 180
 
     @field_validator("required_subscription_channel", mode="before")
@@ -124,6 +140,51 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return sorted({int(item) for item in value})
         raise ValueError("TRAFFIC_NOTIFICATION_THRESHOLDS must be a comma-separated list")
+
+    @field_validator("payment_provider", mode="before")
+    @classmethod
+    def _normalize_payment_provider(cls, value: object) -> str:
+        if value is None:
+            return "manual"
+        normalized = str(value).strip().lower()
+        if normalized in {"", "stub", "manual", "wata"}:
+            return normalized or "manual"
+        raise ValueError("PAYMENT_PROVIDER must be one of: stub, manual, wata")
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, value: object) -> str:
+        if value is None:
+            return DEFAULT_DATABASE_URL
+        raw = str(value).strip()
+        if not raw:
+            return DEFAULT_DATABASE_URL
+        if raw.startswith("postgres://"):
+            return f"postgresql+asyncpg://{raw[len('postgres://'):]}"
+        if raw.startswith("postgresql://"):
+            return f"postgresql+asyncpg://{raw[len('postgresql://'):]}"
+        return raw
+
+    @field_validator("latency_probe_scheme", mode="before")
+    @classmethod
+    def _normalize_latency_probe_scheme(cls, value: object) -> str:
+        raw = str(value or "https").strip().lower()
+        return raw or "https"
+
+    @field_validator("latency_probe_path", mode="before")
+    @classmethod
+    def _normalize_latency_probe_path(cls, value: object) -> str:
+        raw = str(value or "/ping").strip()
+        if not raw:
+            return "/ping"
+        return raw if raw.startswith("/") else f"/{raw}"
+
+    @model_validator(mode="after")
+    def _require_postgresql_in_production(self) -> Settings:
+        drivername = make_url(self.database_url).drivername
+        if self.environment == "production" and drivername.startswith("sqlite"):
+            raise ValueError("Production deployment must use PostgreSQL instead of SQLite.")
+        return self
 
     @property
     def remnawave_subscription_public_base(self) -> str:

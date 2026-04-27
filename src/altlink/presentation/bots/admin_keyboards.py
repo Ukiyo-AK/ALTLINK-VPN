@@ -18,6 +18,8 @@ USER_DEACTIVATE_PREFIX = "adm:ud"
 USER_PLAN_PREFIX = "adm:up"
 USER_BALANCE_PREFIX = "adm:ub"
 USER_SUBSCRIPTIONS_PREFIX = "adm:us"
+USER_MESSAGE_PREFIX = "adm:um"
+USER_MESSAGE_CANCEL_PREFIX = "adm:uc"
 USER_DELETE_PREFIX = "adm:ux"
 USER_DELETE_CONFIRM_PREFIX = "adm:xc"
 
@@ -25,6 +27,12 @@ PROMO_TOGGLE_PREFIX = "adm:pt"
 PAYMENT_APPROVE_PREFIX = "adm:pa"
 PAYMENT_REJECT_PREFIX = "adm:pr"
 PAYMENT_REFRESH_PREFIX = "adm:pf"
+PAYMENT_PAGE_PREFIX = "adm:pg"
+DATABASE_BACKUP_OPEN = "admin:db:open"
+DATABASE_BACKUP_EXPORT = "admin:db:export"
+DATABASE_BACKUP_IMPORT = "admin:db:import"
+DATABASE_BACKUP_CONFIRM_IMPORT = "admin:db:confirm"
+DATABASE_BACKUP_CANCEL_IMPORT = "admin:db:cancel"
 
 
 def admin_menu() -> ReplyKeyboardMarkup:
@@ -35,7 +43,8 @@ def admin_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Онлайн"), KeyboardButton(text="Топы")],
             [KeyboardButton(text="Запросы поддержки"), KeyboardButton(text="Промокоды")],
             [KeyboardButton(text="Создать промокод"), KeyboardButton(text="Рассылка")],
-            [KeyboardButton(text="Логи"), KeyboardButton(text="Помощь")],
+            [KeyboardButton(text="Логи"), KeyboardButton(text="База данных")],
+            [KeyboardButton(text="Помощь")],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -47,9 +56,10 @@ def user_actions(user_id: str) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Подписка и статус", callback_data=f"{USER_SUBSCRIPTIONS_PREFIX}:{user_id}", style="primary")
     builder.button(text="Корректировка баланса", callback_data=f"{USER_BALANCE_PREFIX}:{user_id}", style="primary")
+    builder.button(text="Написать клиенту", callback_data=f"{USER_MESSAGE_PREFIX}:{user_id}", style="success")
     builder.button(text="Обновить карточку", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
     builder.button(text="Удалить аккаунт", callback_data=f"{USER_DELETE_PREFIX}:{user_id}", style="danger")
-    builder.adjust(2, 2)
+    builder.adjust(2, 2, 1)
     return builder
 
 
@@ -165,10 +175,61 @@ def payment_request_actions(request_id: str, status: str) -> InlineKeyboardBuild
     return builder
 
 
+def payment_browser_actions(*, request_id: str, status: str, index: int, total: int) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    if total > 1:
+        previous_index = max(index - 1, 0)
+        next_index = min(index + 1, total - 1)
+        builder.button(text="◀️", callback_data=f"{PAYMENT_PAGE_PREFIX}:{previous_index}")
+        builder.button(text=f"{index + 1}/{total}", callback_data=f"{PAYMENT_REFRESH_PREFIX}:{request_id}", style="primary")
+        builder.button(text="▶️", callback_data=f"{PAYMENT_PAGE_PREFIX}:{next_index}")
+        builder.adjust(3)
+
+    if status == "new":
+        builder.button(text="Подтвердить", callback_data=f"{PAYMENT_APPROVE_PREFIX}:{request_id}", style="success")
+        builder.button(text="Отклонить", callback_data=f"{PAYMENT_REJECT_PREFIX}:{request_id}", style="danger")
+        builder.adjust(*( [3] if total > 1 else [] ), 2)
+        return builder
+
+    builder.button(text="Обновить", callback_data=f"{PAYMENT_REFRESH_PREFIX}:{request_id}", style="primary")
+    builder.adjust(*( [3] if total > 1 else [] ), 1)
+    return builder
+
+
+def user_message_prompt_actions(user_id: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Назад к карточке", callback_data=f"{USER_MESSAGE_CANCEL_PREFIX}:{user_id}")
+    builder.adjust(1)
+    return builder
+
+
 def system_logs_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Обновить журнал", callback_data="admin:logs:refresh", style="primary")
     builder.adjust(1)
+    return builder
+
+
+def database_backup_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Экспортировать БД", callback_data=DATABASE_BACKUP_EXPORT, style="success")
+    builder.button(text="Импортировать БД", callback_data=DATABASE_BACKUP_IMPORT, style="danger")
+    builder.adjust(1, 1)
+    return builder
+
+
+def database_import_prompt_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Назад", callback_data=DATABASE_BACKUP_OPEN)
+    builder.adjust(1)
+    return builder
+
+
+def database_import_confirmation_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Заменить базу из backup", callback_data=DATABASE_BACKUP_CONFIRM_IMPORT, style="danger")
+    builder.button(text="Отмена", callback_data=DATABASE_BACKUP_CANCEL_IMPORT)
+    builder.adjust(1, 1)
     return builder
 
 
@@ -195,8 +256,9 @@ def promo_item_actions(promo_id: str, *, is_active: bool) -> InlineKeyboardBuild
 def broadcast_media_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Использовать логотип", callback_data="admin:broadcast:default", style="primary")
+    builder.button(text="Без вложения", callback_data="admin:broadcast:text_only")
     builder.button(text="Отмена", callback_data="admin:broadcast:cancel", style="danger")
-    builder.adjust(1, 1)
+    builder.adjust(1, 1, 1)
     return builder
 
 

@@ -190,31 +190,89 @@
         return;
       }
 
+      const measureOnce = async (probeUrl, timeoutMs) => {
+        const started = performance.now();
+        const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+        const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+        try {
+          const separator = probeUrl.includes("?") ? "&" : "?";
+          const url = `${probeUrl}${separator}ts=${Date.now()}-${Math.random().toString(16).slice(2)}`;
+          await fetch(url, {
+            mode: "no-cors",
+            cache: "no-store",
+            credentials: "omit",
+            signal: controller?.signal,
+          });
+          return {
+            reachable: true,
+            latency_ms: Math.max(1, Math.round(performance.now() - started)),
+          };
+        } catch (error) {
+          const timeout = error?.name === "AbortError";
+          return {
+            reachable: false,
+            latency_ms: null,
+            error: timeout ? "timeout" : (error?.message || "network_error"),
+          };
+        } finally {
+          if (timer) {
+            window.clearTimeout(timer);
+          }
+        }
+      };
+
+      const measureProbe = async (probe, timeoutMs, recheckThresholdMs) => {
+        const first = await measureOnce(probe.probe_url, timeoutMs);
+        if (!first.reachable || typeof first.latency_ms !== "number" || first.latency_ms < recheckThresholdMs) {
+          return { ...probe, ...first, rechecked: false, attempts: 1 };
+        }
+        const second = await measureOnce(probe.probe_url, timeoutMs);
+        const result = {
+          ...probe,
+          ...first,
+          rechecked: true,
+          attempts: 2,
+          initial_latency_ms: first.latency_ms,
+        };
+        if (second.reachable && typeof second.latency_ms === "number") {
+          result.latency_ms = second.latency_ms;
+          result.second_latency_ms = second.latency_ms;
+          delete result.error;
+        } else {
+          result.second_latency_ms = null;
+          if (second.error) {
+            result.recheck_error = second.error;
+          }
+        }
+        return result;
+      };
+
       button.addEventListener("click", async () => {
         button.disabled = true;
         value.textContent = "…";
-        hint.textContent = "Измеряем задержку от российского сервера ALTLINK до зарубежных нод.";
+        hint.textContent = "Измеряем задержку от вашего браузера до нод ALTLINK.";
         list.innerHTML = "";
         card.classList.remove("is-error");
         try {
-          const response = await fetch(`${endpoint}?ts=${Date.now()}`, {
+          const response = await fetch(`${endpoint}?ts=${Date.now()}&include_local=1`, {
             cache: "no-store",
-            headers: { "X-Requested-With": "latency-check" },
           });
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }
 
           const payload = await response.json();
-          const probes = Array.isArray(payload.probes) ? payload.probes : [];
+          const targets = Array.isArray(payload.probes) ? payload.probes : [];
+          const probes = await Promise.all(
+            targets.map((item) => measureProbe(item, payload.timeout_ms || 4000, payload.recheck_threshold_ms || 250))
+          );
           const reachable = probes.filter((item) => item.reachable && typeof item.latency_ms === "number");
           const best = reachable.length ? Math.min(...reachable.map((item) => item.latency_ms)) : null;
-          const recheckedCount = probes.filter((item) => item.rechecked).length;
 
           value.textContent = best === null ? "н/д" : `${best} мс`;
           hint.textContent = probes.length
-            ? `Панель проверила ${probes.length} зарубежных серверов.`
-            : "Сейчас нет доступных зарубежных серверов для замера.";
+            ? `Пинг измерен из вашего браузера для ${probes.length} серверов.`
+            : "Сейчас нет доступных серверов для замера.";
 
           list.innerHTML = probes.map((item) => {
             const latency = item.reachable && typeof item.latency_ms === "number"

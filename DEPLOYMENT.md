@@ -59,11 +59,13 @@ cp .env.example .env
 - `REQUIRED_SUBSCRIPTION_CHANNEL`
 - `REQUIRED_SUBSCRIPTION_CHANNEL_URL`
 
-Рекомендуемый `DATABASE_URL` для Docker Compose:
+Используйте `DATABASE_URL` PostgreSQL для Docker Compose:
 
 ```env
 DATABASE_URL=postgresql+asyncpg://altlink:altlink@postgres:5432/altlink
 ```
+
+Production-конфигурация теперь рассчитана на PostgreSQL. Если оставить `sqlite`, приложение не запустится в `ENVIRONMENT=production`.
 
 Пример ключевых настроек:
 

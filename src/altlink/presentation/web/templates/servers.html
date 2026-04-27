@@ -14,8 +14,9 @@
         <th>Сервер</th>
         <th>Тип</th>
         <th>Локальный статус</th>
-        <th>Клиенты</th>
-        <th>Нагрузка</th>
+        <th>Выдан доступ</th>
+        <th>Онлайн сейчас</th>
+        <th>Нагрузка online</th>
         <th>Ёмкость</th>
       </tr>
     </thead>
@@ -47,8 +48,9 @@
             <button type="submit" class="button ghost">{{ 'Убрать' if server.is_available else 'Вернуть' }}</button>
           </form>
         </td>
-        <td>{{ server.current_clients }}/{{ server.max_clients or 'n/a' }}</td>
-        <td>{{ server.load_percent }}%</td>
+        <td>{{ server.current_clients }}</td>
+        <td>{{ server.users_online }}</td>
+        <td>{{ (server.load_percent ~ '%') if server.max_clients else '—' }}</td>
         <td>
           <form method="post" action="/admin/servers/{{ server.id }}/capacity" class="inline-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -58,7 +60,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="muted">Серверы ещё не синхронизированы.</td></tr>
+      <tr><td colspan="7" class="muted">Серверы ещё не синхронизированы.</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -132,11 +132,11 @@ class CatalogService(BaseService):
         await self.rebuild_user_access_matrix()
         return server
 
-    async def assign_preferred_server(self, user_id: str) -> Server:
+    async def assign_preferred_server(self, user_id: str, plan_code: PlanCode | None = None) -> Server:
         user = await self.session.get(User, user_id, options=[joinedload(User.assigned_server)])
         if user is None:
             raise NotFoundError("Пользователь не найден.")
-        server = await self._pick_least_loaded_ten_gbit_server()
+        server = await self._pick_preferred_server_for_plan(plan_code)
         user.assigned_server_id = server.id
         await self.session.flush()
         return server
@@ -217,10 +217,9 @@ class CatalogService(BaseService):
                 ]
             )
             server.current_clients = current_clients
-            if server.max_clients <= 0 and current_clients > 0:
-                server.max_clients = current_clients
+            online_clients = max(int(server.users_online or 0), 0)
             if server.max_clients > 0:
-                server.load_percent = Decimal((current_clients / server.max_clients) * 100).quantize(
+                server.load_percent = Decimal((online_clients / server.max_clients) * 100).quantize(
                     Decimal("0.01")
                 )
             else:
@@ -269,8 +268,25 @@ class CatalogService(BaseService):
         ]
         if not candidates:
             raise NotFoundError("Нет доступного 10 Гбит сервера для назначения.")
-        candidates.sort(key=lambda item: (item.load_percent, item.current_clients, item.name.lower()))
+        candidates.sort(key=self._server_assignment_sort_key)
         return candidates[0]
+
+    async def _pick_preferred_server_for_plan(
+        self,
+        plan_code: PlanCode | None,
+        servers: Sequence[Server] | None = None,
+    ) -> Server:
+        if servers is None:
+            servers = list((await self.session.scalars(select(Server).options(selectinload(Server.inbounds)))).all())
+
+        if plan_code == PlanCode.TRIAL or is_unlimited_plan_code(plan_code):
+            candidates = [server for server in servers if server.is_available and self._server_has_active_inbounds(server)]
+            if not candidates:
+                raise NotFoundError("Нет доступных серверов для активации Pro доступа.")
+            candidates.sort(key=self._server_assignment_sort_key)
+            return candidates[0]
+
+        return await self._pick_least_loaded_ten_gbit_server(servers)
 
     async def _sync_internal_squads(self, servers: Sequence[Server] | None = None) -> None:
         if self.remnawave is None:
@@ -350,6 +366,14 @@ class CatalogService(BaseService):
 
     def _server_has_active_inbounds(self, server: Server) -> bool:
         return any(inbound.is_active and inbound.remnawave_inbound_uuid for inbound in server.inbounds)
+
+    def _server_assignment_sort_key(self, server: Server) -> tuple[Decimal, int, Decimal, str]:
+        return (
+            Decimal(getattr(server, "current_clients", 0) or 0),
+            int(getattr(server, "users_online", 0) or 0),
+            Decimal(getattr(server, "load_percent", 0) or 0),
+            server.name.lower(),
+        )
 
     def _squad_name(self, server: Server) -> str:
         safe_name = "".join(ch if ch.isalnum() or ch in {" ", "-", "_"} else "_" for ch in server.name).strip()

@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 import re
 from urllib.parse import quote_plus, urlparse
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -25,6 +25,7 @@ from altlink.domain.plans import (
     parse_paid_plan_code,
 )
 from altlink.presentation.bots.admin_keyboards import payment_request_actions
+from altlink.presentation.bots.common import send_telegram_messages
 from altlink.presentation.bots.client_keyboards import (
     agreement_actions,
     balance_actions,
@@ -38,6 +39,7 @@ from altlink.presentation.bots.client_keyboards import (
     subscription_link_actions,
     subscription_actions,
     support_actions,
+    topup_checkout_actions,
     topup_actions,
 )
 from altlink.utils.media import media_path
@@ -89,6 +91,56 @@ def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
     )
 
 
+def topup_provider_label(provider: str) -> str:
+    labels = {
+        "wata": "WATA",
+        "manual": "ручную проверку администратора",
+        "stub": "тестовую заглушку",
+    }
+    return labels.get(provider, provider)
+
+
+def topup_status_label(raw_status: str) -> str:
+    labels = {
+        "approved": "зачислено",
+        "new": "ожидает оплаты",
+        "rejected": "отклонён",
+        "canceled": "отменён",
+        "paid": "оплачено",
+        "pending": "ожидает оплаты",
+        "declined": "отклонён",
+        "expired": "истёк",
+        "stub": "тестовый режим",
+        "manual": "ручная проверка",
+    }
+    return labels.get(str(raw_status), str(raw_status))
+
+
+def technical_maintenance_text(settings) -> str:
+    return (
+        "Технические работы\n\n"
+        "Панель VPN сейчас временно недоступна, поэтому управление подпиской, серверами и ключами приостановлено.\n"
+        "Попробуйте снова чуть позже.\n\n"
+        f"Если вопрос срочный, напишите в поддержку: {support_username_label(settings)}"
+    )
+
+
+async def client_maintenance_active(container: AppContainer, hub=None) -> bool:
+    monitoring = getattr(hub, "monitoring", None) if hub is not None else None
+    if monitoring is not None:
+        return await monitoring.is_client_maintenance_active()
+    async with container.hub() as inner_hub:
+        return await inner_hub.monitoring.is_client_maintenance_active()
+
+
+async def show_technical_maintenance(target: Message | CallbackQuery, container: AppContainer) -> None:
+    await answer_or_edit(
+        target,
+        technical_maintenance_text(container.settings),
+        reply_markup=support_actions(support_profile_url(container.settings)).as_markup(),
+    )
+
+
 async def notify_admins_about_topup_request(
     container: AppContainer,
     *,
@@ -101,21 +153,71 @@ async def notify_admins_about_topup_request(
         return
 
     text = admin_payment_request_text(user, amount, request_id)
-    bot = Bot(token=container.settings.admin_bot_token)
     markup = payment_request_actions(request_id, "new").as_markup()
-    try:
-        for admin_telegram_id in admin_telegram_ids:
-            try:
-                await bot.send_message(admin_telegram_id, text, reply_markup=markup)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Failed to notify admin about topup request %s for telegram_id=%s: %s",
-                    request_id,
-                    admin_telegram_id,
-                    exc,
-                )
-    finally:
-        await bot.session.close()
+    await send_telegram_messages(
+        bot_token=container.settings.admin_bot_token,
+        chat_ids=admin_telegram_ids,
+        text=text,
+        reply_markup=markup,
+    )
+
+
+async def handle_topup_checkout(
+    target: Message | CallbackQuery,
+    container: AppContainer,
+    *,
+    user,
+    amount: Decimal,
+    checkout,
+    admin_telegram_ids: list[int] | None = None,
+) -> None:
+    if checkout.provider == "manual":
+        await notify_admins_about_topup_request(
+            container,
+            user=user,
+            amount=amount,
+            request_id=checkout.request.id,
+            admin_telegram_ids=admin_telegram_ids or [],
+        )
+        await answer_or_edit(
+            target,
+            (
+                f"🧾 Заявка на пополнение создана.\n\n"
+                f"Сумма: {amount:.2f} ₽\n"
+                f"Номер заявки: {checkout.request.id}\n"
+                "Администратор проверит запрос и подтвердит или отклонит его."
+            ),
+            reply_markup=balance_actions().as_markup(),
+        )
+        return
+
+    if checkout.provider == "wata":
+        await answer_or_edit(
+            target,
+            (
+                "💳 Ссылка на оплату готова.\n\n"
+                f"Сумма: {amount:.2f} ₽\n"
+                f"Номер заявки: {checkout.request.id}\n"
+                "Откройте ссылку, завершите оплату в WATA и затем нажмите кнопку проверки статуса."
+            ),
+            reply_markup=topup_checkout_actions(
+                payment_url=checkout.payment_url,
+                request_id=checkout.request.id,
+                can_check=True,
+            ).as_markup(),
+        )
+        return
+
+    await answer_or_edit(
+        target,
+        (
+            "🧪 Тестовое пополнение выполнено.\n\n"
+            f"Сумма: {amount:.2f} ₽\n"
+            f"Номер заявки: {checkout.request.id}\n"
+            "Касса сейчас работает в режиме заглушки, поэтому деньги зачислены сразу."
+        ),
+        reply_markup=balance_actions().as_markup(),
+    )
 
 
 def agreement_url(settings) -> str | None:
@@ -743,6 +845,9 @@ async def show_pending_access_steps(
 
 
 async def ensure_client_access(message: Message | CallbackQuery, container: AppContainer, hub=None):
+    if await client_maintenance_active(container, hub):
+        await show_technical_maintenance(message, container)
+        return None
     user, consent_ok, channel_ok = await get_access_state(message, container, hub)
     if channel_ok and consent_ok:
         return user
@@ -1040,6 +1145,9 @@ async def home_callback(callback: CallbackQuery, container: AppContainer):
 @router.callback_query(F.data == "client:show_agreement")
 async def show_agreement(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
+        if await client_maintenance_active(container, hub):
+            await show_technical_maintenance(callback, container)
+            return
         user = await ensure_user(callback.from_user, container, hub)
         await answer_or_edit(
             callback,
@@ -1055,6 +1163,9 @@ async def show_agreement(callback: CallbackQuery, container: AppContainer):
 @router.callback_query(F.data == "client:check_channel")
 async def check_channel(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
+        if await client_maintenance_active(container, hub):
+            await show_technical_maintenance(callback, container)
+            return
         user, consent_ok, channel_ok = await get_access_state(callback, container, hub)
         subscription = await hub.accounts.get_current_subscription(user.id) if (consent_ok and channel_ok) else None
         show_trial = await hub.accounts.can_offer_trial(user.id) if (consent_ok and channel_ok) else False
@@ -1085,6 +1196,9 @@ async def check_channel(callback: CallbackQuery, container: AppContainer):
 @router.callback_query(F.data == "client:complete_registration")
 async def complete_registration(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
+        if await client_maintenance_active(container, hub):
+            await show_technical_maintenance(callback, container)
+            return
         user = await ensure_user(callback.from_user, container, hub)
         await hub.accounts.complete_registration(user.id)
         refreshed, consent_ok, channel_ok = await get_access_state(callback, container, hub)
@@ -1202,10 +1316,15 @@ async def topup_menu(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
+        provider = hub.topups.resolved_provider()
+    provider_text = {
+        "wata": "Оплата откроется через кассу WATA.",
+        "manual": "Заявка уйдёт администратору на ручное подтверждение.",
+        "stub": "Если касса не настроена, бот использует тестовую заглушку и зачисляет деньги сразу.",
+    }.get(provider, "Пополнение будет обработано автоматически.")
     await answer_or_edit(
         callback,
-        "Выберите сумму пополнения.\n\n"
-        "Заявка уйдёт администратору на ручное подтверждение. После одобрения баланс обновится автоматически.",
+        "Выберите сумму пополнения.\n\n" + provider_text,
         reply_markup=topup_actions().as_markup(),
     )
 
@@ -1217,24 +1336,19 @@ async def topup_amount(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-        request = await hub.topups.create_request(user.id, amount, auto_complete=False)
-        admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
-    await notify_admins_about_topup_request(
+        checkout = await hub.topups.create_checkout(user.id, amount)
+        admin_telegram_ids = (
+            await hub.accounts.list_admin_telegram_ids()
+            if checkout.provider == "manual"
+            else []
+        )
+    await handle_topup_checkout(
+        callback,
         container,
         user=user,
         amount=amount,
-        request_id=request.id,
+        checkout=checkout,
         admin_telegram_ids=admin_telegram_ids,
-    )
-    await answer_or_edit(
-        callback,
-        (
-            f"🧾 Заявка на пополнение создана.\n\n"
-            f"Сумма: {amount:.2f} ₽\n"
-            f"Номер заявки: {request.id}\n"
-            "Администратор проверит запрос и подтвердит или отклонит его."
-        ),
-        reply_markup=balance_actions().as_markup(),
     )
 
 
@@ -1263,22 +1377,66 @@ async def topup_custom_value(message: Message, state: FSMContext, container: App
         user = await ensure_client_access(message, container, hub)
         if user is None:
             return
-        request = await hub.topups.create_request(user.id, amount, auto_complete=False)
-        admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
-    await notify_admins_about_topup_request(
+        checkout = await hub.topups.create_checkout(user.id, amount)
+        admin_telegram_ids = (
+            await hub.accounts.list_admin_telegram_ids()
+            if checkout.provider == "manual"
+            else []
+        )
+    await state.clear()
+    await handle_topup_checkout(
+        message,
         container,
         user=user,
         amount=amount,
-        request_id=request.id,
+        checkout=checkout,
         admin_telegram_ids=admin_telegram_ids,
     )
-    await state.clear()
-    await answer_or_edit(
-        message,
-        f"🧾 Заявка #{request.id} на сумму {amount:.2f} ₽ отправлена администратору.\n"
-        "После подтверждения деньги появятся на балансе автоматически.",
-        reply_markup=balance_actions().as_markup(),
-    )
+
+
+@router.callback_query(F.data.startswith("client:topup_check:"))
+async def topup_check(callback: CallbackQuery, container: AppContainer):
+    request_id = callback.data.split(":")[-1]
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        request = await hub.topups.get_request(request_id)
+        if request.user_id != user.id:
+            await callback.answer("Проверять можно только свои платежи.", show_alert=True)
+            return
+        snapshot = await hub.topups.check_checkout_status(request_id)
+    if snapshot.is_paid:
+        text = (
+            "✅ Оплата подтверждена.\n\n"
+            f"Сумма: {Decimal(snapshot.request.amount_rub):.2f} ₽\n"
+            f"Номер заявки: {snapshot.request.id}\n"
+            "Баланс обновлён автоматически."
+        )
+        markup = balance_actions().as_markup()
+    elif snapshot.provider == "wata":
+        text = (
+            "Статус оплаты\n\n"
+            f"Сумма: {Decimal(snapshot.request.amount_rub):.2f} ₽\n"
+            f"Номер заявки: {snapshot.request.id}\n"
+            f"Статус: {topup_status_label(snapshot.external_status)}\n\n"
+            "Если оплата уже завершена, подождите несколько секунд и нажмите проверку ещё раз."
+        )
+        markup = topup_checkout_actions(
+            payment_url=snapshot.payment_url,
+            request_id=snapshot.request.id,
+            can_check=not snapshot.is_final,
+        ).as_markup()
+    else:
+        text = (
+            "Статус оплаты\n\n"
+            f"Сумма: {Decimal(snapshot.request.amount_rub):.2f} ₽\n"
+            f"Номер заявки: {snapshot.request.id}\n"
+            f"Режим: {topup_provider_label(snapshot.provider)}\n"
+            f"Статус: {topup_status_label(snapshot.external_status)}"
+        )
+        markup = balance_actions().as_markup()
+    await answer_or_edit(callback, text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "client:my_topups")
@@ -1288,16 +1446,26 @@ async def my_topups(callback: CallbackQuery, container: AppContainer):
         if user is None:
             return
         requests = await hub.topups.list_requests(user_id=user.id)
+        provider = hub.topups.resolved_provider()
     if not requests:
         text = "История платежей\n\nПлатежей пока нет."
+        markup = balance_actions().as_markup()
     else:
         text = "История платежей\n\n" + "\n".join(
             [
-                f"• {Decimal(item.amount_rub):.2f} ₽ — {item.status} — {item.created_at:%d.%m %H:%M}"
+                f"• {Decimal(item.amount_rub):.2f} ₽ — {topup_status_label(str(item.status))} — {item.created_at:%d.%m %H:%M}"
                 for item in requests[:10]
             ]
         )
-    await answer_or_edit(callback, text, reply_markup=balance_actions().as_markup())
+        latest_pending = next((item for item in requests if str(item.status) == "new"), None)
+        if provider == "wata" and latest_pending is not None:
+            markup = topup_checkout_actions(
+                request_id=latest_pending.id,
+                can_check=True,
+            ).as_markup()
+        else:
+            markup = balance_actions().as_markup()
+    await answer_or_edit(callback, text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "client:promo_prompt")

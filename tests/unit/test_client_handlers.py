@@ -162,20 +162,20 @@ async def test_send_reply_menu_uses_hidden_helper_message():
 
 @pytest.mark.asyncio
 async def test_notify_admins_about_topup_request_sends_to_admin_bot(monkeypatch):
-    sent: list[tuple[str, int, str, object]] = []
+    sent: list[dict[str, object]] = []
 
-    class DummyBot:
-        def __init__(self, token: str):
-            self.token = token
-            self.session = SimpleNamespace(close=self.close)
+    async def fake_send_telegram_messages(*, bot_token: str, chat_ids, text: str, reply_markup=None):
+        sent.append(
+            {
+                "bot_token": bot_token,
+                "chat_ids": list(chat_ids),
+                "text": text,
+                "reply_markup": reply_markup,
+            }
+        )
+        return len(list(chat_ids))
 
-        async def send_message(self, chat_id: int, text: str, reply_markup=None):
-            sent.append((self.token, chat_id, text, reply_markup))
-
-        async def close(self):
-            return None
-
-    monkeypatch.setattr(client_handlers, "Bot", DummyBot)
+    monkeypatch.setattr(client_handlers, "send_telegram_messages", fake_send_telegram_messages)
     container = SimpleNamespace(settings=SimpleNamespace(admin_bot_token="admin-token"))
     user = SimpleNamespace(telegram_id=777, username="payer")
 
@@ -187,5 +187,27 @@ async def test_notify_admins_about_topup_request_sends_to_admin_bot(monkeypatch)
         admin_telegram_ids=[11, 22],
     )
 
-    assert [item[:2] for item in sent] == [("admin-token", 11), ("admin-token", 22)]
-    assert all("req-77" in item[2] for item in sent)
+    assert sent[0]["bot_token"] == "admin-token"
+    assert sent[0]["chat_ids"] == [11, 22]
+    assert "req-77" in str(sent[0]["text"])
+
+
+@pytest.mark.asyncio
+async def test_ensure_client_access_shows_maintenance_stub_when_panel_is_unavailable():
+    message = DummyMessage(text="Меню", user_id=21005)
+
+    class DummyMonitoring:
+        async def is_client_maintenance_active(self):
+            return True
+
+    container = SimpleNamespace(settings=SimpleNamespace(support_username="@altlink_support"))
+
+    user = await client_handlers.ensure_client_access(
+        message,
+        container,
+        SimpleNamespace(monitoring=DummyMonitoring()),
+    )
+
+    assert user is None
+    assert len(message.answers) == 1
+    assert "Технические работы" in str(message.answers[0]["text"])

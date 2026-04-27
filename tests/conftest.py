@@ -16,9 +16,11 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from altlink.application.services.accounts import AccountService
+from altlink.application.services.backups import BackupService
 from altlink.application.services.billing import BillingService
 from altlink.application.services.catalog import CatalogService
 from altlink.application.services.dashboard import DashboardService
+from altlink.application.services.monitoring import MonitoringService
 from altlink.application.services.notifications import NotificationService
 from altlink.application.services.online import OnlineService
 from altlink.application.services.promos import PromoService
@@ -426,6 +428,7 @@ class TestServices:
         async with session_scope(self.session_factory) as session:
             notifications = NotificationService(session, self.settings, self.remnawave)
             accounts = AccountService(session, self.settings, self.remnawave)
+            backups = BackupService(session, self.settings, self.remnawave)
             catalog = CatalogService(session, self.settings, self.remnawave)
             online = OnlineService(session, self.settings, self.remnawave)
             support = SupportService(session, self.settings, self.remnawave)
@@ -447,12 +450,14 @@ class TestServices:
                 notifications=notifications,
             )
             dashboard = DashboardService(session, self.settings, self.remnawave)
+            monitoring = MonitoringService(session, self.settings, self.remnawave)
             yield SimpleNamespace(
                 session=session,
                 settings=self.settings,
                 remnawave=self.remnawave,
                 notifications=notifications,
                 accounts=accounts,
+                backups=backups,
                 catalog=catalog,
                 online=online,
                 support=support,
@@ -460,6 +465,7 @@ class TestServices:
                 billing=billing,
                 topups=topups,
                 dashboard=dashboard,
+                monitoring=monitoring,
             )
 
 

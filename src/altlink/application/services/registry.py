@@ -7,9 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from altlink.application.services.accounts import AccountService
+from altlink.application.services.backups import BackupService
 from altlink.application.services.billing import BillingService
 from altlink.application.services.catalog import CatalogService
 from altlink.application.services.dashboard import DashboardService
+from altlink.application.services.monitoring import MonitoringService
 from altlink.application.services.notifications import NotificationService
 from altlink.application.services.online import OnlineService
 from altlink.application.services.promos import PromoService
@@ -28,6 +30,7 @@ class ServiceHub:
         self.settings = settings
         self.notifications = NotificationService(session, settings, remnawave)
         self.accounts = AccountService(session, settings, remnawave)
+        self.backups = BackupService(session, settings, remnawave)
         self.catalog = CatalogService(session, settings, remnawave)
         self.online = OnlineService(session, settings, remnawave)
         self.support = SupportService(session, settings, remnawave)
@@ -49,6 +52,7 @@ class ServiceHub:
             notifications=self.notifications,
         )
         self.dashboard = DashboardService(session, settings, remnawave)
+        self.monitoring = MonitoringService(session, settings, remnawave)
 
 
 class AppContainer:
