@@ -104,6 +104,7 @@ async def test_yookassa_without_credentials_falls_back_to_stub_checkout(test_ser
     async with test_services.hub() as hub:
         refreshed = await hub.accounts.get_user_by_telegram_id(3004)
         request = await hub.topups.get_request(checkout.request.id)
+        assert hub.topups.yookassa_missing_settings() == ["YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY"]
         assert hub.topups.resolved_provider() == "stub"
         assert checkout.provider == "stub"
         assert checkout.auto_completed is True

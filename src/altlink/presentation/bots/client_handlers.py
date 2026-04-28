@@ -139,6 +139,23 @@ def topup_provider_selection_text(amount: Decimal, providers: list[str]) -> str:
     )
 
 
+def topup_provider_status_text(*, configured_provider: str, resolved_provider: str, missing_settings: list[str]) -> str:
+    if configured_provider == "yookassa":
+        if resolved_provider == "yookassa":
+            return "Оплата откроется через кассу YooKassa."
+        missing = ", ".join(missing_settings) or "YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY"
+        return (
+            "YooKassa выбрана как касса, но бот не видит полную настройку.\n"
+            f"Не хватает: {missing}.\n"
+            "Пока используется тестовая заглушка."
+        )
+    if resolved_provider == "manual":
+        return "Заявка уйдёт администратору на ручное подтверждение."
+    if resolved_provider == "stub":
+        return "Если касса не настроена, бот использует тестовую заглушку и зачисляет деньги сразу."
+    return "Пополнение будет обработано автоматически."
+
+
 def topup_status_label(raw_status: str) -> str:
     labels = {
         "approved": "зачислено",
@@ -1515,11 +1532,13 @@ async def topup_menu(callback: CallbackQuery, container: AppContainer):
         if user is None:
             return
         provider = hub.topups.resolved_provider()
-    provider_text = {
-        "yookassa": "Оплата откроется через кассу YooKassa.",
-        "manual": "Заявка уйдёт администратору на ручное подтверждение.",
-        "stub": "Если касса не настроена, бот использует тестовую заглушку и зачисляет деньги сразу.",
-    }.get(provider, "Пополнение будет обработано автоматически.")
+        configured_provider = hub.topups.configured_provider()
+        missing_settings = hub.topups.yookassa_missing_settings()
+    provider_text = topup_provider_status_text(
+        configured_provider=configured_provider,
+        resolved_provider=provider,
+        missing_settings=missing_settings,
+    )
     await answer_or_edit(
         callback,
         "Выберите сумму пополнения.\n\n" + provider_text,

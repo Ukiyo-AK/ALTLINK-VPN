@@ -65,6 +65,19 @@ class TopupService(BaseService):
             return "stub"
         return "manual"
 
+    def configured_provider(self) -> str:
+        return (self.settings.payment_provider or "manual").strip().lower() or "manual"
+
+    def yookassa_missing_settings(self) -> list[str]:
+        missing: list[str] = []
+        if not (self.settings.yookassa_api_base_url or "").strip():
+            missing.append("YOOKASSA_API_BASE_URL")
+        if not (self.settings.yookassa_shop_id or "").strip():
+            missing.append("YOOKASSA_SHOP_ID")
+        if not (self.settings.yookassa_secret_key or "").strip():
+            missing.append("YOOKASSA_SECRET_KEY")
+        return missing
+
     async def create_checkout(
         self,
         user_id: str,
@@ -72,6 +85,13 @@ class TopupService(BaseService):
         comment: str | None = None,
     ) -> TopupCheckoutSession:
         provider = self.resolved_provider()
+        if self.configured_provider() == "yookassa" and provider == "stub":
+            await self.log_event(
+                level=SystemEventLevel.WARNING,
+                event_type="topup_provider_fallback_stub",
+                message="YooKassa включена, но не настроена полностью. Использована заглушка.",
+                payload={"missing_settings": self.yookassa_missing_settings()},
+            )
         if provider == "yookassa":
             request = await self.create_request(
                 user_id,
@@ -320,11 +340,7 @@ class TopupService(BaseService):
         return self.resolved_provider()
 
     def _is_yookassa_configured(self) -> bool:
-        return bool(
-            (self.settings.yookassa_api_base_url or "").strip()
-            and (self.settings.yookassa_shop_id or "").strip()
-            and (self.settings.yookassa_secret_key or "").strip()
-        )
+        return not self.yookassa_missing_settings()
 
     async def _create_yookassa_payment(self, request: TopupRequest) -> tuple[str, str]:
         payload = {

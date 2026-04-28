@@ -246,6 +246,19 @@ def test_available_topup_provider_codes_follow_resolved_provider():
     assert client_handlers.available_topup_provider_codes("stub") == ["stub"]
 
 
+def test_topup_provider_status_text_explains_missing_yookassa_settings():
+    text = client_handlers.topup_provider_status_text(
+        configured_provider="yookassa",
+        resolved_provider="stub",
+        missing_settings=["YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY"],
+    )
+
+    assert "YooKassa выбрана как касса" in text
+    assert "YOOKASSA_SHOP_ID" in text
+    assert "YOOKASSA_SECRET_KEY" in text
+    assert "тестовая заглушка" in text
+
+
 @pytest.mark.asyncio
 async def test_get_access_state_auto_verifies_subscribed_user(test_services, monkeypatch):
     message = DummyMessage(text="Меню", user_id=21003)
