@@ -179,6 +179,17 @@ class AccountService(BaseService):
         await self.session.flush()
         return user
 
+    async def mark_promo_onboarding_completed(self, user_id: str) -> User:
+        user = await self.get_user(user_id)
+        if user.promo_onboarding_completed_at is None:
+            user.promo_onboarding_completed_at = utc_now()
+            await self.session.flush()
+        return user
+
+    @staticmethod
+    def has_completed_promo_onboarding(user: User) -> bool:
+        return bool(getattr(user, "promo_onboarding_completed_at", None))
+
     async def is_trial_available(self, user_id: str) -> bool:
         trial = await self.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user_id))
         return trial is None or not trial.consumed

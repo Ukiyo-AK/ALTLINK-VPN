@@ -14,6 +14,8 @@ from altlink.presentation.bots.client_keyboards import (
     menu_actions,
     plan_actions,
     plan_period_actions,
+    promo_onboarding_actions,
+    promo_onboarding_skip_actions,
     subscription_actions,
 )
 
@@ -84,6 +86,21 @@ def test_channel_actions_include_subscription_check():
     check_button = next(button for button in buttons if button["text"] == "Проверить подписку")
     assert subscribe_button["style"] == "primary"
     assert check_button["style"] == "success"
+
+
+def test_promo_onboarding_actions_offer_enter_and_skip():
+    markup = promo_onboarding_actions().as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+    buttons = inline_buttons(markup)
+    assert flat == ["Ввести промокод", "Пропустить"]
+    assert next(button for button in buttons if button["text"] == "Ввести промокод")["style"] == "success"
+    assert next(button for button in buttons if button["text"] == "Пропустить")["style"] == "primary"
+
+
+def test_promo_onboarding_skip_actions_keep_single_skip_button():
+    markup = promo_onboarding_skip_actions().as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+    assert flat == ["Пропустить"]
 
 
 def test_subscription_actions_render_cancel_and_hide_traffic():

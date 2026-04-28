@@ -44,6 +44,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     consent_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     channel_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    promo_onboarding_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     referral_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     referred_by_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),

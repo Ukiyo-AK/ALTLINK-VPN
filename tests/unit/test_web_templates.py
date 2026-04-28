@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+
+TEMPLATE_ROOT = Path("src/altlink/presentation/web/templates")
+ASSET_TEMPLATES = [
+    "base.html",
+    "landing.html",
+    "legal_agreement.html",
+    "legal_privacy.html",
+    "login.html",
+    "portal_dashboard.html",
+    "portal_help.html",
+    "portal_login.html",
+]
+
+
+@pytest.mark.parametrize("template_name", ASSET_TEMPLATES)
+def test_web_templates_use_relative_asset_paths(template_name: str):
+    content = (TEMPLATE_ROOT / template_name).read_text(encoding="utf-8")
+
+    assert "{{ url_for('static', path='style.css') }}" not in content
+    assert "{{ url_for('media', path='logo.png') }}" not in content
+    assert 'href="/static/style.css"' in content
+    assert 'src="/media/logo.png"' in content
+
+
+def test_landing_hero_background_uses_relative_media_path():
+    content = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
+
+    assert "url('{{ url_for('media', path='logo without background.png') }}')" not in content
+    assert "url('/media/logo without background.png')" in content

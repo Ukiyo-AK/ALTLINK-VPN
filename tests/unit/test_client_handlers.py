@@ -8,6 +8,7 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
+from altlink.domain.enums import PromoRewardKind
 from altlink.presentation.bots import client_handlers
 from altlink.settings import Settings
 
@@ -33,6 +34,25 @@ class DummyMessage:
         return None
 
 
+class DummyState:
+    def __init__(self) -> None:
+        self.data: dict[str, object] = {}
+        self.state: str | None = None
+
+    async def set_state(self, value) -> None:
+        self.state = str(value)
+
+    async def update_data(self, **kwargs) -> None:
+        self.data.update(kwargs)
+
+    async def get_data(self) -> dict[str, object]:
+        return dict(self.data)
+
+    async def clear(self) -> None:
+        self.data.clear()
+        self.state = None
+
+
 @pytest.mark.asyncio
 async def test_ensure_client_access_sends_agreement_and_channel_messages_separately(test_services):
     message = DummyMessage(text="/start", user_id=21001)
@@ -42,8 +62,8 @@ async def test_ensure_client_access_sends_agreement_and_channel_messages_separat
 
     assert user is None
     assert len(message.answers) == 2
-    assert message.answers[0]["text"].startswith("Шаг 1 из 2. Пользовательское соглашение")
-    assert message.answers[1]["text"].startswith("Шаг 2 из 2. Подписка на канал")
+    assert "Шаг 1 из 3" in str(message.answers[0]["text"])
+    assert "Шаг 2 из 3" in str(message.answers[1]["text"])
 
 
 @pytest.mark.asyncio
@@ -54,6 +74,7 @@ async def test_ensure_client_access_returns_user_after_channel_verification_and_
         created = await client_handlers.ensure_user(message.from_user, test_services, hub)
         await hub.accounts.complete_registration(created.id)
         await hub.accounts.mark_channel_verified(created.id)
+        await hub.accounts.mark_promo_onboarding_completed(created.id)
 
     async with test_services.hub() as hub:
         user = await client_handlers.ensure_client_access(message, test_services, hub)
@@ -61,6 +82,23 @@ async def test_ensure_client_access_returns_user_after_channel_verification_and_
     assert user is not None
     assert user.id == created.id
     assert message.answers == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_client_access_shows_promo_step_after_registration_and_channel_verification(test_services):
+    message = DummyMessage(text="Меню", user_id=21006)
+
+    async with test_services.hub() as hub:
+        created = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        await hub.accounts.complete_registration(created.id)
+        await hub.accounts.mark_channel_verified(created.id)
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_client_access(message, test_services, hub)
+
+    assert user is None
+    assert len(message.answers) == 1
+    assert "Шаг 3 из 3" in str(message.answers[0]["text"])
 
 
 @pytest.mark.asyncio
@@ -148,6 +186,38 @@ async def test_get_access_state_auto_verifies_subscribed_user(test_services, mon
     assert consent_ok is True
     assert channel_ok is True
     assert refreshed.channel_verified_at is not None
+
+
+@pytest.mark.asyncio
+async def test_promo_submit_finishes_onboarding_after_success(test_services):
+    message = DummyMessage(text="WELCOME100", user_id=21007)
+    state = DummyState()
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        await hub.accounts.complete_registration(user.id)
+        await hub.accounts.mark_channel_verified(user.id)
+        await hub.promos.create_code(
+            code="WELCOME100",
+            name="Welcome promo",
+            reward_kind=PromoRewardKind.BALANCE,
+            reward_value=Decimal("100"),
+            usage_limit=10,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+        )
+
+    await state.update_data(promo_source="onboarding")
+    await client_handlers.promo_submit(message, state, test_services)
+
+    async with test_services.hub() as hub:
+        refreshed = await hub.accounts.get_user_by_telegram_id(21007)
+
+    assert refreshed is not None
+    assert refreshed.promo_onboarding_completed_at is not None
+    assert refreshed.balance_rub == Decimal("100.00")
+    assert any("Промокод применён" in str(item["text"]) for item in message.answers)
 
 
 @pytest.mark.asyncio

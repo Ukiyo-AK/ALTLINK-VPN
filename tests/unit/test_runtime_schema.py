@@ -52,6 +52,64 @@ async def test_runtime_schema_adds_missing_user_registration_columns(tmp_path: P
     assert "consent_accepted_at" in column_names
     assert "consent_version" in column_names
     assert "channel_verified_at" in column_names
+    assert "promo_onboarding_completed_at" in column_names
+
+
+@pytest.mark.asyncio
+async def test_runtime_schema_backfills_promo_onboarding_for_existing_registered_users(tmp_path: Path):
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy_registered.db'}"
+    engine = create_async_engine(database_url, future=True)
+
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                telegram_id BIGINT NOT NULL,
+                username VARCHAR(255),
+                first_name VARCHAR(255),
+                last_name VARCHAR(255),
+                language_code VARCHAR(16),
+                balance_rub NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                status VARCHAR(16) NOT NULL,
+                registration_completed_at DATETIME,
+                consent_accepted_at DATETIME,
+                consent_version VARCHAR(64),
+                channel_verified_at DATETIME,
+                remnawave_user_uuid VARCHAR(64),
+                remnawave_username VARCHAR(64),
+                remnawave_short_uuid VARCHAR(64),
+                assigned_server_id TEXT,
+                last_seen_at DATETIME
+            )
+            """
+        )
+        await connection.exec_driver_sql(
+            """
+            INSERT INTO users (
+                id, created_at, updated_at, telegram_id, username, balance_rub, status,
+                registration_completed_at, consent_accepted_at, consent_version
+            )
+            VALUES (
+                'u-1', '2026-01-01 00:00:00', '2026-01-01 00:00:00', 1001, 'legacy_user', 0, 'new',
+                '2026-01-02 00:00:00', '2026-01-02 00:00:00', 'placeholder-v1'
+            )
+            """
+        )
+
+    await ensure_runtime_schema(engine)
+
+    async with engine.begin() as connection:
+        promo_completed_at = await connection.exec_driver_sql(
+            "SELECT promo_onboarding_completed_at FROM users WHERE id = 'u-1'"
+        )
+        value = promo_completed_at.scalar_one()
+
+    await engine.dispose()
+
+    assert value is not None
 
 
 def test_enum_values_tracks_longest_enum_member_length():

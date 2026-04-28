@@ -22,6 +22,8 @@ def main() -> None:
             host=settings.backend_host,
             port=settings.backend_port,
             reload=False,
+            proxy_headers=True,
+            forwarded_allow_ips="*",
         )
         return
     if mode == "client-bot":
@@ -38,4 +40,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

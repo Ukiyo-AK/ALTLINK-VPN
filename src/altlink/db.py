@@ -73,6 +73,7 @@ def _ensure_runtime_schema_sync(connection) -> None:
         "consent_accepted_at": DateTime(timezone=True),
         "consent_version": String(64),
         "channel_verified_at": DateTime(timezone=True),
+        "promo_onboarding_completed_at": DateTime(timezone=True),
         "referral_code": String(32),
         "referred_by_user_id": String(36),
         "referral_reward_granted_at": DateTime(timezone=True),
@@ -84,6 +85,20 @@ def _ensure_runtime_schema_sync(connection) -> None:
         compiled_type = column_type.compile(dialect=connection.dialect)
         connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {compiled_type}"))
         logger.warning("Added missing column %s to users table during runtime schema preparation.", column_name)
+        if column_name == "promo_onboarding_completed_at":
+            connection.execute(
+                text(
+                    """
+                    UPDATE users
+                    SET promo_onboarding_completed_at = COALESCE(registration_completed_at, consent_accepted_at)
+                    WHERE promo_onboarding_completed_at IS NULL
+                      AND (registration_completed_at IS NOT NULL OR consent_accepted_at IS NOT NULL)
+                    """
+                )
+            )
+            logger.warning(
+                "Backfilled promo_onboarding_completed_at for already registered users during runtime schema preparation."
+            )
 
     if "plans" not in table_names:
         return

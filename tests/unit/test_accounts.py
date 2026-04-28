@@ -68,6 +68,24 @@ async def test_mark_channel_verified_persists_timestamp(test_services):
 
 
 @pytest.mark.asyncio
+async def test_mark_promo_onboarding_completed_persists_timestamp(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=11006,
+            username="promo_onboarding_user",
+            first_name="Promo",
+            last_name="Onboarding",
+            language_code="ru",
+        )
+        assert user.promo_onboarding_completed_at is None
+
+        await hub.accounts.mark_promo_onboarding_completed(user.id)
+        updated = await hub.accounts.get_user(user.id)
+
+        assert updated.promo_onboarding_completed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_is_trial_available_without_trial_period_returns_true(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(

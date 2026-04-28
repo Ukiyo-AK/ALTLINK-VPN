@@ -35,6 +35,8 @@ from altlink.presentation.bots.client_keyboards import (
     plan_actions,
     plan_period_actions,
     profile_actions,
+    promo_onboarding_actions,
+    promo_onboarding_skip_actions,
     site_actions,
     subscription_link_actions,
     subscription_actions,
@@ -568,7 +570,7 @@ def agreement_text(*, consent_accepted: bool = False) -> str:
         else "Подтвердите согласие, чтобы открыть доступ к меню и управлению VPN."
     )
     return (
-        "Шаг 1 из 2. Пользовательское соглашение\n\n"
+        "Шаг 1 из 3. Пользовательское соглашение\n\n"
         f"{intro}\n\n"
         "Сейчас в боте используется временная заглушка вместо полного текста соглашения.\n\n"
         "Подтверждая соглашение, вы соглашаетесь с тем, что:\n"
@@ -587,12 +589,29 @@ def channel_subscription_text(*, consent_ok: bool, channel_ok: bool, settings) -
     )
     note = "" if consent_ok else "\n\nСначала подтвердите согласие в первом сообщении."
     return (
-        "Шаг 2 из 2. Подписка на канал\n\n"
+        "Шаг 2 из 3. Подписка на канал\n\n"
         f"{status}\n"
         "Без подписки бот не откроет меню и действия с VPN.\n"
         f"Канал проекта: {settings.required_subscription_channel_url or settings.required_subscription_channel or 'ссылка будет добавлена позже'}"
         f"{note}"
     )
+
+
+def promo_onboarding_text() -> str:
+    return (
+        "Шаг 3 из 3. Промокод\n\n"
+        "Если у вас есть промокод, можно ввести его сейчас и сразу получить бонус или скидку.\n"
+        "Если промокода нет, просто нажмите кнопку «Пропустить». Потом промокод всё равно можно будет ввести в разделе «Баланс»."
+    )
+
+
+def promo_code_prompt_text(*, onboarding: bool = False) -> str:
+    if onboarding:
+        return (
+            "Введите промокод одним сообщением, например: START100\n\n"
+            "Если промокода нет, можно нажать «Пропустить»."
+        )
+    return "Введите промокод одним сообщением, например: START100"
 
 
 def access_links_text(settings) -> str:
@@ -794,6 +813,10 @@ async def get_access_state(message: Message | CallbackQuery, container: AppConta
     return user, consent_ok, channel_ok
 
 
+def needs_promo_onboarding(user, hub) -> bool:
+    return not hub.accounts.has_completed_promo_onboarding(user)
+
+
 async def send_reply_menu(target: Message | CallbackQuery, *, force: bool = False) -> None:
     anchor = target.message if isinstance(target, CallbackQuery) else target
     chat = getattr(anchor, "chat", None)
@@ -844,11 +867,24 @@ async def show_pending_access_steps(
         await target.answer()
 
 
+async def show_promo_onboarding_step(target: Message | CallbackQuery) -> None:
+    await send_card_with_optional_media(
+        target,
+        promo_onboarding_text(),
+        primary_markup=promo_onboarding_actions().as_markup(),
+        media_section="onboarding",
+        force_new_message=not isinstance(target, CallbackQuery),
+    )
+
+
 async def ensure_client_access(message: Message | CallbackQuery, container: AppContainer, hub=None):
     if await client_maintenance_active(container, hub):
         await show_technical_maintenance(message, container)
         return None
     user, consent_ok, channel_ok = await get_access_state(message, container, hub)
+    if channel_ok and consent_ok and hub is not None and needs_promo_onboarding(user, hub):
+        await show_promo_onboarding_step(message)
+        return None
     if channel_ok and consent_ok:
         return user
 
@@ -1182,6 +1218,9 @@ async def check_channel(callback: CallbackQuery, container: AppContainer):
             ).as_markup(),
         )
         return
+    if needs_promo_onboarding(user, hub):
+        await show_promo_onboarding_step(callback)
+        return
     await send_reply_menu(callback)
     await send_home_card(
         callback,
@@ -1224,6 +1263,9 @@ async def complete_registration(callback: CallbackQuery, container: AppContainer
         )
         return
     if not consent_ok:
+        return
+    if needs_promo_onboarding(refreshed, hub):
+        await show_promo_onboarding_step(callback)
         return
     await send_reply_menu(callback)
     await send_home_card(
@@ -1474,8 +1516,65 @@ async def promo_prompt(callback: CallbackQuery, state: FSMContext, container: Ap
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
+    await state.update_data(promo_source="balance")
     await state.set_state(PromoStates.waiting_for_code)
-    await answer_or_edit(callback, "Введите промокод одним сообщением, например: START100")
+    await answer_or_edit(callback, promo_code_prompt_text())
+
+
+@router.callback_query(F.data == "client:onboarding_promo_prompt")
+async def onboarding_promo_prompt(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    async with container.hub() as hub:
+        user, consent_ok, channel_ok = await get_access_state(callback, container, hub)
+        if not (consent_ok and channel_ok):
+            await show_pending_access_steps(callback, container, consent_ok=consent_ok, channel_ok=channel_ok)
+            return
+        if not needs_promo_onboarding(user, hub):
+            subscription = await hub.accounts.get_current_subscription(user.id)
+            latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
+            show_trial = await hub.accounts.can_offer_trial(user.id)
+            await send_reply_menu(callback)
+            await send_home_card(
+                callback,
+                container,
+                user=user,
+                subscription=subscription,
+                show_trial=show_trial,
+                latest_subscription=latest_subscription,
+                as_new_message=False,
+            )
+            return
+    await state.update_data(promo_source="onboarding")
+    await state.set_state(PromoStates.waiting_for_code)
+    await answer_or_edit(
+        callback,
+        promo_code_prompt_text(onboarding=True),
+        reply_markup=promo_onboarding_skip_actions().as_markup(),
+    )
+
+
+@router.callback_query(F.data == "client:onboarding_promo_skip")
+async def onboarding_promo_skip(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    async with container.hub() as hub:
+        user, consent_ok, channel_ok = await get_access_state(callback, container, hub)
+        if not (consent_ok and channel_ok):
+            await show_pending_access_steps(callback, container, consent_ok=consent_ok, channel_ok=channel_ok)
+            return
+        await hub.accounts.mark_promo_onboarding_completed(user.id)
+        refreshed = await hub.accounts.get_user(user.id)
+        subscription = await hub.accounts.get_current_subscription(refreshed.id)
+        latest_subscription = await hub.accounts.get_latest_subscription(refreshed.id) if subscription is None else subscription
+        show_trial = await hub.accounts.can_offer_trial(refreshed.id)
+    await state.clear()
+    await send_reply_menu(callback)
+    await send_home_card(
+        callback,
+        container,
+        user=refreshed,
+        subscription=subscription,
+        show_trial=show_trial,
+        latest_subscription=latest_subscription,
+        as_new_message=False,
+    )
 
 
 @router.message(PromoStates.waiting_for_code)
@@ -1483,17 +1582,53 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
     if await route_message_action(message, state, container):
         return
 
+    state_data = await state.get_data()
+    promo_source = state_data.get("promo_source")
+
     async with container.hub() as hub:
-        user = await ensure_client_access(message, container, hub)
-        if user is None:
-            return
+        if promo_source == "onboarding":
+            user, consent_ok, channel_ok = await get_access_state(message, container, hub)
+            if not (consent_ok and channel_ok):
+                await state.clear()
+                await show_pending_access_steps(message, container, consent_ok=consent_ok, channel_ok=channel_ok)
+                return
+        else:
+            user = await ensure_client_access(message, container, hub)
+            if user is None:
+                return
         try:
             _, _, result_text = await hub.promos.redeem_code(user.id, message.text or "")
         except ConflictError as exc:
-            await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
+            if promo_source == "onboarding":
+                await answer_or_edit(
+                    message,
+                    f"{exc}\n\n{promo_code_prompt_text(onboarding=True)}",
+                    reply_markup=promo_onboarding_skip_actions().as_markup(),
+                )
+            else:
+                await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
             return
+        if promo_source == "onboarding":
+            await hub.accounts.mark_promo_onboarding_completed(user.id)
+            refreshed = await hub.accounts.get_user(user.id)
+            subscription = await hub.accounts.get_current_subscription(refreshed.id)
+            latest_subscription = await hub.accounts.get_latest_subscription(refreshed.id) if subscription is None else subscription
+            show_trial = await hub.accounts.can_offer_trial(refreshed.id)
 
     await state.clear()
+    if promo_source == "onboarding":
+        await answer_or_edit(message, result_text)
+        await send_reply_menu(message, force=True)
+        await send_home_card(
+            message,
+            container,
+            user=refreshed,
+            subscription=subscription,
+            show_trial=show_trial,
+            latest_subscription=latest_subscription,
+            as_new_message=True,
+        )
+        return
     await answer_or_edit(message, result_text, reply_markup=balance_actions().as_markup())
 
 

@@ -48,6 +48,21 @@ def agreement_actions(consent_accepted: bool = False) -> InlineKeyboardBuilder:
     return builder
 
 
+def promo_onboarding_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Ввести промокод", callback_data="client:onboarding_promo_prompt", style="success")
+    builder.button(text="Пропустить", callback_data="client:onboarding_promo_skip", style="primary")
+    builder.adjust(1, 1)
+    return builder
+
+
+def promo_onboarding_skip_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Пропустить", callback_data="client:onboarding_promo_skip", style="primary")
+    builder.adjust(1)
+    return builder
+
+
 def menu_actions(*, show_trial: bool, share_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Баланс", callback_data="client:balance", style="primary")

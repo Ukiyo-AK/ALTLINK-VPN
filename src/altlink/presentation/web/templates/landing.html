@@ -7,13 +7,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="landing-shell">
     <header class="landing-topbar">
       <a class="brand" href="/" style="margin: 0;">
-        <img class="brand-logo" src="{{ url_for('media', path='logo.png') }}" alt="ALTLINK VPN">
+        <img class="brand-logo" src="/media/logo.png" alt="ALTLINK VPN">
         <div>
           <strong>ALTLINK VPN</strong>
           <div class="muted">Стабильный VPN с быстрым подключением</div>
@@ -74,7 +74,7 @@
           z-index: 0;
           opacity: 0.115;
           pointer-events: none;
-          background: url('{{ url_for('media', path='logo without background.png') }}') right center / contain no-repeat;
+          background: url('/media/logo without background.png') right center / contain no-repeat;
           filter: blur(0.35px) saturate(0.82) drop-shadow(0 14px 22px rgba(13, 143, 119, 0.08));
         "></div>
 
