@@ -448,6 +448,38 @@ textarea {
   padding: 1.25rem;
 }
 
+.page-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.page-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.page-topbar-spacer {
+  flex: 1 1 auto;
+}
+
+.login-page-shell {
+  position: relative;
+  width: min(100%, 1180px);
+  padding-top: 3.6rem;
+}
+
+.login-page-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  justify-content: flex-end;
+}
+
 .login-card {
   width: min(460px, 100%);
   background: var(--panel-solid);
@@ -455,6 +487,7 @@ textarea {
   border-radius: 1.5rem;
   padding: 1.6rem;
   box-shadow: var(--shadow);
+  margin-inline: auto;
 }
 
 .portal-shell {
@@ -516,6 +549,17 @@ textarea {
   align-items: center;
   gap: 1rem;
   padding: 0.8rem 0;
+}
+
+.landing-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.landing-cabinet-button {
+  white-space: nowrap;
 }
 
 .landing-nav {
@@ -693,6 +737,33 @@ textarea {
   gap: 1rem;
 }
 
+.portal-login-grid {
+  align-items: stretch;
+}
+
+.portal-login-card {
+  height: 100%;
+}
+
+.portal-login-qr-card {
+  align-items: center;
+  text-align: center;
+}
+
+.portal-login-qr-image {
+  display: block;
+  width: min(18rem, 100%);
+  aspect-ratio: 1;
+  object-fit: contain;
+  justify-self: center;
+  align-self: center;
+  margin-inline: auto;
+  border-radius: 1rem;
+  background: #fff;
+  padding: 0.8rem;
+  box-shadow: 0 18px 36px rgba(34, 27, 19, 0.08);
+}
+
 .portal-server-table th:last-child,
 .portal-server-table td:last-child {
   width: 1%;
@@ -821,6 +892,13 @@ textarea {
     flex-direction: column;
     align-items: flex-start;
   }
+  .landing-topbar-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+  .landing-topbar-actions .button {
+    width: 100%;
+  }
   .landing-hero {
     grid-template-columns: 1fr;
     min-height: 20rem;
@@ -836,6 +914,12 @@ textarea {
 }
 
 @media (max-width: 640px) {
+  .login-page-shell {
+    padding-top: 3rem;
+  }
+  .login-page-topbar .button {
+    width: 100%;
+  }
   .landing-hero-mark { display: none; }
   .landing-hero { padding-right: 1.4rem; }
   .landing-copy { max-width: 100%; }

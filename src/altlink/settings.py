@@ -57,11 +57,11 @@ class Settings(BaseSettings):
     single_server_plan_price_rub: int = 69
     whitelist_price_per_gb_rub: int = 4
     payment_provider: str = "manual"
-    wata_api_base_url: str = "https://api.wata.pro/api/h2h"
-    wata_api_token: str = ""
-    wata_success_redirect_url: str = ""
-    wata_fail_redirect_url: str = ""
-    wata_timeout_seconds: int = 20
+    yookassa_api_base_url: str = "https://api.yookassa.ru/v3"
+    yookassa_shop_id: str = ""
+    yookassa_secret_key: str = ""
+    yookassa_return_url: str = ""
+    yookassa_timeout_seconds: int = 20
     traffic_notification_thresholds: Annotated[list[int], NoDecode] = Field(
         default_factory=lambda: [70, 90, 100]
     )
@@ -147,9 +147,11 @@ class Settings(BaseSettings):
         if value is None:
             return "manual"
         normalized = str(value).strip().lower()
-        if normalized in {"", "stub", "manual", "wata"}:
+        if normalized == "wata":
+            return "yookassa"
+        if normalized in {"", "stub", "manual", "yookassa"}:
             return normalized or "manual"
-        raise ValueError("PAYMENT_PROVIDER must be one of: stub, manual, wata")
+        raise ValueError("PAYMENT_PROVIDER must be one of: stub, manual, yookassa")
 
     @field_validator("database_url", mode="before")
     @classmethod

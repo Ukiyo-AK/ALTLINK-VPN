@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal
+import json
 
+import httpx
 import pytest
 from sqlalchemy import select
 
+from altlink.application.services.topups import TopupService
 from altlink.domain.enums import BalanceTransactionType, PlanCode
 from altlink.infrastructure.db.models import BalanceTransaction
 from altlink.utils.time import utc_now
@@ -83,15 +86,16 @@ async def test_topup_checkout_stays_manual_by_default(test_services):
 
 
 @pytest.mark.asyncio
-async def test_wata_without_api_falls_back_to_stub_checkout(test_services):
-    test_services.settings.payment_provider = "wata"
-    test_services.settings.wata_api_token = ""
+async def test_yookassa_without_credentials_falls_back_to_stub_checkout(test_services):
+    test_services.settings.payment_provider = "yookassa"
+    test_services.settings.yookassa_shop_id = ""
+    test_services.settings.yookassa_secret_key = ""
 
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=3004,
-            username="wata_stub",
-            first_name="Wata",
+            username="yookassa_stub",
+            first_name="Yoo",
             last_name="Stub",
             language_code="ru",
         )
@@ -105,6 +109,86 @@ async def test_wata_without_api_falls_back_to_stub_checkout(test_services):
         assert checkout.auto_completed is True
         assert str(request.status) == "approved"
         assert Decimal(refreshed.balance_rub) == Decimal("125")
+
+
+@pytest.mark.asyncio
+async def test_yookassa_checkout_creates_redirect_payment_and_approves_after_status_poll(test_services, monkeypatch):
+    test_services.settings.payment_provider = "yookassa"
+    test_services.settings.yookassa_shop_id = "shop-123"
+    test_services.settings.yookassa_secret_key = "secret-456"
+
+    created_payloads: list[dict] = []
+
+    def transport_handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers.get("Authorization", "").startswith("Basic ")
+        if request.method == "POST" and request.url.path.endswith("/payments"):
+            created_payloads.append(json.loads(request.content.decode("utf-8")))
+            assert request.headers.get("Idempotence-Key")
+            return httpx.Response(
+                200,
+                json={
+                    "id": "pay-demo-1",
+                    "status": "pending",
+                    "confirmation": {
+                        "type": "redirect",
+                        "confirmation_url": "https://pay.yookassa.example/confirm/pay-demo-1",
+                    },
+                },
+            )
+        if request.method == "GET" and request.url.path.endswith("/payments/pay-demo-1"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "pay-demo-1",
+                    "status": "succeeded",
+                    "confirmation": {
+                        "type": "redirect",
+                        "confirmation_url": "https://pay.yookassa.example/confirm/pay-demo-1",
+                    },
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    def fake_client(self):
+        return httpx.AsyncClient(
+            base_url=self._yookassa_base_url(),
+            transport=httpx.MockTransport(transport_handler),
+            auth=httpx.BasicAuth(self.settings.yookassa_shop_id, self.settings.yookassa_secret_key),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=self.settings.yookassa_timeout_seconds,
+        )
+
+    monkeypatch.setattr(TopupService, "_yookassa_client", fake_client)
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3006,
+            username="yookassa_live",
+            first_name="Yoo",
+            last_name="Kassa",
+            language_code="ru",
+        )
+        checkout = await hub.topups.create_checkout(user.id, Decimal("410"))
+
+        assert checkout.provider == "yookassa"
+        assert checkout.payment_url == "https://pay.yookassa.example/confirm/pay-demo-1"
+        assert checkout.request.external_payment_id == "pay-demo-1"
+        assert checkout.request.external_payment_url == "https://pay.yookassa.example/confirm/pay-demo-1"
+
+    async with test_services.hub() as hub:
+        snapshot = await hub.topups.check_checkout_status(checkout.request.id)
+        refreshed = await hub.accounts.get_user_by_telegram_id(3006)
+        stored_request = await hub.topups.get_request(checkout.request.id)
+
+    assert created_payloads
+    assert created_payloads[0]["amount"]["value"] == "410.00"
+    assert created_payloads[0]["confirmation"]["type"] == "redirect"
+    assert snapshot.provider == "yookassa"
+    assert snapshot.is_paid is True
+    assert snapshot.is_final is True
+    assert str(stored_request.status) == "approved"
+    assert stored_request.external_payment_id == "pay-demo-1"
+    assert Decimal(refreshed.balance_rub) == Decimal("410")
 
 
 @pytest.mark.asyncio

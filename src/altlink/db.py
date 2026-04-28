@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 
-from sqlalchemy import DateTime, Integer, String, inspect, text
+from sqlalchemy import DateTime, Integer, String, Text, inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -100,31 +100,48 @@ def _ensure_runtime_schema_sync(connection) -> None:
                 "Backfilled promo_onboarding_completed_at for already registered users during runtime schema preparation."
             )
 
-    if "plans" not in table_names:
+    if "plans" in table_names:
+        plan_columns = {column["name"] for column in inspector.get_columns("plans")}
+        expected_plan_columns = {"device_limit": Integer()}
+        for column_name, column_type in expected_plan_columns.items():
+            if column_name in plan_columns:
+                continue
+            compiled_type = column_type.compile(dialect=connection.dialect)
+            connection.execute(text(f"ALTER TABLE plans ADD COLUMN {column_name} {compiled_type}"))
+            logger.warning("Added missing column %s to plans table during runtime schema preparation.", column_name)
+
+        plan_code_column = next((column for column in inspector.get_columns("plans") if column["name"] == "code"), None)
+        required_plan_code_length = max(len(member.value) for member in PlanCode)
+        current_plan_code_length = getattr(getattr(plan_code_column, "get", lambda *_: None)("type"), "length", None)
+        if (
+            connection.dialect.name != "sqlite"
+            and current_plan_code_length is not None
+            and current_plan_code_length < required_plan_code_length
+        ):
+            connection.execute(text(f"ALTER TABLE plans ALTER COLUMN code TYPE VARCHAR({required_plan_code_length})"))
+            logger.warning(
+                "Expanded plans.code length from %s to %s during runtime schema preparation.",
+                current_plan_code_length,
+                required_plan_code_length,
+            )
+
+    if "topup_requests" not in table_names:
         return
 
-    plan_columns = {column["name"] for column in inspector.get_columns("plans")}
-    expected_plan_columns = {"device_limit": Integer()}
-    for column_name, column_type in expected_plan_columns.items():
-        if column_name in plan_columns:
+    topup_columns = {column["name"] for column in inspector.get_columns("topup_requests")}
+    expected_topup_columns = {
+        "provider_code": String(32),
+        "external_payment_id": String(128),
+        "external_payment_url": Text(),
+    }
+    for column_name, column_type in expected_topup_columns.items():
+        if column_name in topup_columns:
             continue
         compiled_type = column_type.compile(dialect=connection.dialect)
-        connection.execute(text(f"ALTER TABLE plans ADD COLUMN {column_name} {compiled_type}"))
-        logger.warning("Added missing column %s to plans table during runtime schema preparation.", column_name)
-
-    plan_code_column = next((column for column in inspector.get_columns("plans") if column["name"] == "code"), None)
-    required_plan_code_length = max(len(member.value) for member in PlanCode)
-    current_plan_code_length = getattr(getattr(plan_code_column, "get", lambda *_: None)("type"), "length", None)
-    if (
-        connection.dialect.name != "sqlite"
-        and current_plan_code_length is not None
-        and current_plan_code_length < required_plan_code_length
-    ):
-        connection.execute(text(f"ALTER TABLE plans ALTER COLUMN code TYPE VARCHAR({required_plan_code_length})"))
+        connection.execute(text(f"ALTER TABLE topup_requests ADD COLUMN {column_name} {compiled_type}"))
         logger.warning(
-            "Expanded plans.code length from %s to %s during runtime schema preparation.",
-            current_plan_code_length,
-            required_plan_code_length,
+            "Added missing column %s to topup_requests table during runtime schema preparation.",
+            column_name,
         )
 
 

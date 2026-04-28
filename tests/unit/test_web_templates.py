@@ -40,4 +40,14 @@ def test_portal_login_template_uses_bot_confirm_flow_instead_of_widget():
 
     assert "telegram-widget.js" not in content
     assert "portal-login-status" in content
-    assert "Открыть Telegram и подтвердить вход" in content
+    assert "portal-login-qr-image" in content
+
+
+def test_public_templates_keep_personal_account_action_in_top_right():
+    landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
+    portal_login = (TEMPLATE_ROOT / "portal_login.html").read_text(encoding="utf-8")
+
+    assert "landing-topbar-actions" in landing
+    assert 'href="{{ portal_login_url }}"' in landing
+    assert "login-page-topbar" in portal_login
+    assert 'href="/portal/login"' in portal_login

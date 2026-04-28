@@ -96,7 +96,7 @@ def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
 
 def topup_provider_label(provider: str) -> str:
     labels = {
-        "wata": "WATA",
+        "yookassa": "YooKassa",
         "manual": "ручную проверку администратора",
         "stub": "тестовую заглушку",
     }
@@ -112,6 +112,7 @@ def topup_status_label(raw_status: str) -> str:
         "paid": "оплачено",
         "pending": "ожидает оплаты",
         "declined": "отклонён",
+        "canceled": "отменён",
         "expired": "истёк",
         "stub": "тестовый режим",
         "manual": "ручная проверка",
@@ -194,14 +195,14 @@ async def handle_topup_checkout(
         )
         return
 
-    if checkout.provider == "wata":
+    if checkout.provider == "yookassa":
         await answer_or_edit(
             target,
             (
                 "💳 Ссылка на оплату готова.\n\n"
                 f"Сумма: {amount:.2f} ₽\n"
                 f"Номер заявки: {checkout.request.id}\n"
-                "Откройте ссылку, завершите оплату в WATA и затем нажмите кнопку проверки статуса."
+                "Откройте ссылку, завершите оплату в YooKassa и затем нажмите кнопку проверки статуса."
             ),
             reply_markup=topup_checkout_actions(
                 payment_url=checkout.payment_url,
@@ -1460,7 +1461,7 @@ async def topup_menu(callback: CallbackQuery, container: AppContainer):
             return
         provider = hub.topups.resolved_provider()
     provider_text = {
-        "wata": "Оплата откроется через кассу WATA.",
+        "yookassa": "Оплата откроется через кассу YooKassa.",
         "manual": "Заявка уйдёт администратору на ручное подтверждение.",
         "stub": "Если касса не настроена, бот использует тестовую заглушку и зачисляет деньги сразу.",
     }.get(provider, "Пополнение будет обработано автоматически.")
@@ -1556,7 +1557,7 @@ async def topup_check(callback: CallbackQuery, container: AppContainer):
             "Баланс обновлён автоматически."
         )
         markup = balance_actions().as_markup()
-    elif snapshot.provider == "wata":
+    elif snapshot.provider == "yookassa":
         text = (
             "Статус оплаты\n\n"
             f"Сумма: {Decimal(snapshot.request.amount_rub):.2f} ₽\n"
@@ -1600,8 +1601,9 @@ async def my_topups(callback: CallbackQuery, container: AppContainer):
             ]
         )
         latest_pending = next((item for item in requests if str(item.status) == "new"), None)
-        if provider == "wata" and latest_pending is not None:
+        if (getattr(latest_pending, "provider_code", "") or provider) == "yookassa" and latest_pending is not None:
             markup = topup_checkout_actions(
+                payment_url=getattr(latest_pending, "external_payment_url", None),
                 request_id=latest_pending.id,
                 can_check=True,
             ).as_markup()

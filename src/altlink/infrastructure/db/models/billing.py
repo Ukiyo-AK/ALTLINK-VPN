@@ -98,6 +98,9 @@ class TopupRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     amount_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     status: Mapped[TopupStatus] = mapped_column(enum_values(TopupStatus), default=TopupStatus.NEW, nullable=False)
+    provider_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    external_payment_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    external_payment_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     user_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     admin_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     approved_by_admin_id: Mapped[str | None] = mapped_column(

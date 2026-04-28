@@ -112,3 +112,12 @@ def test_settings_normalize_browser_latency_probe_values(tmp_path):
     assert settings.latency_probe_path == "/ping"
     assert settings.latency_probe_port == 44443
     assert settings.browser_latency_timeout_ms == 3500
+
+
+def test_settings_normalize_legacy_wata_provider_to_yookassa(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("PAYMENT_PROVIDER=wata", encoding="utf-8")
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.payment_provider == "yookassa"

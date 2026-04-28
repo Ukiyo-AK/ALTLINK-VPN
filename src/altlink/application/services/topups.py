@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+import re
+from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import select
@@ -14,6 +16,9 @@ from altlink.domain.enums import BalanceTransactionType, NotificationType, Syste
 from altlink.domain.notifications import topup_approved_message, topup_rejected_message
 from altlink.infrastructure.db.models import TopupRequest
 from altlink.utils.time import utc_now
+
+
+TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 
 
 @dataclass(slots=True)
@@ -54,8 +59,8 @@ class TopupService(BaseService):
 
     def resolved_provider(self) -> str:
         configured = (self.settings.payment_provider or "manual").strip().lower()
-        if configured == "wata":
-            return "wata" if self._is_wata_configured() else "stub"
+        if configured == "yookassa":
+            return "yookassa" if self._is_yookassa_configured() else "stub"
         if configured == "stub":
             return "stub"
         return "manual"
@@ -67,9 +72,18 @@ class TopupService(BaseService):
         comment: str | None = None,
     ) -> TopupCheckoutSession:
         provider = self.resolved_provider()
-        if provider == "wata":
-            request = await self.create_request(user_id, amount_rub, comment=comment, auto_complete=False)
-            payment_url = await self._create_wata_payment_link(request)
+        if provider == "yookassa":
+            request = await self.create_request(
+                user_id,
+                amount_rub,
+                comment=comment,
+                auto_complete=False,
+                provider_code=provider,
+            )
+            payment_id, payment_url = await self._create_yookassa_payment(request)
+            request.external_payment_id = payment_id
+            request.external_payment_url = payment_url
+            await self.session.flush()
             return TopupCheckoutSession(
                 request=request,
                 provider=provider,
@@ -78,7 +92,13 @@ class TopupService(BaseService):
                 auto_completed=False,
             )
         if provider == "manual":
-            request = await self.create_request(user_id, amount_rub, comment=comment, auto_complete=False)
+            request = await self.create_request(
+                user_id,
+                amount_rub,
+                comment=comment,
+                auto_complete=False,
+                provider_code=provider,
+            )
             return TopupCheckoutSession(
                 request=request,
                 provider=provider,
@@ -87,7 +107,13 @@ class TopupService(BaseService):
                 auto_completed=False,
             )
 
-        request = await self.create_request(user_id, amount_rub, comment=comment, auto_complete=True)
+        request = await self.create_request(
+            user_id,
+            amount_rub,
+            comment=comment,
+            auto_complete=True,
+            provider_code="stub",
+        )
         return TopupCheckoutSession(
             request=request,
             provider="stub",
@@ -103,17 +129,28 @@ class TopupService(BaseService):
         comment: str | None = None,
         *,
         auto_complete: bool = True,
+        provider_code: str | None = None,
     ) -> TopupRequest:
         if amount_rub <= 0:
             raise ConflictError("Сумма пополнения должна быть больше нуля.")
-        request = TopupRequest(user_id=user_id, amount_rub=Decimal(amount_rub), user_comment=comment)
+        request = TopupRequest(
+            user_id=user_id,
+            amount_rub=Decimal(amount_rub),
+            user_comment=comment,
+            provider_code=(provider_code or self.resolved_provider()),
+        )
         self.session.add(request)
         await self.session.flush()
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="topup_created",
             message="Создан новый платёж на пополнение.",
-            payload={"topup_request_id": request.id, "user_id": user_id, "amount": str(amount_rub)},
+            payload={
+                "topup_request_id": request.id,
+                "user_id": user_id,
+                "amount": str(amount_rub),
+                "provider": request.provider_code,
+            },
         )
         if auto_complete:
             await self.approve(request.id, admin_id=None, comment="auto_stub")
@@ -162,7 +199,7 @@ class TopupService(BaseService):
             level=SystemEventLevel.INFO,
             event_type="topup_approved",
             message="Платёж на пополнение успешно подтверждён.",
-            payload={"topup_request_id": item.id},
+            payload={"topup_request_id": item.id, "provider": self._request_provider(item)},
             actor_admin_id=admin_id,
         )
         return item
@@ -185,7 +222,7 @@ class TopupService(BaseService):
             level=SystemEventLevel.INFO,
             event_type="topup_rejected",
             message="Платёж на пополнение отклонён.",
-            payload={"topup_request_id": item.id},
+            payload={"topup_request_id": item.id, "provider": self._request_provider(item)},
             actor_admin_id=admin_id,
         )
         return item
@@ -202,13 +239,13 @@ class TopupService(BaseService):
 
     async def check_checkout_status(self, request_id: str) -> TopupStatusSnapshot:
         request = await self.get_request(request_id)
-        provider = self.resolved_provider()
+        provider = self._request_provider(request)
 
         if request.status == TopupStatus.APPROVED:
             return TopupStatusSnapshot(
                 request=request,
                 provider=provider,
-                payment_url=None,
+                payment_url=request.external_payment_url,
                 external_status="approved",
                 is_paid=True,
                 is_final=True,
@@ -218,32 +255,42 @@ class TopupService(BaseService):
             return TopupStatusSnapshot(
                 request=request,
                 provider=provider,
-                payment_url=None,
+                payment_url=request.external_payment_url,
                 external_status=str(request.status),
                 is_paid=False,
                 is_final=True,
                 is_stub=False,
             )
-        if provider != "wata":
+        if provider != "yookassa":
             return TopupStatusSnapshot(
                 request=request,
                 provider=provider,
-                payment_url=None,
+                payment_url=request.external_payment_url,
                 external_status="stub" if provider == "stub" else "manual",
                 is_paid=provider == "stub",
                 is_final=provider == "stub",
                 is_stub=provider == "stub",
             )
 
-        transaction = await self._fetch_wata_transaction(request.id)
-        payment_url = await self._fetch_wata_payment_link(request.id)
-        external_status = self._normalize_wata_status(transaction.get("transactionStatus"))
+        if not request.external_payment_id:
+            return TopupStatusSnapshot(
+                request=request,
+                provider=provider,
+                payment_url=request.external_payment_url,
+                external_status="pending",
+                is_paid=False,
+                is_final=False,
+            )
+
+        payment = await self._fetch_yookassa_payment(request.external_payment_id)
+        payment_url = self._extract_yookassa_confirmation_url(payment) or request.external_payment_url
+        if payment_url and payment_url != request.external_payment_url:
+            request.external_payment_url = payment_url
+        external_status = self._normalize_yookassa_status(payment.get("status"))
 
         if external_status == "paid":
             if request.status == TopupStatus.NEW:
-                transaction_id = transaction.get("transactionId")
-                comment = f"wata:{transaction_id}" if transaction_id else "wata"
-                request = await self.approve(request.id, admin_id=None, comment=comment)
+                request = await self.approve(request.id, admin_id=None, comment=f"yookassa:{request.external_payment_id}")
             return TopupStatusSnapshot(
                 request=request,
                 provider=provider,
@@ -253,8 +300,9 @@ class TopupService(BaseService):
                 is_final=True,
             )
 
-        if external_status in {"declined", "expired"} and request.status == TopupStatus.NEW:
-            request = await self.reject(request.id, admin_id=None, comment=f"wata:{external_status}")
+        if external_status == "canceled" and request.status == TopupStatus.NEW:
+            cancellation_reason = str((payment.get("cancellation_details") or {}).get("reason") or "canceled")
+            request = await self.reject(request.id, admin_id=None, comment=f"yookassa:{cancellation_reason}")
 
         return TopupStatusSnapshot(
             request=request,
@@ -262,96 +310,105 @@ class TopupService(BaseService):
             payment_url=payment_url,
             external_status=external_status,
             is_paid=False,
-            is_final=external_status in {"declined", "expired"},
+            is_final=external_status == "canceled",
         )
 
-    def _is_wata_configured(self) -> bool:
-        return bool((self.settings.wata_api_base_url or "").strip() and (self.settings.wata_api_token or "").strip())
+    def _request_provider(self, request: TopupRequest) -> str:
+        provider = (request.provider_code or "").strip().lower()
+        if provider in {"manual", "stub", "yookassa"}:
+            return provider
+        return self.resolved_provider()
 
-    async def _create_wata_payment_link(self, request: TopupRequest) -> str:
+    def _is_yookassa_configured(self) -> bool:
+        return bool(
+            (self.settings.yookassa_api_base_url or "").strip()
+            and (self.settings.yookassa_shop_id or "").strip()
+            and (self.settings.yookassa_secret_key or "").strip()
+        )
+
+    async def _create_yookassa_payment(self, request: TopupRequest) -> tuple[str, str]:
         payload = {
-            "type": "OneTime",
-            "amount": float(Decimal(request.amount_rub)),
-            "currency": self.settings.default_currency,
-            "orderId": request.id,
+            "amount": {
+                "value": f"{Decimal(request.amount_rub):.2f}",
+                "currency": self.settings.default_currency,
+            },
+            "capture": True,
+            "confirmation": {
+                "type": "redirect",
+                "return_url": self._yookassa_return_url(),
+            },
             "description": f"ALTLINK balance top-up #{request.id}",
+            "metadata": {
+                "topup_request_id": request.id,
+                "user_id": request.user_id,
+            },
         }
-        if self.settings.wata_success_redirect_url:
-            payload["successRedirectUrl"] = self.settings.wata_success_redirect_url
-        if self.settings.wata_fail_redirect_url:
-            payload["failRedirectUrl"] = self.settings.wata_fail_redirect_url
 
-        async with self._wata_client() as client:
-            response = await client.post("/links", json=payload)
-            response.raise_for_status()
-            data = response.json()
-        url = (data or {}).get("url")
-        if not url:
-            raise ConflictError("WATA не вернула ссылку на оплату.")
-        return str(url)
-
-    async def _fetch_wata_transaction(self, order_id: str) -> dict:
-        async with self._wata_client() as client:
-            response = await client.get("/transactions", params={"orderId": order_id, "maxResultCount": 10})
-            response.raise_for_status()
-            data = response.json() or {}
-        items = data.get("items") or []
-        if not items:
-            return {}
-        items.sort(
-            key=lambda item: (
-                self._wata_status_priority(self._normalize_wata_status(item.get("transactionStatus"))),
-                item.get("createdAt") or "",
+        async with self._yookassa_client() as client:
+            response = await client.post(
+                "/payments",
+                json=payload,
+                headers={"Idempotence-Key": request.id},
             )
-        )
-        return items[0]
-
-    async def _fetch_wata_payment_link(self, order_id: str) -> str | None:
-        async with self._wata_client() as client:
-            response = await client.get("/links", params={"orderId": order_id, "maxResultCount": 10})
             response.raise_for_status()
             data = response.json() or {}
-        items = data.get("items") or []
-        if not items:
-            return None
-        latest = items[0]
-        url = latest.get("url")
-        return str(url) if url else None
 
-    def _normalize_wata_status(self, raw_status: object) -> str:
+        payment_id = str(data.get("id") or "").strip()
+        payment_url = self._extract_yookassa_confirmation_url(data)
+        if not payment_id or not payment_url:
+            raise ConflictError("YooKassa не вернула данные для оплаты.")
+        return payment_id, payment_url
+
+    async def _fetch_yookassa_payment(self, payment_id: str) -> dict:
+        async with self._yookassa_client() as client:
+            response = await client.get(f"/payments/{payment_id}")
+            response.raise_for_status()
+            return response.json() or {}
+
+    def _extract_yookassa_confirmation_url(self, payload: dict | None) -> str | None:
+        confirmation = (payload or {}).get("confirmation") or {}
+        url = confirmation.get("confirmation_url")
+        return str(url).strip() if url else None
+
+    def _normalize_yookassa_status(self, raw_status: object) -> str:
         normalized = str(raw_status or "").strip().lower()
-        if normalized in {"paid", "success", "succeeded"}:
+        if normalized == "succeeded":
             return "paid"
-        if normalized in {"declined", "failed", "cancelled", "canceled"}:
-            return "declined"
-        if normalized in {"expired"}:
-            return "expired"
-        if normalized in {"created", "pending", "processing"}:
+        if normalized in {"canceled", "cancelled"}:
+            return "canceled"
+        if normalized in {"pending", "waiting_for_capture"}:
             return "pending"
         return "pending"
 
-    def _wata_status_priority(self, status: str) -> int:
-        priorities = {
-            "paid": 0,
-            "pending": 1,
-            "declined": 2,
-            "expired": 3,
-        }
-        return priorities.get(status, 9)
+    def _yookassa_return_url(self) -> str:
+        custom = (self.settings.yookassa_return_url or "").strip()
+        if custom:
+            return custom
 
-    def _wata_headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.settings.wata_api_token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
+        bot_name = (self.settings.client_bot_name or "").strip().lstrip("@")
+        if bot_name and TELEGRAM_USERNAME_RE.fullmatch(bot_name):
+            return f"https://t.me/{bot_name}"
 
-    def _wata_base_url(self) -> str:
-        return (self.settings.wata_api_base_url or "https://api.wata.pro/api/h2h").rstrip("/")
+        backend_public_url = (self.settings.backend_public_url or "").strip()
+        parsed = urlparse(backend_public_url)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return backend_public_url.rstrip("/")
 
-    def _wata_client(self) -> httpx.AsyncClient:
+        return "https://t.me"
+
+    def _yookassa_base_url(self) -> str:
+        return (self.settings.yookassa_api_base_url or "https://api.yookassa.ru/v3").rstrip("/")
+
+    def _yookassa_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
-            base_url=self._wata_base_url(),
-            headers=self._wata_headers(),
-            timeout=self.settings.wata_timeout_seconds,
+            base_url=self._yookassa_base_url(),
+            auth=httpx.BasicAuth(
+                (self.settings.yookassa_shop_id or "").strip(),
+                (self.settings.yookassa_secret_key or "").strip(),
+            ),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            timeout=self.settings.yookassa_timeout_seconds,
         )

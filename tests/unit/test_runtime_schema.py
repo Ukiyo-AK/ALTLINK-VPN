@@ -116,3 +116,58 @@ def test_enum_values_tracks_longest_enum_member_length():
     enum_type = enum_values(PlanCode)
 
     assert enum_type.length == max(len(member.value) for member in PlanCode)
+
+
+@pytest.mark.asyncio
+async def test_runtime_schema_adds_missing_topup_provider_columns(tmp_path: Path):
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy_topups.db'}"
+    engine = create_async_engine(database_url, future=True)
+
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                telegram_id BIGINT NOT NULL,
+                username VARCHAR(255),
+                first_name VARCHAR(255),
+                last_name VARCHAR(255),
+                language_code VARCHAR(16),
+                balance_rub NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                status VARCHAR(16) NOT NULL
+            )
+            """
+        )
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE topup_requests (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                user_id TEXT NOT NULL,
+                amount_rub NUMERIC(12, 2) NOT NULL,
+                status VARCHAR(16) NOT NULL,
+                user_comment TEXT,
+                admin_comment TEXT,
+                approved_by_admin_id TEXT,
+                approved_at DATETIME,
+                rejected_at DATETIME,
+                canceled_at DATETIME
+            )
+            """
+        )
+
+    await ensure_runtime_schema(engine)
+
+    async with engine.begin() as connection:
+        column_names = await connection.run_sync(
+            lambda sync_connection: {column["name"] for column in inspect(sync_connection).get_columns("topup_requests")}
+        )
+
+    await engine.dispose()
+
+    assert "provider_code" in column_names
+    assert "external_payment_id" in column_names
+    assert "external_payment_url" in column_names
