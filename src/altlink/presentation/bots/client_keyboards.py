@@ -14,10 +14,7 @@ from altlink.domain.plans import (
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="Меню"), KeyboardButton(text="Поддержка")],
-            [KeyboardButton(text="Профиль"), KeyboardButton(text="Сайт")],
-        ],
+        keyboard=[[KeyboardButton(text="Меню"), KeyboardButton(text="Профиль")]],
         input_field_placeholder="Выберите раздел",
         is_persistent=True,
         resize_keyboard=True,
@@ -60,6 +57,14 @@ def promo_onboarding_skip_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Пропустить", callback_data="client:onboarding_promo_skip", style="primary")
     builder.adjust(1)
+    return builder
+
+
+def portal_login_actions(token: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Подтвердить вход", callback_data=f"client:portal_login_confirm:{token}", style="success")
+    builder.button(text="Отменить", callback_data=f"client:portal_login_cancel:{token}", style="danger")
+    builder.adjust(1, 1)
     return builder
 
 

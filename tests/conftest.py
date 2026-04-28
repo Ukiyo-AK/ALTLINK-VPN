@@ -23,6 +23,7 @@ from altlink.application.services.dashboard import DashboardService
 from altlink.application.services.monitoring import MonitoringService
 from altlink.application.services.notifications import NotificationService
 from altlink.application.services.online import OnlineService
+from altlink.application.services.portal_auth import PortalAuthService
 from altlink.application.services.promos import PromoService
 from altlink.application.services.support import SupportService
 from altlink.application.services.topups import TopupService
@@ -431,6 +432,7 @@ class TestServices:
             backups = BackupService(session, self.settings, self.remnawave)
             catalog = CatalogService(session, self.settings, self.remnawave)
             online = OnlineService(session, self.settings, self.remnawave)
+            portal_auth = PortalAuthService(session, self.settings, self.remnawave)
             support = SupportService(session, self.settings, self.remnawave)
             promos = PromoService(session=session, settings=self.settings, remnawave=self.remnawave, accounts=accounts)
             billing = BillingService(
@@ -460,6 +462,7 @@ class TestServices:
                 backups=backups,
                 catalog=catalog,
                 online=online,
+                portal_auth=portal_auth,
                 support=support,
                 promos=promos,
                 billing=billing,

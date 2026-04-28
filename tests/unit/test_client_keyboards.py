@@ -14,6 +14,7 @@ from altlink.presentation.bots.client_keyboards import (
     menu_actions,
     plan_actions,
     plan_period_actions,
+    portal_login_actions,
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
     subscription_actions,
@@ -34,7 +35,7 @@ def inline_buttons(markup) -> list[dict]:
 
 def test_main_menu_matches_new_navigation():
     markup = main_menu()
-    assert keyboard_rows(markup) == [["Меню", "Поддержка"], ["Профиль", "Сайт"]]
+    assert keyboard_rows(markup) == [["Меню", "Профиль"]]
     assert markup.is_persistent is True
 
 
@@ -101,6 +102,15 @@ def test_promo_onboarding_skip_actions_keep_single_skip_button():
     markup = promo_onboarding_skip_actions().as_markup()
     flat = [text for row in inline_rows(markup) for text in row]
     assert flat == ["Пропустить"]
+
+
+def test_portal_login_actions_include_confirm_and_cancel():
+    markup = portal_login_actions("demo-token").as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+    buttons = inline_buttons(markup)
+    assert flat == ["Подтвердить вход", "Отменить"]
+    assert next(button for button in buttons if button["text"] == "Подтвердить вход")["style"] == "success"
+    assert next(button for button in buttons if button["text"] == "Отменить")["style"] == "danger"
 
 
 def test_subscription_actions_render_cancel_and_hide_traffic():

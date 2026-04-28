@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, JSON, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from altlink.domain.enums import NotificationStatus, NotificationType, SupportRequestStatus, SystemEventLevel
@@ -86,6 +86,22 @@ class OnlineSessionCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     user: Mapped["User | None"] = relationship(back_populates="online_sessions")
     server: Mapped["Server | None"] = relationship(back_populates="online_sessions")
+
+
+class PortalLoginAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "portal_login_attempts"
+
+    token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    approved_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    approved_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    approved_user: Mapped["User | None"] = relationship(foreign_keys=[approved_user_id])
 
 
 class SystemSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):

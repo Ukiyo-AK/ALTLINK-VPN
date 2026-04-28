@@ -34,6 +34,7 @@ from altlink.presentation.bots.client_keyboards import (
     menu_actions,
     plan_actions,
     plan_period_actions,
+    portal_login_actions,
     profile_actions,
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
@@ -311,6 +312,37 @@ def connection_help_url(settings) -> str | None:
     if parsed.scheme in {"http", "https"} and parsed.netloc:
         return f"{public_url.rstrip('/')}/help/connect"
     return None
+
+
+def portal_login_request_text(settings) -> str:
+    portal_url = portal_public_url(settings)
+    tail = f"\n\nПосле подтверждения сайт автоматически завершит вход: {portal_url}" if portal_url else ""
+    return (
+        "Вход в личный кабинет\n\n"
+        "Подтвердите вход в сайт через этот Telegram-аккаунт. "
+        "Если это именно ваш запрос, нажмите кнопку ниже."
+        f"{tail}"
+    )
+
+
+def portal_login_confirmed_text(settings) -> str:
+    portal_url = portal_public_url(settings)
+    tail = f"\n\nЕсли вкладка не переключилась автоматически, откройте кабинет вручную: {portal_url}" if portal_url else ""
+    return (
+        "Вход подтверждён.\n\n"
+        "Вернитесь во вкладку сайта. Личный кабинет должен открыться автоматически."
+        f"{tail}"
+    )
+
+
+def portal_login_canceled_text(settings) -> str:
+    portal_url = portal_public_url(settings)
+    tail = f"\n\nЕсли нужно, вернитесь на сайт и начните вход заново: {portal_url}" if portal_url else ""
+    return (
+        "Вход для сайта отменён.\n\n"
+        "Текущая попытка входа больше не активна."
+        f"{tail}"
+    )
 
 
 def show_metered_usage(subscription) -> bool:
@@ -616,19 +648,17 @@ def promo_code_prompt_text(*, onboarding: bool = False) -> str:
 
 def access_links_text(settings) -> str:
     links: list[str] = []
-    bot_link = bot_public_url(settings)
     site_link = site_public_url(settings)
     portal_link = portal_public_url(settings)
-    if bot_link:
-        links.append(f"Бот: {bot_link}")
     if site_link:
         links.append(f"Сайт: {site_link}")
     if portal_link:
         links.append(f"Кабинет: {portal_link}")
-    return "\n".join(links) if links else "Ссылки будут доступны после настройки публичных адресов."
+    return "\n".join(links) if links else "Ссылки появятся после настройки публичных адресов."
 
 
 def home_text(user, subscription, settings, latest_subscription=None) -> str:
+    links = access_links_text(settings)
     if subscription:
         lines = [
             "🏠 Главное меню",
@@ -639,52 +669,57 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
         ]
         if subscription.notes:
             lines.extend(["", subscription.notes])
+        if links:
+            lines.extend(["", links])
         lines.append("")
         lines.append("Выберите нужный раздел кнопками ниже.")
         return "\n".join(lines)
 
     if user.status == "blocked" or (latest_subscription and getattr(latest_subscription, "status", None) == "blocked"):
-        return (
-            "🏠 Главное меню\n\n"
-            f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n"
-            "Доступ сейчас остановлен. Обычно это означает, что закончился баланс для продления.\n\n"
-            "Пополните баланс и заново выберите тариф или включите продление.\n\n"
-            f"{access_links_text(settings)}"
-        )
+        lines = [
+            "🏠 Главное меню",
+            "",
+            f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+            "Доступ сейчас остановлен. Обычно это означает, что закончился баланс для продления.",
+            "",
+            "Пополните баланс и заново выберите тариф или включите продление.",
+        ]
+        if links:
+            lines.extend(["", links])
+        return "\n".join(lines)
 
-    return (
-        "🏠 Главное меню\n\n"
-        f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n"
-        "Тариф пока не выбран. Можно запустить тест на 2 дня или сразу оформить Start / Pro.\n\n"
-        f"{access_links_text(settings)}"
-    )
+    lines = [
+        "🏠 Главное меню",
+        "",
+        f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+        "Тариф пока не выбран. Можно запустить тест на 2 дня или сразу оформить Start / Pro.",
+    ]
+    if links:
+        lines.extend(["", links])
+    return "\n".join(lines)
 
 
-def profile_text(user, subscription) -> str:
+def profile_text(user, subscription, settings) -> str:
     plan_name = subscription.plan.name if subscription and subscription.plan else "не выбран"
-    next_billing = subscription.next_billing_at.strftime("%d.%m.%Y %H:%M") if subscription else "—"
     assigned = user.assigned_server.name if getattr(user, "assigned_server", None) else "ещё не назначен"
-    username_line = f"Username: @{user.username}\n" if user.username else ""
-    auto_renew = (
-        "включено"
-        if subscription and subscription.plan and not subscription.plan.is_trial and subscription.auto_renew
-        else "отключено"
-    )
-    referral_line = f"Реферальный код: {user.referral_code}\n" if getattr(user, "referral_code", None) else ""
-    return (
-        "👤 Профиль\n\n"
-        f"Telegram ID: {user.telegram_id}\n"
-        f"{username_line}"
-        f"{referral_line}"
-        f"Статус: {user.status}\n"
-        f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n"
-        f"Тариф: {plan_name}\n"
-        f"Формат списания: {billing_cycle_label(subscription.plan if subscription else None)}\n"
-        f"Автопродление: {auto_renew}\n"
-        f"Следующее списание: {next_billing}\n"
-        f"Лимит устройств: {device_limit_label(subscription.plan if subscription else None)}\n"
-        f"Выделенный сервер: {assigned}"
-    )
+    links = access_links_text(settings)
+    lines = [
+        "👤 Профиль",
+        "",
+        f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+        f"Тариф: {plan_name}",
+    ]
+    if subscription:
+        if subscription.plan and not subscription.plan.is_trial:
+            auto_renew = "включено" if subscription.auto_renew else "отключено"
+            lines.append(f"Автопродление: {auto_renew}")
+            lines.append(f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
+        else:
+            lines.append(f"Действует до: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
+    lines.append(f"Сервер: {assigned}")
+    if links:
+        lines.extend(["", links])
+    return "\n".join(lines)
 
 
 def subscription_text(bundle: dict, user_servers: list, settings, latest_subscription=None, activity_summary: dict | None = None) -> str:
@@ -934,7 +969,7 @@ async def show_profile(target: Message | CallbackQuery, container: AppContainer,
     subscription = await hub.accounts.get_current_subscription(user.id)
     await send_card_with_optional_media(
         target,
-        profile_text(user, subscription),
+        profile_text(user, subscription, container.settings),
         primary_markup=profile_actions(
             agreement_url=agreement_url(container.settings),
             privacy_url=privacy_url(container.settings),
@@ -1085,6 +1120,46 @@ async def start(message: Message, container: AppContainer):
     async with container.hub() as hub:
         provisional_user = await ensure_user(message.from_user, container, hub)
         start_payload = (message.text or "").split(maxsplit=1)
+        if len(start_payload) > 1 and start_payload[1].startswith("login_"):
+            token = start_payload[1].removeprefix("login_").strip()
+            attempt = await hub.portal_auth.get_login_attempt(token)
+            status_name = hub.portal_auth.login_attempt_status(attempt)
+            if attempt is None:
+                await answer_or_edit(message, "Попытка входа не найдена. Вернитесь на сайт и начните вход заново.")
+                return
+            if status_name == "expired":
+                await answer_or_edit(
+                    message,
+                    "Эта попытка входа уже истекла. Вернитесь на сайт и создайте новую попытку входа.",
+                )
+                return
+            if status_name == "completed":
+                await answer_or_edit(
+                    message,
+                    "Эта попытка входа уже использована. Если нужно, откройте сайт и начните вход заново.",
+                )
+                return
+            if status_name == "canceled":
+                await answer_or_edit(
+                    message,
+                    "Эта попытка входа уже отменена. Вернитесь на сайт и создайте новую попытку входа.",
+                )
+                return
+            if status_name == "approved" and attempt.approved_user_id == provisional_user.id:
+                await answer_or_edit(message, portal_login_confirmed_text(container.settings))
+                return
+            if status_name == "approved" and attempt.approved_user_id != provisional_user.id:
+                await answer_or_edit(
+                    message,
+                    "Эта попытка входа уже подтверждена другим Telegram-аккаунтом. Вернитесь на сайт и создайте новую попытку входа.",
+                )
+                return
+            await answer_or_edit(
+                message,
+                portal_login_request_text(container.settings),
+                reply_markup=portal_login_actions(token).as_markup(),
+            )
+            return
         if len(start_payload) > 1 and start_payload[1].startswith("ref_"):
             await hub.accounts.bind_referrer(provisional_user.id, start_payload[1].removeprefix("ref_"))
         user = await ensure_client_access(message, container, hub)
@@ -1103,6 +1178,31 @@ async def start(message: Message, container: AppContainer):
         latest_subscription=latest_subscription,
         as_new_message=True,
     )
+
+
+@router.callback_query(F.data.startswith("client:portal_login_confirm:"))
+async def portal_login_confirm(callback: CallbackQuery, container: AppContainer):
+    token = (callback.data or "").split(":", 3)[-1].strip()
+    async with container.hub() as hub:
+        user = await ensure_user(callback.from_user, container, hub)
+        try:
+            await hub.portal_auth.approve_login_attempt(token, user.id)
+        except (ConflictError, NotFoundError) as exc:
+            await answer_or_edit(callback, str(exc))
+            return
+    await answer_or_edit(callback, portal_login_confirmed_text(container.settings))
+
+
+@router.callback_query(F.data.startswith("client:portal_login_cancel:"))
+async def portal_login_cancel(callback: CallbackQuery, container: AppContainer):
+    token = (callback.data or "").split(":", 3)[-1].strip()
+    async with container.hub() as hub:
+        try:
+            await hub.portal_auth.cancel_login_attempt(token)
+        except (ConflictError, NotFoundError) as exc:
+            await answer_or_edit(callback, str(exc))
+            return
+    await answer_or_edit(callback, portal_login_canceled_text(container.settings))
 
 
 @router.message(F.text.func(lambda value: resolve_main_action(value) == "menu"))

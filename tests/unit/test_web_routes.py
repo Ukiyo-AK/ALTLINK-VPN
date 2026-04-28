@@ -13,6 +13,10 @@ from altlink.presentation.web.routes import (
     is_foreign_latency_target,
     latency_probe,
     load_document_text,
+    portal_bot_login_url,
+    portal_login_capabilities,
+    portal_login_qr_data_url,
+    portal_login_status,
     probe_server_latency,
     resolve_document_path,
     server_probe_port,
@@ -228,3 +232,67 @@ async def test_latency_probe_can_limit_to_requested_servers_and_include_local(mo
     assert b"3500" in response.body
     assert b"DE Node" not in response.body
     assert b"NL Node" not in response.body
+
+
+def test_portal_login_capabilities_require_valid_bot_configuration():
+    settings = SimpleNamespace(
+        client_bot_token="",
+        client_bot_name="@altlink_bot",
+        backend_public_url="https://altlink.online",
+        debug=False,
+    )
+    enabled, issue, dev_login_enabled = portal_login_capabilities(settings)
+
+    assert enabled is False
+    assert "CLIENT_BOT_TOKEN" in str(issue)
+    assert dev_login_enabled is False
+
+
+def test_portal_bot_login_helpers_build_deeplink_and_qr():
+    settings = SimpleNamespace(client_bot_name="@altlink_bot")
+
+    deep_link = portal_bot_login_url(settings, "demo-token")
+    qr_data_url = portal_login_qr_data_url(deep_link)
+
+    assert deep_link == "https://t.me/altlink_bot?start=login_demo-token"
+    assert qr_data_url is not None
+    assert qr_data_url.startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_portal_login_status_returns_missing_without_attempt_token(test_services):
+    request = SimpleNamespace(
+        session={},
+        app=SimpleNamespace(state=SimpleNamespace(container=test_services)),
+    )
+
+    response = await portal_login_status(request)
+
+    assert response.status_code == 200
+    assert b"missing" in response.body
+
+
+@pytest.mark.asyncio
+async def test_portal_login_status_consumes_approved_attempt_and_sets_session(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=41001,
+            username="portal_status",
+            first_name="Portal",
+            last_name="Status",
+            language_code="ru",
+        )
+        attempt = await hub.portal_auth.create_login_attempt()
+        await hub.portal_auth.approve_login_attempt(attempt.token, user.id)
+
+    request = SimpleNamespace(
+        session={"portal_login_attempt_token": attempt.token},
+        app=SimpleNamespace(state=SimpleNamespace(container=test_services)),
+    )
+
+    response = await portal_login_status(request)
+
+    assert response.status_code == 200
+    assert b"approved" in response.body
+    assert request.session["portal_user_id"] == user.id
+    assert "portal_login_attempt_token" not in request.session

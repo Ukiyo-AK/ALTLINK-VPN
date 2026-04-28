@@ -42,6 +42,8 @@ DOCUMENT_KEYWORDS = {
     "agreement": ("agreement", "user_agreement", "соглаш"),
     "privacy": ("privacy", "policy", "конфиден", "privacy_policy"),
 }
+TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
+PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
 
 
 def latency_target_label() -> str:
@@ -97,30 +99,52 @@ def portal_login_redirect() -> RedirectResponse:
 
 
 def portal_login_capabilities(settings) -> tuple[bool, str | None, bool]:
+    bot_name = (settings.client_bot_name or "").strip().lstrip("@")
     parsed = urlparse(settings.backend_public_url)
     host = (parsed.hostname or "").lower()
     scheme = (parsed.scheme or "").lower()
     local_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+    dev_login_enabled = settings.debug or host in local_hosts or scheme != "https" or not host
 
-    if not host:
+    if not settings.client_bot_token:
         return (
             False,
-            "Не задан BACKEND_PUBLIC_URL. Укажите публичный адрес сайта, чтобы Telegram Login Widget смог работать.",
-            True,
+            "Не задан CLIENT_BOT_TOKEN. Настройте клиентский бот, чтобы подтверждать вход через Telegram.",
+            dev_login_enabled,
         )
-    if host in local_hosts:
+    if not bot_name or not TELEGRAM_USERNAME_RE.fullmatch(bot_name):
         return (
             False,
-            "Telegram Login Widget не работает с localhost и локальными IP. Для локальной разработки используйте вход по Telegram ID ниже.",
-            True,
+            "Не задан корректный username клиентского Telegram-бота. Укажите CLIENT_BOT_NAME в формате @your_bot.",
+            dev_login_enabled,
         )
-    if scheme != "https":
-        return (
-            False,
-            "Telegram Login Widget требует публичный HTTPS-домен. Переключите BACKEND_PUBLIC_URL на https://ваш-домен.",
-            settings.debug,
-        )
-    return True, None, settings.debug
+    return True, None, dev_login_enabled
+
+
+def portal_bot_login_url(settings, token: str) -> str | None:
+    bot_name = (settings.client_bot_name or "").strip().lstrip("@")
+    if not bot_name or not TELEGRAM_USERNAME_RE.fullmatch(bot_name):
+        return None
+    return f"https://t.me/{bot_name}?start=login_{token}"
+
+
+def portal_login_qr_data_url(payload: str | None) -> str | None:
+    if not payload:
+        return None
+    return f"data:image/png;base64,{base64.b64encode(render_qr_png(payload)).decode('ascii')}"
+
+
+async def ensure_portal_login_attempt(request: Request, hub):
+    session_token = request.session.get(PORTAL_LOGIN_ATTEMPT_SESSION_KEY)
+    if session_token:
+        attempt = await hub.portal_auth.get_login_attempt(session_token)
+        status = hub.portal_auth.login_attempt_status(attempt)
+        if status in {"pending", "approved"}:
+            return attempt
+
+    attempt = await hub.portal_auth.create_login_attempt()
+    request.session[PORTAL_LOGIN_ATTEMPT_SESSION_KEY] = attempt.token
+    return attempt
 
 
 async def resolve_admin(request: Request, hub):
@@ -400,7 +424,7 @@ async def landing_page(request: Request):
         "landing.html",
         title="ALTLINK VPN",
         portal_plan_groups=group_portal_plans(plans),
-        portal_login_url="/portal/login",
+        portal_login_url="/portal/login?autostart=1",
         connection_help_url=f"{settings.backend_public_url.rstrip('/')}/help/connect",
         agreement_page_url=f"{settings.backend_public_url.rstrip('/')}/legal/agreement",
         privacy_page_url=f"{settings.backend_public_url.rstrip('/')}/legal/privacy",
@@ -906,18 +930,70 @@ async def portal_login_page(request: Request):
     if request.session.get("portal_user_id"):
         return RedirectResponse("/portal", status_code=303)
     settings = request.app.state.settings
-    widget_enabled, widget_issue, dev_login_enabled = portal_login_capabilities(settings)
+    login_enabled, login_issue, dev_login_enabled = portal_login_capabilities(settings)
+    attempt = None
+    deep_link = None
+    qr_data_url = None
+    if login_enabled:
+        async with request.app.state.container.hub() as hub:
+            attempt = await ensure_portal_login_attempt(request, hub)
+        deep_link = portal_bot_login_url(settings, attempt.token) if attempt is not None else None
+        qr_data_url = portal_login_qr_data_url(deep_link)
     return render(
         request,
         "portal_login.html",
         title="Вход в кабинет",
         telegram_login_bot=settings.client_bot_name.lstrip("@"),
-        backend_public_url=settings.backend_public_url.rstrip("/"),
-        telegram_widget_enabled=widget_enabled,
-        telegram_widget_issue=widget_issue,
+        telegram_login_enabled=login_enabled,
+        telegram_login_issue=login_issue,
+        telegram_login_url=deep_link,
+        telegram_login_qr_data_url=qr_data_url,
+        telegram_login_status_url="/portal/login/status",
+        telegram_login_attempt_expires_at=attempt.expires_at.isoformat() if attempt is not None else None,
         dev_login_enabled=dev_login_enabled,
-        portal_domain=urlparse(settings.backend_public_url).hostname or settings.backend_public_url,
     )
+
+
+@router.get("/portal/login/status")
+async def portal_login_status(request: Request) -> JSONResponse:
+    token = request.session.get(PORTAL_LOGIN_ATTEMPT_SESSION_KEY)
+    if not token:
+        return JSONResponse(
+            {"ok": False, "status": "missing", "message": "Попытка входа не найдена. Обновите страницу и начните заново."},
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+        )
+
+    async with request.app.state.container.hub() as hub:
+        attempt = await hub.portal_auth.get_login_attempt(token)
+        status_name = hub.portal_auth.login_attempt_status(attempt)
+        if status_name == "approved":
+            user = await hub.portal_auth.consume_login_attempt(token)
+            request.session["portal_user_id"] = user.id
+            request.session.pop(PORTAL_LOGIN_ATTEMPT_SESSION_KEY, None)
+            return JSONResponse(
+                {"ok": True, "status": "approved", "redirect_url": "/portal"},
+                headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+            )
+
+        if status_name in {"completed", "expired", "canceled", "missing"}:
+            request.session.pop(PORTAL_LOGIN_ATTEMPT_SESSION_KEY, None)
+
+        messages = {
+            "pending": "Ожидаем подтверждение входа в Telegram.",
+            "completed": "Попытка входа уже использована. Обновите страницу, чтобы начать заново.",
+            "expired": "Время ожидания истекло. Обновите страницу, чтобы создать новый вход.",
+            "canceled": "Вход был отменён в Telegram. Обновите страницу и попробуйте снова.",
+            "missing": "Попытка входа не найдена. Обновите страницу и начните заново.",
+        }
+        return JSONResponse(
+            {
+                "ok": status_name == "pending",
+                "status": status_name,
+                "message": messages.get(status_name, "Не удалось определить состояние входа."),
+                "expires_at": attempt.expires_at.isoformat() if attempt is not None else None,
+            },
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+        )
 
 
 @router.get("/portal/auth/telegram")
@@ -952,7 +1028,7 @@ async def portal_dev_login(request: Request):
     settings = request.app.state.settings
     _, _, dev_login_enabled = portal_login_capabilities(settings)
     if not dev_login_enabled:
-        set_flash(request, "Локальный вход отключён. Используйте Telegram Login Widget.", "danger")
+        set_flash(request, "Локальный вход отключён. Подтвердите вход через Telegram-бота.", "danger")
         return RedirectResponse("/portal/login", status_code=303)
 
     try:

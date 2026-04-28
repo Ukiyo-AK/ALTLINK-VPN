@@ -14,6 +14,7 @@ from altlink.application.services.dashboard import DashboardService
 from altlink.application.services.monitoring import MonitoringService
 from altlink.application.services.notifications import NotificationService
 from altlink.application.services.online import OnlineService
+from altlink.application.services.portal_auth import PortalAuthService
 from altlink.application.services.promos import PromoService
 from altlink.application.services.support import SupportService
 from altlink.application.services.topups import TopupService
@@ -33,6 +34,7 @@ class ServiceHub:
         self.backups = BackupService(session, settings, remnawave)
         self.catalog = CatalogService(session, settings, remnawave)
         self.online = OnlineService(session, settings, remnawave)
+        self.portal_auth = PortalAuthService(session, settings, remnawave)
         self.support = SupportService(session, settings, remnawave)
         self.promos = PromoService(session=session, settings=settings, remnawave=remnawave, accounts=self.accounts)
         self.billing = BillingService(

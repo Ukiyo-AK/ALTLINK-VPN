@@ -13,6 +13,7 @@ from altlink.infrastructure.db.models.catalog import Server, ServerInbound, User
 from altlink.infrastructure.db.models.ops import (
     Notification,
     OnlineSessionCache,
+    PortalLoginAttempt,
     SupportRequest,
     SystemEvent,
     SystemSetting,
@@ -25,6 +26,7 @@ __all__ = [
     "Base",
     "Notification",
     "OnlineSessionCache",
+    "PortalLoginAttempt",
     "Plan",
     "PromoCode",
     "PromoCodeRedemption",

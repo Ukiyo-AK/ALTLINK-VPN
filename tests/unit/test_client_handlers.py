@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -102,6 +103,25 @@ async def test_ensure_client_access_shows_promo_step_after_registration_and_chan
 
 
 @pytest.mark.asyncio
+async def test_start_with_portal_login_token_shows_confirmation_prompt(test_services):
+    message = DummyMessage(text="/start login_demo-token", user_id=21008)
+
+    async with test_services.hub() as hub:
+        attempt = await hub.portal_auth.create_login_attempt()
+        attempt.token = "demo-token"
+
+    await client_handlers.start(message, test_services)
+
+    assert len(message.answers) == 1
+    assert "Telegram" in str(message.answers[0]["text"])
+    markup = message.answers[0]["reply_markup"]
+    assert markup is not None
+    callback_data = [button.callback_data for row in markup.inline_keyboard for button in row]
+    assert "client:portal_login_confirm:demo-token" in callback_data
+    assert "client:portal_login_cancel:demo-token" in callback_data
+
+
+@pytest.mark.asyncio
 async def test_dispatch_menu_button_routes_to_main_action(monkeypatch):
     bot = Bot("123456:ABCDEF")
     dispatcher = Dispatcher()
@@ -164,6 +184,44 @@ def test_share_vpn_url_skips_invalid_targets():
 
     assert client_handlers.share_vpn_target_url(settings) is None
     assert client_handlers.share_vpn_url(settings) is None
+
+
+def test_home_text_includes_site_links_in_main_menu():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+    user = SimpleNamespace(balance_rub=Decimal("199.00"), status="active")
+    subscription = SimpleNamespace(
+        plan=SimpleNamespace(name="Pro", period_days=30),
+        notes=None,
+    )
+
+    text = client_handlers.home_text(user, subscription, settings)
+
+    assert "Сайт: https://altlink.online" in text
+    assert "Кабинет: https://altlink.online/portal" in text
+
+
+def test_profile_text_keeps_only_key_details_and_links():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+    user = SimpleNamespace(
+        balance_rub=Decimal("99.00"),
+        assigned_server=SimpleNamespace(name="NL Node"),
+    )
+    subscription = SimpleNamespace(
+        plan=SimpleNamespace(name="Pro", is_trial=False, period_days=30),
+        auto_renew=True,
+        next_billing_at=datetime(2026, 1, 1, 12, 0, 0),
+    )
+
+    text = client_handlers.profile_text(user, subscription, settings)
+
+    assert "Баланс: 99.00 ₽" in text
+    assert "Тариф: Pro" in text
+    assert "Сервер: NL Node" in text
+    assert "Сайт: https://altlink.online" in text
+    assert "Кабинет: https://altlink.online/portal" in text
+    assert "Telegram ID" not in text
+    assert "Формат списания" not in text
+    assert "Лимит устройств" not in text
 
 
 @pytest.mark.asyncio

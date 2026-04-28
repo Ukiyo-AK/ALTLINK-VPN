@@ -27,28 +27,57 @@
       <div class="stack">
         <h1>Вход через Telegram</h1>
         <p class="muted">
-          Для верификации на сайте используется официальный Telegram Login Widget.
-          Это даёт один и тот же `telegram_id` для сайта и бота, поэтому профиль,
-          баланс, тестовый период и конфиги синхронизируются автоматически.
+          Вход подтверждается прямо в клиентском Telegram-боте. На телефоне достаточно нажать кнопку ниже,
+          а на ПК можно либо открыть Telegram Desktop, либо отсканировать QR код телефоном.
         </p>
       </div>
 
-      {% if telegram_widget_enabled %}
+      {% if telegram_login_enabled and telegram_login_url %}
+      <div class="grid-two">
+        <article class="panel stack">
+          <span class="badge gold">Телефон</span>
+          <h2>Откройте бота</h2>
+          <p class="muted">
+            Нажмите кнопку, перейдите в <code>@{{ telegram_login_bot }}</code> и подтвердите вход.
+          </p>
+          <a class="button full" href="{{ telegram_login_url }}" id="portal-telegram-open" target="_blank" rel="noreferrer">
+            Открыть Telegram и подтвердить вход
+          </a>
+          <div class="muted">
+            Если Telegram уже открыт на этом устройстве, подтверждение займёт пару секунд.
+          </div>
+        </article>
+
+        <article class="panel stack">
+          <span class="badge">ПК</span>
+          <h2>Сканируйте QR</h2>
+          <p class="muted">
+            Откройте камеру телефона или Telegram и отсканируйте код. Он ведёт в того же бота с одноразовой попыткой входа.
+          </p>
+          {% if telegram_login_qr_data_url %}
+          <img
+            src="{{ telegram_login_qr_data_url }}"
+            alt="QR для входа через Telegram"
+            style="width: min(18rem, 100%); aspect-ratio: 1; object-fit: contain; align-self: center; border-radius: 1rem; background: #fff; padding: 0.8rem;"
+          >
+          {% endif %}
+          <a class="button ghost full" href="{{ telegram_login_url }}" target="_blank" rel="noreferrer">
+            Открыть Telegram Desktop
+          </a>
+        </article>
+      </div>
+
       <div class="panel stack">
-        <script async src="https://telegram.org/js/telegram-widget.js?22"
-                data-telegram-login="{{ telegram_login_bot }}"
-                data-size="large"
-                data-radius="12"
-                data-auth-url="{{ backend_public_url }}/portal/auth/telegram"
-                data-request-access="write"></script>
-        <div class="muted">
-          Если Telegram показывает ошибку <strong>Bot domain invalid</strong>, откройте BotFather для клиентского бота
-          и выполните <code>/setdomain</code>, указав домен <code>{{ portal_domain }}</code>.
+        <span class="badge warning">Статус входа</span>
+        <strong id="portal-login-status">Ожидаем подтверждение в Telegram…</strong>
+        <div class="muted" id="portal-login-hint">
+          После подтверждения сайт сам завершит вход и откроет личный кабинет.
         </div>
+        <a class="button ghost compact" href="/portal/login" id="portal-login-reload" style="display: none;">Создать новую попытку входа</a>
       </div>
       {% else %}
       <div class="alert warning">
-        {{ telegram_widget_issue }}
+        {{ telegram_login_issue }}
       </div>
       {% endif %}
 
@@ -57,8 +86,8 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <h2>Локальный вход</h2>
         <p class="muted">
-          Этот режим нужен для локальной разработки, когда сайт открыт на <code>localhost</code> и Telegram Login Widget не может
-          проверить домен. Введите свой Telegram ID, чтобы сайт и бот продолжили работать с одним и тем же аккаунтом.
+          Этот режим нужен для локальной разработки, когда сайт открыт на <code>localhost</code> или без публичного HTTPS.
+          Введите свой Telegram ID, чтобы сайт и бот продолжили работать с одним и тем же аккаунтом.
         </p>
         <label>
           <span>Telegram ID</span>
@@ -74,5 +103,69 @@
       </div>
     </section>
   </div>
+
+  {% if telegram_login_enabled and telegram_login_url %}
+  <script>
+    (() => {
+      const statusNode = document.getElementById("portal-login-status");
+      const hintNode = document.getElementById("portal-login-hint");
+      const reloadLink = document.getElementById("portal-login-reload");
+      const statusUrl = {{ telegram_login_status_url | tojson }};
+      const deepLink = {{ telegram_login_url | tojson }};
+
+      if (!statusNode || !hintNode || !statusUrl) {
+        return;
+      }
+
+      const showReload = () => {
+        if (reloadLink) {
+          reloadLink.style.display = "inline-flex";
+        }
+      };
+
+      const poll = async () => {
+        try {
+          const response = await fetch(`${statusUrl}?ts=${Date.now()}`, {
+            cache: "no-store",
+            headers: { "X-Requested-With": "portal-login-poll" },
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const payload = await response.json();
+          if (payload.status === "approved" && payload.redirect_url) {
+            statusNode.textContent = "Вход подтверждён. Открываем кабинет…";
+            hintNode.textContent = "Если переход не сработал автоматически, страница обновится сама.";
+            window.location.href = payload.redirect_url;
+            return;
+          }
+
+          statusNode.textContent = payload.message || "Ожидаем подтверждение в Telegram…";
+          if (payload.status === "pending") {
+            window.setTimeout(poll, 2000);
+            return;
+          }
+
+          hintNode.textContent = "Если нужно, создайте новую попытку входа и подтвердите её в боте.";
+          showReload();
+        } catch (error) {
+          statusNode.textContent = "Не удалось проверить состояние входа.";
+          hintNode.textContent = "Проверьте соединение и попробуйте ещё раз, либо создайте новую попытку входа.";
+          showReload();
+        }
+      };
+
+      const mobileQuery = window.matchMedia ? window.matchMedia("(max-width: 760px)") : null;
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("autostart") === "1" && mobileQuery && mobileQuery.matches && deepLink) {
+        window.setTimeout(() => {
+          window.location.href = deepLink;
+        }, 250);
+      }
+
+      poll();
+    })();
+  </script>
+  {% endif %}
 </body>
 </html>
