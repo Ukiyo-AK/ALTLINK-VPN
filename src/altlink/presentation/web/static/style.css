@@ -114,6 +114,7 @@ button, input, select, textarea { font: inherit; }
 
 .main {
   padding: 2rem;
+  min-width: 0;
 }
 
 .header {
@@ -446,38 +447,6 @@ textarea {
   display: grid;
   place-items: center;
   padding: 1.25rem;
-}
-
-.page-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.page-topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-left: auto;
-}
-
-.page-topbar-spacer {
-  flex: 1 1 auto;
-}
-
-.login-page-shell {
-  position: relative;
-  width: min(100%, 1180px);
-  padding-top: 3.6rem;
-}
-
-.login-page-topbar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  justify-content: flex-end;
 }
 
 .login-card {
@@ -880,12 +849,65 @@ textarea {
 @media (max-width: 980px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar {
+    padding: 1rem;
     border-right: 0;
     border-bottom: 1px solid rgba(203, 187, 165, 0.7);
   }
+  .nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .main { padding: 1rem; }
+  .header {
+    align-items: flex-start;
+  }
+  .split,
+  .header,
+  .portal-topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .split > *,
+  .header > *,
+  .portal-topbar > * {
+    width: 100%;
+  }
+  .toolbar,
+  .inline-form,
+  .hero-meta {
+    width: 100%;
+  }
+  .toolbar,
+  .inline-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .toolbar > *,
+  .toolbar > form > *,
+  .inline-form > *,
+  .portal-topbar .toolbar > * {
+    width: 100%;
+    min-width: 0;
+  }
+  .details div {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .details dd {
+    text-align: left;
+  }
+  .table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+  }
   .portal-shell { width: min(100%, calc(100% - 1rem)); }
   .portal-grid { grid-template-columns: 1fr; }
+  .grid-two,
+  .grid-three {
+    grid-template-columns: 1fr;
+  }
   .plan-period { grid-template-columns: 1fr; }
   .landing-shell { width: min(100%, calc(100% - 1rem)); }
   .landing-topbar {
@@ -914,10 +936,40 @@ textarea {
 }
 
 @media (max-width: 640px) {
-  .login-page-shell {
-    padding-top: 3rem;
+  .main,
+  .center-shell,
+  .portal-shell,
+  .landing-shell {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
   }
-  .login-page-topbar .button {
+  .sidebar {
+    padding: 0.85rem;
+  }
+  .nav {
+    grid-template-columns: 1fr;
+  }
+  .card,
+  .panel,
+  .hero-panel,
+  .login-card {
+    padding: 1rem;
+  }
+  .cards {
+    grid-template-columns: 1fr;
+  }
+  .chart-box {
+    grid-template-rows: auto minmax(220px, 280px);
+  }
+  .landing-actions,
+  .landing-feature-list,
+  .hero-meta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .landing-actions > *,
+  .hero-meta > *,
+  .landing-topbar-actions .button {
     width: 100%;
   }
   .landing-hero-mark { display: none; }

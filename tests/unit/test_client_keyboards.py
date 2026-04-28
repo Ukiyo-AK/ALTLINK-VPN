@@ -18,6 +18,8 @@ from altlink.presentation.bots.client_keyboards import (
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
     subscription_actions,
+    topup_amount_confirm_actions,
+    topup_provider_actions,
 )
 
 
@@ -153,3 +155,27 @@ def test_plan_period_actions_show_expected_prices():
     unlimited_flat = [text for row in inline_rows(unlimited_markup) for text in row]
     assert f"На месяц • {UNLIMITED_MONTHLY_PRICE_RUB} ₽" in unlimited_flat
     assert f"На неделю • {UNLIMITED_WEEKLY_PRICE_RUB} ₽" in unlimited_flat
+
+
+def test_topup_amount_confirm_actions_show_pay_path():
+    markup = topup_amount_confirm_actions("350.00").as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+    buttons = inline_buttons(markup)
+
+    assert flat == ["Оплатить", "Изменить сумму", "Баланс"]
+    pay_button = next(button for button in buttons if button["text"] == "Оплатить")
+    assert pay_button["callback_data"] == "client:topup_provider_menu:350.00"
+    assert pay_button["style"] == "success"
+
+
+def test_topup_provider_actions_show_provider_and_back():
+    markup = topup_provider_actions("350.00", [("yookassa", "YooKassa")]).as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+    buttons = inline_buttons(markup)
+
+    assert flat == ["YooKassa", "Назад", "Баланс"]
+    provider_button = next(button for button in buttons if button["text"] == "YooKassa")
+    back_button = next(button for button in buttons if button["text"] == "Назад")
+    assert provider_button["callback_data"] == "client:topup_provider:yookassa:350.00"
+    assert provider_button["style"] == "success"
+    assert back_button["callback_data"] == "client:topup_confirm_amount:350.00"

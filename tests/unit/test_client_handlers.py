@@ -224,6 +224,28 @@ def test_profile_text_keeps_only_key_details_and_links():
     assert "Лимит устройств" not in text
 
 
+def test_topup_amount_confirmation_text_prompts_next_step():
+    text = client_handlers.topup_amount_confirmation_text(Decimal("350"))
+
+    assert "Сумма: 350.00 ₽" in text
+    assert "Оплатить" in text
+    assert "способ оплаты" in text
+
+
+def test_topup_provider_selection_text_lists_yookassa():
+    text = client_handlers.topup_provider_selection_text(Decimal("350"), ["yookassa"])
+
+    assert "Сумма: 350.00 ₽" in text
+    assert "YooKassa" in text
+    assert "Выберите вариант оплаты" in text
+
+
+def test_available_topup_provider_codes_follow_resolved_provider():
+    assert client_handlers.available_topup_provider_codes("yookassa") == ["yookassa"]
+    assert client_handlers.available_topup_provider_codes("manual") == ["manual"]
+    assert client_handlers.available_topup_provider_codes("stub") == ["stub"]
+
+
 @pytest.mark.asyncio
 async def test_get_access_state_auto_verifies_subscribed_user(test_services, monkeypatch):
     message = DummyMessage(text="Меню", user_id=21003)

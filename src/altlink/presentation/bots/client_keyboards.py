@@ -237,6 +237,37 @@ def topup_actions() -> InlineKeyboardBuilder:
     return builder
 
 
+def topup_amount_confirm_actions(amount_token: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="Оплатить",
+        callback_data=f"client:topup_provider_menu:{amount_token}",
+        style="success",
+    )
+    builder.button(text="Изменить сумму", callback_data="client:topup_menu", style="primary")
+    builder.button(text="Баланс", callback_data="client:balance")
+    builder.adjust(1, 1, 1)
+    return builder
+
+
+def topup_provider_actions(amount_token: str, providers: list[tuple[str, str]]) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    for provider_code, provider_label in providers:
+        builder.button(
+            text=provider_label,
+            callback_data=f"client:topup_provider:{provider_code}:{amount_token}",
+            style="success",
+        )
+    builder.button(
+        text="Назад",
+        callback_data=f"client:topup_confirm_amount:{amount_token}",
+        style="primary",
+    )
+    builder.button(text="Баланс", callback_data="client:balance")
+    builder.adjust(*([1] * len(providers)), 1, 1)
+    return builder
+
+
 def topup_checkout_actions(
     *,
     payment_url: str | None = None,

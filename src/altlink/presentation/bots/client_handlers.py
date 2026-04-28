@@ -42,8 +42,10 @@ from altlink.presentation.bots.client_keyboards import (
     subscription_link_actions,
     subscription_actions,
     support_actions,
+    topup_amount_confirm_actions,
     topup_checkout_actions,
     topup_actions,
+    topup_provider_actions,
 )
 from altlink.utils.media import media_path
 from altlink.utils.qr import render_qr_png
@@ -97,10 +99,44 @@ def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
 def topup_provider_label(provider: str) -> str:
     labels = {
         "yookassa": "YooKassa",
-        "manual": "ручную проверку администратора",
-        "stub": "тестовую заглушку",
+        "manual": "Через администратора",
+        "stub": "Тестовая касса",
     }
     return labels.get(provider, provider)
+
+
+def available_topup_provider_codes(resolved_provider: str) -> list[str]:
+    if resolved_provider == "yookassa":
+        return ["yookassa"]
+    if resolved_provider == "manual":
+        return ["manual"]
+    return ["stub"]
+
+
+def format_topup_amount_token(amount: Decimal) -> str:
+    return f"{Decimal(amount):.2f}"
+
+
+def parse_topup_amount_token(token: str) -> Decimal:
+    return Decimal(token)
+
+
+def topup_amount_confirmation_text(amount: Decimal) -> str:
+    return (
+        "Пополнение баланса\n\n"
+        f"Сумма: {Decimal(amount):.2f} ₽\n\n"
+        "Если всё верно, нажмите «Оплатить». На следующем шаге можно будет выбрать способ оплаты."
+    )
+
+
+def topup_provider_selection_text(amount: Decimal, providers: list[str]) -> str:
+    provider_lines = "\n".join(f"• {topup_provider_label(provider)}" for provider in providers)
+    return (
+        "Способ оплаты\n\n"
+        f"Сумма: {Decimal(amount):.2f} ₽\n\n"
+        "Выберите вариант оплаты:\n"
+        f"{provider_lines}"
+    )
 
 
 def topup_status_label(raw_status: str) -> str:
@@ -221,6 +257,25 @@ async def handle_topup_checkout(
             "Касса сейчас работает в режиме заглушки, поэтому деньги зачислены сразу."
         ),
         reply_markup=balance_actions().as_markup(),
+    )
+
+
+async def show_topup_amount_confirmation(target: Message | CallbackQuery, amount: Decimal) -> None:
+    amount_token = format_topup_amount_token(amount)
+    await answer_or_edit(
+        target,
+        topup_amount_confirmation_text(amount),
+        reply_markup=topup_amount_confirm_actions(amount_token).as_markup(),
+    )
+
+
+async def show_topup_provider_menu(target: Message | CallbackQuery, amount: Decimal, providers: list[str]) -> None:
+    amount_token = format_topup_amount_token(amount)
+    provider_items = [(provider, topup_provider_label(provider)) for provider in providers]
+    await answer_or_edit(
+        target,
+        topup_provider_selection_text(amount, providers),
+        reply_markup=topup_provider_actions(amount_token, provider_items).as_markup(),
     )
 
 
@@ -1479,20 +1534,7 @@ async def topup_amount(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-        checkout = await hub.topups.create_checkout(user.id, amount)
-        admin_telegram_ids = (
-            await hub.accounts.list_admin_telegram_ids()
-            if checkout.provider == "manual"
-            else []
-        )
-    await handle_topup_checkout(
-        callback,
-        container,
-        user=user,
-        amount=amount,
-        checkout=checkout,
-        admin_telegram_ids=admin_telegram_ids,
-    )
+    await show_topup_amount_confirmation(callback, amount)
 
 
 @router.callback_query(F.data == "client:topup_custom")
@@ -1515,10 +1557,53 @@ async def topup_custom_value(message: Message, state: FSMContext, container: App
     except (InvalidOperation, AttributeError):
         await answer_or_edit(message, "Не удалось распознать сумму. Попробуйте ещё раз.")
         return
+    if amount <= 0:
+        await answer_or_edit(message, "Сумма пополнения должна быть больше нуля.")
+        return
 
     async with container.hub() as hub:
         user = await ensure_client_access(message, container, hub)
         if user is None:
+            return
+    await state.clear()
+    await show_topup_amount_confirmation(message, amount)
+
+
+@router.callback_query(F.data.startswith("client:topup_confirm_amount:"))
+async def topup_confirm_amount(callback: CallbackQuery, container: AppContainer):
+    amount_token = callback.data.split(":")[-1]
+    amount = parse_topup_amount_token(amount_token)
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+    await show_topup_amount_confirmation(callback, amount)
+
+
+@router.callback_query(F.data.startswith("client:topup_provider_menu:"))
+async def topup_provider_menu(callback: CallbackQuery, container: AppContainer):
+    amount_token = callback.data.split(":")[-1]
+    amount = parse_topup_amount_token(amount_token)
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        provider = hub.topups.resolved_provider()
+    await show_topup_provider_menu(callback, amount, available_topup_provider_codes(provider))
+
+
+@router.callback_query(F.data.startswith("client:topup_provider:"))
+async def topup_provider_select(callback: CallbackQuery, container: AppContainer):
+    _, _, provider_code, amount_token = callback.data.split(":", 3)
+    amount = parse_topup_amount_token(amount_token)
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        resolved_provider = hub.topups.resolved_provider()
+        available_providers = available_topup_provider_codes(resolved_provider)
+        if provider_code not in available_providers:
+            await callback.answer("Этот способ оплаты сейчас недоступен.", show_alert=True)
             return
         checkout = await hub.topups.create_checkout(user.id, amount)
         admin_telegram_ids = (
@@ -1526,9 +1611,8 @@ async def topup_custom_value(message: Message, state: FSMContext, container: App
             if checkout.provider == "manual"
             else []
         )
-    await state.clear()
     await handle_topup_checkout(
-        message,
+        callback,
         container,
         user=user,
         amount=amount,
