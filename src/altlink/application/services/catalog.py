@@ -128,7 +128,9 @@ class CatalogService(BaseService):
         if server is None:
             raise NotFoundError("Сервер не найден.")
         server.server_type = server_type
-        await self._sync_internal_squads([server])
+        # Тип сервера влияет только на локальную маршрутизацию тарифов и матрицу доступов.
+        # Remnawave internal squads завязаны на inbound'ы ноды, а не на TEN_GBIT/REGULAR/WHITELIST.
+        # Поэтому смена типа не должна зависеть от отдельного internal-squad API панели.
         await self.rebuild_user_access_matrix()
         return server
 
