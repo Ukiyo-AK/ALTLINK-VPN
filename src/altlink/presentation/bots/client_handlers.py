@@ -14,6 +14,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, InputMe
 
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
+from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.domain.billing import bytes_to_gb_cost
 from altlink.domain.plans import (
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
@@ -100,18 +101,20 @@ def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
 def topup_provider_label(provider: str) -> str:
     labels = {
         "yookassa": "YooKassa",
-        "manual": "Через администратора",
+        "manual": "Через поддержку",
         "stub": "Тестовая касса",
     }
     return labels.get(provider, provider)
 
 
-def available_topup_provider_codes(resolved_provider: str) -> list[str]:
-    if resolved_provider == "yookassa":
-        return ["yookassa"]
-    if resolved_provider == "manual":
+def available_topup_provider_codes(configured_provider: str, resolved_provider: str) -> list[str]:
+    if configured_provider == "manual":
         return ["manual"]
-    return ["stub"]
+    providers: list[str] = []
+    if resolved_provider in {"yookassa", "stub"}:
+        providers.append(resolved_provider)
+    providers.append("manual")
+    return list(dict.fromkeys(providers))
 
 
 def format_topup_amount_token(amount: Decimal) -> str:
@@ -151,7 +154,7 @@ def topup_provider_status_text(*, configured_provider: str, resolved_provider: s
             "Пока используется тестовая заглушка."
         )
     if resolved_provider == "manual":
-        return "Заявка уйдёт администратору на ручное подтверждение."
+        return "Пополнение доступно через поддержку с подтверждением заявки."
     if resolved_provider == "stub":
         return "Если касса не настроена, бот использует тестовую заглушку и зачисляет деньги сразу."
     return "Пополнение будет обработано автоматически."
@@ -168,7 +171,7 @@ def balance_topup_status_text(*, configured_provider: str, resolved_provider: st
             "Пока используется тестовая заглушка."
         )
     if resolved_provider == "manual":
-        return "Пополнение пока проходит вручную через администратора."
+        return "Пополнение сейчас проходит через поддержку с подтверждением заявки."
     if resolved_provider == "stub":
         return "Пополнение сейчас работает через тестовую заглушку и зачисляется автоматически."
     return "Способ пополнения будет определён автоматически."
@@ -237,6 +240,43 @@ async def notify_admins_about_topup_request(
     )
 
 
+async def answer_or_edit_topup_checkout(
+    target: Message | CallbackQuery,
+    text: str,
+    *,
+    payment_url: str | None = None,
+    payment_label: str = "Оплатить",
+    request_id: str | None = None,
+    can_check: bool = False,
+) -> None:
+    reply_markup = topup_checkout_actions(
+        payment_url=payment_url,
+        payment_label=payment_label,
+        request_id=request_id,
+        can_check=can_check,
+    ).as_markup()
+    if isinstance(target, CallbackQuery):
+        rendered = False
+        if await try_edit_tracked_client_card(target, text, reply_markup=reply_markup, media_file=None):
+            rendered = True
+        else:
+            try:
+                result = await target.message.edit_text(text, reply_markup=reply_markup)
+                remember_client_card(result, has_media=False)
+                rendered = True
+            except TelegramBadRequest:
+                result = await target.message.answer(text, reply_markup=reply_markup)
+                remember_client_card(result, has_media=False)
+                rendered = True
+        if rendered:
+            if payment_url:
+                await target.answer(url=payment_url)
+            else:
+                await target.answer()
+            return
+    await answer_or_edit(target, text, reply_markup=reply_markup)
+
+
 async def handle_topup_checkout(
     target: Message | CallbackQuery,
     container: AppContainer,
@@ -254,20 +294,25 @@ async def handle_topup_checkout(
             request_id=checkout.request.id,
             admin_telegram_ids=admin_telegram_ids or [],
         )
-        await answer_or_edit(
+        support_url = support_profile_url(container.settings)
+        await answer_or_edit_topup_checkout(
             target,
             (
                 f"🧾 Заявка на пополнение создана.\n\n"
                 f"Сумма: {amount:.2f} ₽\n"
                 f"Номер заявки: {checkout.request.id}\n"
-                "Администратор проверит запрос и подтвердит или отклонит его."
+                "Откройте поддержку, отправьте оплату и сообщите номер заявки. "
+                "После проверки администратор подтвердит или отклонит её в боте."
             ),
-            reply_markup=balance_actions().as_markup(),
+            payment_url=support_url,
+            payment_label="Открыть поддержку",
+            request_id=checkout.request.id,
+            can_check=False,
         )
         return
 
     if checkout.provider == "yookassa":
-        await answer_or_edit(
+        await answer_or_edit_topup_checkout(
             target,
             (
                 "💳 Ссылка на оплату готова.\n\n"
@@ -275,11 +320,10 @@ async def handle_topup_checkout(
                 f"Номер заявки: {checkout.request.id}\n"
                 "Откройте ссылку, завершите оплату в YooKassa и затем нажмите кнопку проверки статуса."
             ),
-            reply_markup=topup_checkout_actions(
-                payment_url=checkout.payment_url,
-                request_id=checkout.request.id,
-                can_check=True,
-            ).as_markup(),
+            payment_url=checkout.payment_url,
+            payment_label="Оплатить",
+            request_id=checkout.request.id,
+            can_check=True,
         )
         return
 
@@ -1584,7 +1628,9 @@ async def topup_menu(callback: CallbackQuery, container: AppContainer):
     )
     await answer_or_edit(
         callback,
-        "Выберите сумму пополнения.\n\n" + provider_text,
+        "Выберите сумму пополнения.\n\n"
+        + provider_text
+        + "\n\nПосле этого можно будет выбрать YooKassa или оплату через поддержку, если они доступны.",
         reply_markup=topup_actions().as_markup(),
     )
 
@@ -1606,7 +1652,10 @@ async def topup_custom(callback: CallbackQuery, state: FSMContext, container: Ap
         if user is None:
             return
     await state.set_state(TopupStates.waiting_for_amount)
-    await answer_or_edit(callback, "Введите сумму пополнения в рублях, например: 350")
+    await answer_or_edit(
+        callback,
+        f"Введите сумму пополнения в рублях, например: 350\n\nМинимальная сумма — {MIN_TOPUP_AMOUNT_RUB:.0f} ₽.",
+    )
 
 
 @router.message(TopupStates.waiting_for_amount)
@@ -1619,8 +1668,8 @@ async def topup_custom_value(message: Message, state: FSMContext, container: App
     except (InvalidOperation, AttributeError):
         await answer_or_edit(message, "Не удалось распознать сумму. Попробуйте ещё раз.")
         return
-    if amount <= 0:
-        await answer_or_edit(message, "Сумма пополнения должна быть больше нуля.")
+    if amount < MIN_TOPUP_AMOUNT_RUB:
+        await answer_or_edit(message, f"Минимальная сумма пополнения — {MIN_TOPUP_AMOUNT_RUB:.0f} ₽.")
         return
 
     async with container.hub() as hub:
@@ -1650,8 +1699,13 @@ async def topup_provider_menu(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-        provider = hub.topups.resolved_provider()
-    await show_topup_provider_menu(callback, amount, available_topup_provider_codes(provider))
+        configured_provider = hub.topups.configured_provider()
+        resolved_provider = hub.topups.resolved_provider()
+    await show_topup_provider_menu(
+        callback,
+        amount,
+        available_topup_provider_codes(configured_provider, resolved_provider),
+    )
 
 
 @router.callback_query(F.data.startswith("client:topup_provider:"))
@@ -1662,12 +1716,17 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
+        configured_provider = hub.topups.configured_provider()
         resolved_provider = hub.topups.resolved_provider()
-        available_providers = available_topup_provider_codes(resolved_provider)
+        available_providers = available_topup_provider_codes(configured_provider, resolved_provider)
         if provider_code not in available_providers:
             await callback.answer("Этот способ оплаты сейчас недоступен.", show_alert=True)
             return
-        checkout = await hub.topups.create_checkout(user.id, amount)
+        try:
+            checkout = await hub.topups.create_checkout(user.id, amount, provider_code=provider_code)
+        except ConflictError as exc:
+            await answer_or_edit(callback, str(exc), reply_markup=balance_actions().as_markup())
+            return
         admin_telegram_ids = (
             await hub.accounts.list_admin_telegram_ids()
             if checkout.provider == "manual"

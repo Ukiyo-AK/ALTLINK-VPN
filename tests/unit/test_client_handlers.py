@@ -249,9 +249,9 @@ def test_topup_provider_selection_text_lists_yookassa():
 
 
 def test_available_topup_provider_codes_follow_resolved_provider():
-    assert client_handlers.available_topup_provider_codes("yookassa") == ["yookassa"]
-    assert client_handlers.available_topup_provider_codes("manual") == ["manual"]
-    assert client_handlers.available_topup_provider_codes("stub") == ["stub"]
+    assert client_handlers.available_topup_provider_codes("yookassa", "yookassa") == ["yookassa", "manual"]
+    assert client_handlers.available_topup_provider_codes("manual", "manual") == ["manual"]
+    assert client_handlers.available_topup_provider_codes("yookassa", "stub") == ["stub", "manual"]
 
 
 def test_topup_provider_status_text_explains_missing_yookassa_settings():
@@ -286,6 +286,16 @@ def test_balance_topup_status_text_reflects_stub_fallback():
 
     assert "YOOKASSA_SECRET_KEY" in text
     assert "тестовая заглушка" in text
+
+
+def test_balance_topup_status_text_reflects_support_flow():
+    text = client_handlers.balance_topup_status_text(
+        configured_provider="manual",
+        resolved_provider="manual",
+        missing_settings=[],
+    )
+
+    assert "через поддержку" in text
 
 
 @pytest.mark.asyncio

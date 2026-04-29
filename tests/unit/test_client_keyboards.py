@@ -20,6 +20,7 @@ from altlink.presentation.bots.client_keyboards import (
     promo_onboarding_skip_actions,
     subscription_actions,
     topup_amount_confirm_actions,
+    topup_checkout_actions,
     topup_provider_actions,
 )
 
@@ -190,3 +191,11 @@ def test_topup_provider_actions_show_provider_and_back():
     assert provider_button["callback_data"] == "client:topup_provider:yookassa:350.00"
     assert provider_button["style"] == "success"
     assert back_button["callback_data"] == "client:topup_confirm_amount:350.00"
+
+
+def test_topup_checkout_actions_can_customize_open_button_label():
+    markup = topup_checkout_actions(payment_url="https://t.me/support", payment_label="Открыть поддержку").as_markup()
+    buttons = inline_buttons(markup)
+
+    open_button = next(button for button in buttons if button["text"] == "Открыть поддержку")
+    assert open_button["url"] == "https://t.me/support"

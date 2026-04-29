@@ -280,6 +280,7 @@ def topup_provider_actions(amount_token: str, providers: list[tuple[str, str]]) 
 def topup_checkout_actions(
     *,
     payment_url: str | None = None,
+    payment_label: str = "Оплатить",
     request_id: str | None = None,
     can_check: bool = False,
 ) -> InlineKeyboardBuilder:
@@ -287,7 +288,7 @@ def topup_checkout_actions(
     rows: list[int] = []
     action_count = 0
     if payment_url:
-        builder.button(text="Оплатить", url=payment_url, style="success")
+        builder.button(text=payment_label, url=payment_url, style="success")
         action_count += 1
     if can_check and request_id:
         builder.button(text="Проверить оплату", callback_data=f"client:topup_check:{request_id}", style="primary")

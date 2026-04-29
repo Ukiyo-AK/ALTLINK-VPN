@@ -19,6 +19,7 @@ from altlink.utils.time import utc_now
 
 
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
+MIN_TOPUP_AMOUNT_RUB = Decimal("50")
 
 
 @dataclass(slots=True)
@@ -78,13 +79,29 @@ class TopupService(BaseService):
             missing.append("YOOKASSA_SECRET_KEY")
         return missing
 
+    def available_checkout_providers(self) -> list[str]:
+        configured = self.configured_provider()
+        resolved = self.resolved_provider()
+        if configured == "manual":
+            return ["manual"]
+
+        providers: list[str] = []
+        if resolved in {"yookassa", "stub"}:
+            providers.append(resolved)
+        providers.append("manual")
+        return list(dict.fromkeys(providers))
+
     async def create_checkout(
         self,
         user_id: str,
         amount_rub: Decimal,
         comment: str | None = None,
+        *,
+        provider_code: str | None = None,
     ) -> TopupCheckoutSession:
-        provider = self.resolved_provider()
+        provider = (provider_code or self.resolved_provider()).strip().lower()
+        if provider not in self.available_checkout_providers():
+            raise ConflictError("Этот способ пополнения сейчас недоступен.")
         if self.configured_provider() == "yookassa" and provider == "stub":
             await self.log_event(
                 level=SystemEventLevel.WARNING,
@@ -151,8 +168,8 @@ class TopupService(BaseService):
         auto_complete: bool = True,
         provider_code: str | None = None,
     ) -> TopupRequest:
-        if amount_rub <= 0:
-            raise ConflictError("Сумма пополнения должна быть больше нуля.")
+        if amount_rub < MIN_TOPUP_AMOUNT_RUB:
+            raise ConflictError(f"Минимальная сумма пополнения — {MIN_TOPUP_AMOUNT_RUB:.0f} ₽.")
         request = TopupRequest(
             user_id=user_id,
             amount_rub=Decimal(amount_rub),

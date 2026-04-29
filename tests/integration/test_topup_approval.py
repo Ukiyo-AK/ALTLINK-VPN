@@ -8,6 +8,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from altlink.application.services.base import ConflictError
 from altlink.application.services.topups import TopupService
 from altlink.domain.enums import BalanceTransactionType, PlanCode
 from altlink.infrastructure.db.models import BalanceTransaction
@@ -190,6 +191,43 @@ async def test_yookassa_checkout_creates_redirect_payment_and_approves_after_sta
     assert str(stored_request.status) == "approved"
     assert stored_request.external_payment_id == "pay-demo-1"
     assert Decimal(refreshed.balance_rub) == Decimal("410")
+
+
+@pytest.mark.asyncio
+async def test_yookassa_mode_still_allows_manual_support_checkout(test_services, monkeypatch):
+    test_services.settings.payment_provider = "yookassa"
+    test_services.settings.yookassa_shop_id = "shop-123"
+    test_services.settings.yookassa_secret_key = "secret-456"
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3007,
+            username="support_checkout",
+            first_name="Support",
+            last_name="Checkout",
+            language_code="ru",
+        )
+        checkout = await hub.topups.create_checkout(user.id, Decimal("260"), provider_code="manual")
+        request = await hub.topups.get_request(checkout.request.id)
+
+    assert checkout.provider == "manual"
+    assert checkout.admin_required is True
+    assert checkout.auto_completed is False
+    assert str(request.status) == "new"
+
+
+@pytest.mark.asyncio
+async def test_topup_checkout_rejects_amounts_below_minimum(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3008,
+            username="too_small",
+            first_name="Too",
+            last_name="Small",
+            language_code="ru",
+        )
+        with pytest.raises(ConflictError, match="Минимальная сумма пополнения — 50 ₽"):
+            await hub.topups.create_checkout(user.id, Decimal("49"))
 
 
 @pytest.mark.asyncio
