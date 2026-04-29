@@ -52,8 +52,8 @@ def latency_target_label() -> str:
 
 def latency_disclaimer_text() -> str:
     return (
-        "Замер идёт прямо из вашего браузера до нод ALTLINK через отдельный probe endpoint на порту 44443. "
-        "Это ближе к реальной задержке с вашего устройства, но зависит от маршрута, браузера и доступности ноды по HTTPS."
+        "Показываем задержку от вашего устройства до серверов ALTLINK. "
+        "Это помогает точнее оценить подключение, но значение может немного меняться из-за вашей сети и маршрута."
     )
 
 
@@ -135,6 +135,14 @@ def portal_login_qr_data_url(payload: str | None) -> str | None:
 
 
 async def ensure_portal_login_attempt(request: Request, hub):
+    requested_token = hub.portal_auth.normalize_token(request.query_params.get("token"))
+    if requested_token:
+        attempt = await hub.portal_auth.get_login_attempt(requested_token)
+        status = hub.portal_auth.login_attempt_status(attempt)
+        if status in {"pending", "approved"}:
+            request.session[PORTAL_LOGIN_ATTEMPT_SESSION_KEY] = requested_token
+            return attempt
+
     session_token = request.session.get(PORTAL_LOGIN_ATTEMPT_SESSION_KEY)
     if session_token:
         attempt = await hub.portal_auth.get_login_attempt(session_token)

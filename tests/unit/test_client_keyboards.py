@@ -15,6 +15,7 @@ from altlink.presentation.bots.client_keyboards import (
     plan_actions,
     plan_period_actions,
     portal_login_actions,
+    portal_login_complete_actions,
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
     subscription_actions,
@@ -113,6 +114,16 @@ def test_portal_login_actions_include_confirm_and_cancel():
     assert flat == ["Подтвердить вход", "Отменить"]
     assert next(button for button in buttons if button["text"] == "Подтвердить вход")["style"] == "success"
     assert next(button for button in buttons if button["text"] == "Отменить")["style"] == "danger"
+
+
+def test_portal_login_complete_actions_include_open_button():
+    markup = portal_login_complete_actions("https://altlink.online/portal/login?token=demo-token").as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+    buttons = inline_buttons(markup)
+    assert flat == ["Открыть кабинет", "Меню"]
+    open_button = next(button for button in buttons if button["text"] == "Открыть кабинет")
+    assert open_button["url"] == "https://altlink.online/portal/login?token=demo-token"
+    assert open_button["style"] == "success"
 
 
 def test_subscription_actions_render_cancel_and_hide_traffic():

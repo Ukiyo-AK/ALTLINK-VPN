@@ -13,6 +13,7 @@ from altlink.presentation.web.routes import (
     is_foreign_latency_target,
     latency_probe,
     load_document_text,
+    ensure_portal_login_attempt,
     portal_bot_login_url,
     portal_login_capabilities,
     portal_login_qr_data_url,
@@ -270,6 +271,23 @@ async def test_portal_login_status_returns_missing_without_attempt_token(test_se
 
     assert response.status_code == 200
     assert b"missing" in response.body
+
+
+@pytest.mark.asyncio
+async def test_ensure_portal_login_attempt_uses_token_from_query(test_services):
+    async with test_services.hub() as hub:
+        attempt = await hub.portal_auth.create_login_attempt()
+
+        request = SimpleNamespace(
+            session={},
+            query_params={"token": attempt.token},
+        )
+
+        resolved = await ensure_portal_login_attempt(request, hub)
+
+    assert resolved is not None
+    assert resolved.token == attempt.token
+    assert request.session["portal_login_attempt_token"] == attempt.token
 
 
 @pytest.mark.asyncio

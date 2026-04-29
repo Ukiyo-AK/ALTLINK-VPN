@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -58,8 +58,14 @@ class Settings(BaseSettings):
     whitelist_price_per_gb_rub: int = 4
     payment_provider: str = "manual"
     yookassa_api_base_url: str = "https://api.yookassa.ru/v3"
-    yookassa_shop_id: str = ""
-    yookassa_secret_key: str = ""
+    yookassa_shop_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("YOOKASSA_SHOP_ID", "YOOKASSA_SHOPID"),
+    )
+    yookassa_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("YOOKASSA_SECRET_KEY", "YOOKASSA_API_KEY"),
+    )
     yookassa_return_url: str = ""
     yookassa_timeout_seconds: int = 20
     traffic_notification_thresholds: Annotated[list[int], NoDecode] = Field(

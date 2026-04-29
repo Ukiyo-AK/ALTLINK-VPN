@@ -186,6 +186,14 @@ def test_share_vpn_url_skips_invalid_targets():
     assert client_handlers.share_vpn_url(settings) is None
 
 
+def test_portal_login_resume_url_points_back_to_login_page_with_token():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+
+    url = client_handlers.portal_login_resume_url(settings, "demo-token")
+
+    assert url == "https://altlink.online/portal/login?token=demo-token"
+
+
 def test_home_text_includes_site_links_in_main_menu():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("199.00"), status="active")

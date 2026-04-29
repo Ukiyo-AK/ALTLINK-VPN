@@ -121,3 +121,22 @@ def test_settings_normalize_legacy_wata_provider_to_yookassa(tmp_path):
     settings = Settings(_env_file=env_file)
 
     assert settings.payment_provider == "yookassa"
+
+
+def test_settings_accept_common_yookassa_env_aliases(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PAYMENT_PROVIDER=yookassa",
+                "YOOKASSA_SHOPID=shop-demo",
+                "YOOKASSA_API_KEY=secret-demo",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.yookassa_shop_id == "shop-demo"
+    assert settings.yookassa_secret_key == "secret-demo"

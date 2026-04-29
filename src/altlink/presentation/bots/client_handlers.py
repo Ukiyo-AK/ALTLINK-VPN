@@ -35,6 +35,7 @@ from altlink.presentation.bots.client_keyboards import (
     plan_actions,
     plan_period_actions,
     portal_login_actions,
+    portal_login_complete_actions,
     profile_actions,
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
@@ -389,7 +390,7 @@ def connection_help_url(settings) -> str | None:
 
 def portal_login_request_text(settings) -> str:
     portal_url = portal_public_url(settings)
-    tail = f"\n\nПосле подтверждения сайт автоматически завершит вход: {portal_url}" if portal_url else ""
+    tail = f"\n\nПосле подтверждения кабинет откроется автоматически: {portal_url}" if portal_url else ""
     return (
         "Вход в личный кабинет\n\n"
         "Подтвердите вход в сайт через этот Telegram-аккаунт. "
@@ -398,12 +399,20 @@ def portal_login_request_text(settings) -> str:
     )
 
 
+def portal_login_resume_url(settings, token: str) -> str | None:
+    public_url = (settings.backend_public_url or "").strip()
+    parsed = urlparse(public_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return f"{public_url.rstrip('/')}/portal/login?token={quote_plus(token)}"
+
+
 def portal_login_confirmed_text(settings) -> str:
     portal_url = portal_public_url(settings)
-    tail = f"\n\nЕсли вкладка не переключилась автоматически, откройте кабинет вручную: {portal_url}" if portal_url else ""
+    tail = f"\n\nЕсли кабинет не открылся сам, нажмите кнопку ниже или перейдите вручную: {portal_url}" if portal_url else ""
     return (
         "Вход подтверждён.\n\n"
-        "Вернитесь во вкладку сайта. Личный кабинет должен открыться автоматически."
+        "Сейчас попробуем открыть личный кабинет автоматически."
         f"{tail}"
     )
 
@@ -1219,7 +1228,13 @@ async def start(message: Message, container: AppContainer):
                 )
                 return
             if status_name == "approved" and attempt.approved_user_id == provisional_user.id:
-                await answer_or_edit(message, portal_login_confirmed_text(container.settings))
+                await answer_or_edit(
+                    message,
+                    portal_login_confirmed_text(container.settings),
+                    reply_markup=portal_login_complete_actions(
+                        portal_login_resume_url(container.settings, token),
+                    ).as_markup(),
+                )
                 return
             if status_name == "approved" and attempt.approved_user_id != provisional_user.id:
                 await answer_or_edit(
@@ -1263,7 +1278,31 @@ async def portal_login_confirm(callback: CallbackQuery, container: AppContainer)
         except (ConflictError, NotFoundError) as exc:
             await answer_or_edit(callback, str(exc))
             return
-    await answer_or_edit(callback, portal_login_confirmed_text(container.settings))
+    open_url = portal_login_resume_url(container.settings, token)
+    text = portal_login_confirmed_text(container.settings)
+    reply_markup = portal_login_complete_actions(open_url).as_markup()
+    if await try_edit_tracked_client_card(callback, text, reply_markup=reply_markup, media_file=None):
+        if open_url:
+            await callback.answer(url=open_url)
+        else:
+            await callback.answer()
+        return
+    try:
+        result = await callback.message.edit_text(
+            text,
+            reply_markup=reply_markup,
+        )
+        remember_client_card(result, has_media=False)
+    except TelegramBadRequest:
+        result = await callback.message.answer(
+            text,
+            reply_markup=reply_markup,
+        )
+        remember_client_card(result, has_media=False)
+    if open_url:
+        await callback.answer(url=open_url)
+    else:
+        await callback.answer()
 
 
 @router.callback_query(F.data.startswith("client:portal_login_cancel:"))

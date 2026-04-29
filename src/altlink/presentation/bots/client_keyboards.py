@@ -68,6 +68,15 @@ def portal_login_actions(token: str) -> InlineKeyboardBuilder:
     return builder
 
 
+def portal_login_complete_actions(portal_url: str | None = None) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    if portal_url:
+        builder.button(text="Открыть кабинет", url=portal_url, style="success")
+    builder.button(text="Меню", callback_data="client:home", style="primary")
+    builder.adjust(1, 1)
+    return builder
+
+
 def menu_actions(*, show_trial: bool, share_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Баланс", callback_data="client:balance", style="primary")
