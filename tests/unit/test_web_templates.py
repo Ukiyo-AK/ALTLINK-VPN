@@ -51,3 +51,17 @@ def test_public_templates_keep_personal_account_action_only_where_needed():
     assert 'href="{{ portal_login_url }}"' in landing
     assert "login-page-topbar" not in portal_login
     assert "page-topbar-actions" not in portal_login
+
+
+def test_landing_support_handle_uses_dedicated_mobile_friendly_class():
+    content = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
+
+    assert 'class="landing-support-handle"' in content
+
+
+def test_legal_templates_mark_document_body_for_aggressive_wrapping():
+    agreement = (TEMPLATE_ROOT / "legal_agreement.html").read_text(encoding="utf-8")
+    privacy = (TEMPLATE_ROOT / "legal_privacy.html").read_text(encoding="utf-8")
+
+    assert "legal-document-body" in agreement
+    assert "legal-document-body" in privacy

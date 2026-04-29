@@ -626,6 +626,16 @@ textarea {
   line-height: 1.08;
 }
 
+.landing-support-handle {
+  display: block;
+  max-width: 100%;
+  font-size: clamp(1.15rem, 5.4vw, 1.7rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .landing-benefits {
   margin-bottom: 0;
 }
@@ -865,6 +875,23 @@ textarea {
   border-top: 1px solid rgba(203, 187, 165, 0.8);
 }
 
+.legal-document-body,
+.legal-document-body * {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.legal-document-body :where(pre, code, table, img, iframe) {
+  max-width: 100%;
+}
+
+.legal-document-body pre {
+  white-space: pre-wrap;
+}
+
 @media (max-width: 980px) {
   .layout { grid-template-columns: 1fr; }
   .sidebar {
@@ -990,6 +1017,13 @@ textarea {
   .hero-meta > *,
   .landing-topbar-actions .button {
     width: 100%;
+  }
+  .landing-support-handle {
+    font-size: clamp(1rem, 6vw, 1.35rem);
+  }
+  .legal-document-body {
+    font-size: 0.96rem;
+    line-height: 1.62;
   }
   .landing-hero-mark { display: none; }
   .landing-hero { padding-right: 1.4rem; }
