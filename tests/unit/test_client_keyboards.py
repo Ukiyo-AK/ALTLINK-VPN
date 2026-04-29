@@ -52,7 +52,7 @@ def test_menu_actions_include_cabinet_trial_and_styles():
     rows = inline_rows(markup)
     flat = [text for row in rows for text in row]
     buttons = inline_buttons(markup)
-    assert "💼 Кошелёк" in flat
+    assert "💳 Баланс" in flat
     assert "🧾 Подписка" in flat
     assert "🌐 Личный кабинет" in flat
     assert "📣 Поделиться VPN" in flat
@@ -60,7 +60,7 @@ def test_menu_actions_include_cabinet_trial_and_styles():
     assert "🎁 Тест на 2 дня" in flat
     assert rows[1] == ["🌐 Личный кабинет", "📣 Поделиться VPN"]
     assert rows[-1] == ["🎁 Тест на 2 дня"]
-    balance_button = next(button for button in buttons if button["text"] == "💼 Кошелёк")
+    balance_button = next(button for button in buttons if button["text"] == "💳 Баланс")
     portal_button = next(button for button in buttons if button["text"] == "🌐 Личный кабинет")
     share_button = next(button for button in buttons if button["text"] == "📣 Поделиться VPN")
     support_button = next(button for button in buttons if button["text"] == "🛟 Поддержка")
@@ -182,7 +182,7 @@ def test_topup_amount_confirm_actions_show_pay_path():
     flat = [text for row in inline_rows(markup) for text in row]
     buttons = inline_buttons(markup)
 
-    assert flat == ["💳 Оплатить", "✏️ Изменить сумму", "💼 Кошелёк"]
+    assert flat == ["💳 Оплатить", "✏️ Изменить сумму", "💳 Баланс"]
     pay_button = next(button for button in buttons if button["text"] == "💳 Оплатить")
     assert pay_button["callback_data"] == "client:topup_provider_menu:350.00"
     assert pay_button["style"] == "success"
@@ -197,7 +197,7 @@ def test_topup_provider_actions_render_yookassa_as_direct_link():
     flat = [text for row in inline_rows(markup) for text in row]
     buttons = inline_buttons(markup)
 
-    assert flat == ["💳 YooKassa", "⬅️ Назад", "💼 Кошелёк"]
+    assert flat == ["💳 YooKassa", "⬅️ Назад", "💳 Баланс"]
     provider_button = next(button for button in buttons if button["text"] == "💳 YooKassa")
     back_button = next(button for button in buttons if button["text"] == "⬅️ Назад")
     assert provider_button["url"] == "https://pay.example/checkout"

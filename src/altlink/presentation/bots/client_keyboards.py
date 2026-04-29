@@ -79,7 +79,7 @@ def portal_login_complete_actions(portal_url: str | None = None) -> InlineKeyboa
 
 def menu_actions(*, show_trial: bool, share_url: str | None = None, portal_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    builder.button(text="💼 Кошелёк", callback_data="client:balance", style="primary")
+    builder.button(text="💳 Баланс", callback_data="client:balance", style="primary")
     builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
     if portal_url:
         builder.button(text="🌐 Личный кабинет", url=portal_url, style="success")
@@ -265,7 +265,7 @@ def topup_amount_confirm_actions(amount_token: str) -> InlineKeyboardBuilder:
         style="success",
     )
     builder.button(text="✏️ Изменить сумму", callback_data="client:topup_menu", style="primary")
-    builder.button(text="💼 Кошелёк", callback_data="client:balance")
+    builder.button(text="💳 Баланс", callback_data="client:balance")
     builder.adjust(1, 1, 1)
     return builder
 
@@ -292,7 +292,7 @@ def topup_provider_actions(
         callback_data=f"client:topup_confirm_amount:{amount_token}",
         style="primary",
     )
-    builder.button(text="💼 Кошелёк", callback_data="client:balance")
+    builder.button(text="💳 Баланс", callback_data="client:balance")
     builder.adjust(*([1] * len(providers)), 1, 1)
     return builder
 
@@ -314,7 +314,7 @@ def topup_checkout_actions(
         builder.button(text="🔎 Проверить оплату", callback_data=f"client:topup_check:{request_id}", style="primary")
         action_count += 1
     builder.button(text="🧾 История платежей", callback_data="client:my_topups", style="primary")
-    builder.button(text="💼 Кошелёк", callback_data="client:balance")
+    builder.button(text="💳 Баланс", callback_data="client:balance")
     if action_count:
         rows.append(action_count)
     rows.extend([1, 1])

@@ -784,7 +784,7 @@ def promo_onboarding_text() -> str:
     return (
         "Шаг 3 из 3. Промокод\n\n"
         "Если у вас есть промокод, можно ввести его сейчас и сразу получить бонус или скидку.\n"
-        "Если промокода нет, просто нажмите кнопку «Пропустить». Потом промокод всё равно можно будет ввести в разделе «Кошелёк»."
+        "Если промокода нет, просто нажмите кнопку «Пропустить». Потом промокод всё равно можно будет ввести в разделе «Баланс»."
     )
 
 
@@ -864,7 +864,7 @@ def profile_text(user, subscription, settings) -> str:
     lines = [
         "👤 Профиль",
         "",
-        f"💼 Баланс: {Decimal(user.balance_rub):.2f} ₽",
+        f"💳 Баланс: {Decimal(user.balance_rub):.2f} ₽",
         f"Тариф: {plan_name}",
     ]
     if subscription:
@@ -1168,7 +1168,7 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
     await send_card_with_optional_media(
         target,
         (
-            "💼 Кошелёк\n\n"
+            "💳 Баланс\n\n"
             f"На счёте: {Decimal(user.balance_rub):.2f} ₽\n"
             f"Платежей в истории: {len(requests)}\n"
             f"Ожидают подтверждения: {pending_requests}\n"
@@ -2146,7 +2146,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
             )
             current_subscription = subscription
         except ConflictError as exc:
-            text = f"{exc}\n\nСначала пополните баланс через раздел «Кошелёк»."
+            text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
         if current_subscription is None:
@@ -2166,7 +2166,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
             )
             current_subscription = subscription
         except ConflictError as exc:
-            text = f"{exc}\n\nСначала пополните баланс через раздел «Кошелёк»."
+            text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
         if current_subscription is None:

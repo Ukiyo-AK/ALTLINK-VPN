@@ -615,6 +615,17 @@ textarea {
   gap: 0.85rem;
 }
 
+.landing-metrics .card,
+.landing-metrics .card strong {
+  min-width: 0;
+}
+
+.landing-metrics .card strong {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.08;
+}
+
 .landing-benefits {
   margin-bottom: 0;
 }
@@ -814,6 +825,14 @@ textarea {
   display: grid;
   gap: 1rem;
   line-height: 1.7;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.document-body :where(h1, h2, h3, h4, p, li, blockquote, a, strong, em, span) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .document-body h1,

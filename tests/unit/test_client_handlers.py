@@ -223,7 +223,7 @@ def test_profile_text_keeps_only_key_details_and_links():
 
     text = client_handlers.profile_text(user, subscription, settings)
 
-    assert "💼 Баланс: 99.00 ₽" in text
+    assert "💳 Баланс: 99.00 ₽" in text
     assert "Тариф: Pro" in text
     assert "Сервер: NL Node" in text
     assert "Сайт: https://altlink.online" not in text
