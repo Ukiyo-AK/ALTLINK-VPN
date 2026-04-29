@@ -43,22 +43,30 @@ def test_main_menu_matches_new_navigation():
     assert markup.is_persistent is True
 
 
-def test_menu_actions_include_trial_and_styles():
-    markup = menu_actions(show_trial=True, share_url="https://example.com").as_markup()
+def test_menu_actions_include_cabinet_trial_and_styles():
+    markup = menu_actions(
+        show_trial=True,
+        share_url="https://example.com/share",
+        portal_url="https://altlink.online/portal/login?token=demo-token",
+    ).as_markup()
     rows = inline_rows(markup)
     flat = [text for row in rows for text in row]
     buttons = inline_buttons(markup)
-    assert "Баланс" in flat
-    assert "Подписка" in flat
-    assert "Поддержка" in flat
-    assert "Поделиться VPN" in flat
-    assert "Тест на 2 дня" in flat
-    assert rows[-1] == ["Тест на 2 дня"]
-    balance_button = next(button for button in buttons if button["text"] == "Баланс")
-    share_button = next(button for button in buttons if button["text"] == "Поделиться VPN")
-    support_button = next(button for button in buttons if button["text"] == "Поддержка")
-    trial_button = next(button for button in buttons if button["text"] == "Тест на 2 дня")
+    assert "💼 Кошелёк" in flat
+    assert "🧾 Подписка" in flat
+    assert "🌐 Личный кабинет" in flat
+    assert "📣 Поделиться VPN" in flat
+    assert "🛟 Поддержка" in flat
+    assert "🎁 Тест на 2 дня" in flat
+    assert rows[1] == ["🌐 Личный кабинет", "📣 Поделиться VPN"]
+    assert rows[-1] == ["🎁 Тест на 2 дня"]
+    balance_button = next(button for button in buttons if button["text"] == "💼 Кошелёк")
+    portal_button = next(button for button in buttons if button["text"] == "🌐 Личный кабинет")
+    share_button = next(button for button in buttons if button["text"] == "📣 Поделиться VPN")
+    support_button = next(button for button in buttons if button["text"] == "🛟 Поддержка")
+    trial_button = next(button for button in buttons if button["text"] == "🎁 Тест на 2 дня")
     assert balance_button["style"] == "primary"
+    assert portal_button["url"] == "https://altlink.online/portal/login?token=demo-token"
     assert share_button["style"] == "success"
     assert support_button["style"] == "primary"
     assert trial_button["style"] == "success"
@@ -66,7 +74,7 @@ def test_menu_actions_include_trial_and_styles():
 
 def test_balance_actions_make_history_primary():
     buttons = inline_buttons(balance_actions().as_markup())
-    history_button = next(button for button in buttons if button["text"] == "История платежей")
+    history_button = next(button for button in buttons if button["text"] == "🧾 История платежей")
     assert history_button["style"] == "primary"
 
 
@@ -121,8 +129,8 @@ def test_portal_login_complete_actions_include_open_button():
     markup = portal_login_complete_actions("https://altlink.online/portal/login?token=demo-token").as_markup()
     flat = [text for row in inline_rows(markup) for text in row]
     buttons = inline_buttons(markup)
-    assert flat == ["Открыть кабинет", "Меню"]
-    open_button = next(button for button in buttons if button["text"] == "Открыть кабинет")
+    assert flat == ["🚀 Открыть кабинет", "🏠 Меню"]
+    open_button = next(button for button in buttons if button["text"] == "🚀 Открыть кабинет")
     assert open_button["url"] == "https://altlink.online/portal/login?token=demo-token"
     assert open_button["style"] == "success"
 
@@ -174,21 +182,25 @@ def test_topup_amount_confirm_actions_show_pay_path():
     flat = [text for row in inline_rows(markup) for text in row]
     buttons = inline_buttons(markup)
 
-    assert flat == ["Оплатить", "Изменить сумму", "Баланс"]
-    pay_button = next(button for button in buttons if button["text"] == "Оплатить")
+    assert flat == ["💳 Оплатить", "✏️ Изменить сумму", "💼 Кошелёк"]
+    pay_button = next(button for button in buttons if button["text"] == "💳 Оплатить")
     assert pay_button["callback_data"] == "client:topup_provider_menu:350.00"
     assert pay_button["style"] == "success"
 
 
-def test_topup_provider_actions_show_provider_and_back():
-    markup = topup_provider_actions("350.00", [("yookassa", "YooKassa")]).as_markup()
+def test_topup_provider_actions_render_yookassa_as_direct_link():
+    markup = topup_provider_actions(
+        "350.00",
+        [("yookassa", "💳 YooKassa")],
+        provider_urls={"yookassa": "https://pay.example/checkout"},
+    ).as_markup()
     flat = [text for row in inline_rows(markup) for text in row]
     buttons = inline_buttons(markup)
 
-    assert flat == ["YooKassa", "Назад", "Баланс"]
-    provider_button = next(button for button in buttons if button["text"] == "YooKassa")
-    back_button = next(button for button in buttons if button["text"] == "Назад")
-    assert provider_button["callback_data"] == "client:topup_provider:yookassa:350.00"
+    assert flat == ["💳 YooKassa", "⬅️ Назад", "💼 Кошелёк"]
+    provider_button = next(button for button in buttons if button["text"] == "💳 YooKassa")
+    back_button = next(button for button in buttons if button["text"] == "⬅️ Назад")
+    assert provider_button["url"] == "https://pay.example/checkout"
     assert provider_button["style"] == "success"
     assert back_button["callback_data"] == "client:topup_confirm_amount:350.00"
 

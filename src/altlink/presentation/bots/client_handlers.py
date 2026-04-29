@@ -100,9 +100,9 @@ def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
 
 def topup_provider_label(provider: str) -> str:
     labels = {
-        "yookassa": "YooKassa",
-        "manual": "Через поддержку",
-        "stub": "Тестовая касса",
+        "yookassa": "💳 YooKassa",
+        "manual": "💬 Через поддержку",
+        "stub": "🧪 Тестовая касса",
     }
     return labels.get(provider, provider)
 
@@ -134,12 +134,10 @@ def topup_amount_confirmation_text(amount: Decimal) -> str:
 
 
 def topup_provider_selection_text(amount: Decimal, providers: list[str]) -> str:
-    provider_lines = "\n".join(f"• {topup_provider_label(provider)}" for provider in providers)
     return (
-        "Способ оплаты\n\n"
+        "💸 Способ оплаты\n\n"
         f"Сумма: {Decimal(amount):.2f} ₽\n\n"
-        "Выберите вариант оплаты:\n"
-        f"{provider_lines}"
+        "Нажмите на удобный способ оплаты ниже."
     )
 
 
@@ -348,13 +346,23 @@ async def show_topup_amount_confirmation(target: Message | CallbackQuery, amount
     )
 
 
-async def show_topup_provider_menu(target: Message | CallbackQuery, amount: Decimal, providers: list[str]) -> None:
+async def show_topup_provider_menu(
+    target: Message | CallbackQuery,
+    amount: Decimal,
+    providers: list[str],
+    *,
+    provider_urls: dict[str, str] | None = None,
+) -> None:
     amount_token = format_topup_amount_token(amount)
     provider_items = [(provider, topup_provider_label(provider)) for provider in providers]
     await answer_or_edit(
         target,
         topup_provider_selection_text(amount, providers),
-        reply_markup=topup_provider_actions(amount_token, provider_items).as_markup(),
+        reply_markup=topup_provider_actions(
+            amount_token,
+            provider_items,
+            provider_urls=provider_urls or {},
+        ).as_markup(),
     )
 
 
@@ -776,7 +784,7 @@ def promo_onboarding_text() -> str:
     return (
         "Шаг 3 из 3. Промокод\n\n"
         "Если у вас есть промокод, можно ввести его сейчас и сразу получить бонус или скидку.\n"
-        "Если промокода нет, просто нажмите кнопку «Пропустить». Потом промокод всё равно можно будет ввести в разделе «Баланс»."
+        "Если промокода нет, просто нажмите кнопку «Пропустить». Потом промокод всё равно можно будет ввести в разделе «Кошелёк»."
     )
 
 
@@ -800,8 +808,19 @@ def access_links_text(settings) -> str:
     return "\n".join(links) if links else "Ссылки появятся после настройки публичных адресов."
 
 
+async def create_portal_autologin_url(hub, settings, user_id: str) -> str | None:
+    if portal_public_url(settings) is None:
+        return None
+    try:
+        attempt = await hub.portal_auth.create_login_attempt()
+        await hub.portal_auth.approve_login_attempt(attempt.token, user_id)
+    except Exception as exc:
+        logger.warning("Failed to create portal autologin URL for user %s: %s", user_id, exc)
+        return None
+    return portal_login_resume_url(settings, attempt.token)
+
+
 def home_text(user, subscription, settings, latest_subscription=None) -> str:
-    links = access_links_text(settings)
     if subscription:
         lines = [
             "🏠 Главное меню",
@@ -809,11 +828,10 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
             f"Текущий тариф: {subscription.plan.name}",
             f"Формат списания: {billing_cycle_label(subscription.plan)}",
             f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+            "✨ Всё управление VPN доступно кнопками ниже.",
         ]
         if subscription.notes:
             lines.extend(["", subscription.notes])
-        if links:
-            lines.extend(["", links])
         lines.append("")
         lines.append("Выберите нужный раздел кнопками ниже.")
         return "\n".join(lines)
@@ -827,8 +845,6 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
             "",
             "Пополните баланс и заново выберите тариф или включите продление.",
         ]
-        if links:
-            lines.extend(["", links])
         return "\n".join(lines)
 
     lines = [
@@ -836,20 +852,19 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
         "",
         f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
         "Тариф пока не выбран. Можно запустить тест на 2 дня или сразу оформить Start / Pro.",
+        "",
+        "🚀 Личный кабинет открывается отдельной кнопкой ниже.",
     ]
-    if links:
-        lines.extend(["", links])
     return "\n".join(lines)
 
 
 def profile_text(user, subscription, settings) -> str:
     plan_name = subscription.plan.name if subscription and subscription.plan else "не выбран"
     assigned = user.assigned_server.name if getattr(user, "assigned_server", None) else "ещё не назначен"
-    links = access_links_text(settings)
     lines = [
         "👤 Профиль",
         "",
-        f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+        f"💼 Баланс: {Decimal(user.balance_rub):.2f} ₽",
         f"Тариф: {plan_name}",
     ]
     if subscription:
@@ -860,8 +875,6 @@ def profile_text(user, subscription, settings) -> str:
         else:
             lines.append(f"Действует до: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
     lines.append(f"Сервер: {assigned}")
-    if links:
-        lines.extend(["", links])
     return "\n".join(lines)
 
 
@@ -975,6 +988,8 @@ def resolve_main_action(text: str | None) -> str | None:
         "сайт": "site",
         "профиль": "profile",
         "баланс": "balance",
+        "кошелек": "balance",
+        "кошелёк": "balance",
         "подписка": "subscription",
         "серверы": "subscription",
     }.get(normalize_action_text(text))
@@ -1094,6 +1109,7 @@ async def show_home(target: Message | CallbackQuery, container: AppContainer, hu
 async def show_profile(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
     user = await ensure_user(target.from_user, container, hub)
     subscription = await hub.accounts.get_current_subscription(user.id)
+    portal_url = await create_portal_autologin_url(hub, container.settings, user.id)
     await send_card_with_optional_media(
         target,
         profile_text(user, subscription, container.settings),
@@ -1101,6 +1117,7 @@ async def show_profile(target: Message | CallbackQuery, container: AppContainer,
             agreement_url=agreement_url(container.settings),
             privacy_url=privacy_url(container.settings),
             share_url=referral_share_vpn_url(container.settings, getattr(user, "referral_code", None)),
+            portal_url=portal_url,
         ).as_markup(),
         media_section="profile",
         force_new_message=not isinstance(target, CallbackQuery),
@@ -1151,7 +1168,7 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
     await send_card_with_optional_media(
         target,
         (
-            "💳 Баланс\n\n"
+            "💼 Кошелёк\n\n"
             f"На счёте: {Decimal(user.balance_rub):.2f} ₽\n"
             f"Платежей в истории: {len(requests)}\n"
             f"Ожидают подтверждения: {pending_requests}\n"
@@ -1166,9 +1183,16 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
     )
 
 
-def build_home_markup(*, settings, show_trial: bool, referral_code: str | None = None, allow_share: bool = True):
+def build_home_markup(
+    *,
+    settings,
+    show_trial: bool,
+    referral_code: str | None = None,
+    allow_share: bool = True,
+    portal_url: str | None = None,
+):
     share_url = referral_share_vpn_url(settings, referral_code) if allow_share else None
-    return menu_actions(show_trial=show_trial, share_url=share_url).as_markup()
+    return menu_actions(show_trial=show_trial, share_url=share_url, portal_url=portal_url).as_markup()
 
 
 async def send_home_card(
@@ -1182,17 +1206,21 @@ async def send_home_card(
     as_new_message: bool = False,
 ) -> None:
     text = home_text(user, subscription, container.settings, latest_subscription=latest_subscription)
+    async with container.hub() as inner_hub:
+        portal_url = await create_portal_autologin_url(inner_hub, container.settings, user.id)
     primary_markup = build_home_markup(
         settings=container.settings,
         show_trial=show_trial,
         referral_code=getattr(user, "referral_code", None),
         allow_share=True,
+        portal_url=portal_url,
     )
     fallback_markup = build_home_markup(
         settings=container.settings,
         show_trial=show_trial,
         referral_code=getattr(user, "referral_code", None),
         allow_share=False,
+        portal_url=portal_url,
     )
     await send_card_with_optional_media(
         target,
@@ -1389,6 +1417,7 @@ async def site_link(message: Message, container: AppContainer):
         user = await ensure_client_access(message, container, hub)
         if user is None:
             return
+        portal_url = await create_portal_autologin_url(hub, container.settings, user.id)
     result = await message.answer(
         "🌐 Сайт ALTLINK\n\n"
         f"Главная страница: {site_public_url(container.settings) or 'ещё не настроена'}\n"
@@ -1396,7 +1425,7 @@ async def site_link(message: Message, container: AppContainer):
         "На сайте можно посмотреть тарифы, подключение и войти в кабинет через Telegram.",
         reply_markup=site_actions(
             site_public_url(container.settings),
-            portal_public_url(container.settings),
+            portal_url,
         ).as_markup(),
     )
     remember_client_card(result, has_media=False)
@@ -1695,17 +1724,34 @@ async def topup_confirm_amount(callback: CallbackQuery, container: AppContainer)
 async def topup_provider_menu(callback: CallbackQuery, container: AppContainer):
     amount_token = callback.data.split(":")[-1]
     amount = parse_topup_amount_token(amount_token)
+    provider_urls: dict[str, str] = {}
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
         configured_provider = hub.topups.configured_provider()
         resolved_provider = hub.topups.resolved_provider()
-    await show_topup_provider_menu(
-        callback,
-        amount,
-        available_topup_provider_codes(configured_provider, resolved_provider),
-    )
+        providers = available_topup_provider_codes(configured_provider, resolved_provider)
+        if "yookassa" in providers:
+            requests = await hub.topups.list_requests(user_id=user.id)
+            reusable = next(
+                (
+                    item
+                    for item in requests
+                    if str(item.status) == "new"
+                    and (getattr(item, "provider_code", "") or "").strip().lower() == "yookassa"
+                    and Decimal(item.amount_rub) == amount
+                    and getattr(item, "external_payment_url", None)
+                ),
+                None,
+            )
+            if reusable is not None and reusable.external_payment_url:
+                provider_urls["yookassa"] = reusable.external_payment_url
+            else:
+                checkout = await hub.topups.create_checkout(user.id, amount, provider_code="yookassa")
+                if checkout.payment_url:
+                    provider_urls["yookassa"] = checkout.payment_url
+    await show_topup_provider_menu(callback, amount, providers, provider_urls=provider_urls)
 
 
 @router.callback_query(F.data.startswith("client:topup_provider:"))
@@ -2100,7 +2146,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
             )
             current_subscription = subscription
         except ConflictError as exc:
-            text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
+            text = f"{exc}\n\nСначала пополните баланс через раздел «Кошелёк»."
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
         if current_subscription is None:
@@ -2120,7 +2166,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
             )
             current_subscription = subscription
         except ConflictError as exc:
-            text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
+            text = f"{exc}\n\nСначала пополните баланс через раздел «Кошелёк»."
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
         if current_subscription is None:

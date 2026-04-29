@@ -194,7 +194,7 @@ def test_portal_login_resume_url_points_back_to_login_page_with_token():
     assert url == "https://altlink.online/portal/login?token=demo-token"
 
 
-def test_home_text_includes_site_links_in_main_menu():
+def test_home_text_keeps_menu_compact_and_mentions_cabinet_button():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("199.00"), status="active")
     subscription = SimpleNamespace(
@@ -204,8 +204,9 @@ def test_home_text_includes_site_links_in_main_menu():
 
     text = client_handlers.home_text(user, subscription, settings)
 
-    assert "Сайт: https://altlink.online" in text
-    assert "Кабинет: https://altlink.online/portal" in text
+    assert "Сайт: https://altlink.online" not in text
+    assert "Кабинет: https://altlink.online/portal" not in text
+    assert "✨ Всё управление VPN доступно кнопками ниже." in text
 
 
 def test_profile_text_keeps_only_key_details_and_links():
@@ -222,11 +223,11 @@ def test_profile_text_keeps_only_key_details_and_links():
 
     text = client_handlers.profile_text(user, subscription, settings)
 
-    assert "Баланс: 99.00 ₽" in text
+    assert "💼 Баланс: 99.00 ₽" in text
     assert "Тариф: Pro" in text
     assert "Сервер: NL Node" in text
-    assert "Сайт: https://altlink.online" in text
-    assert "Кабинет: https://altlink.online/portal" in text
+    assert "Сайт: https://altlink.online" not in text
+    assert "Кабинет: https://altlink.online/portal" not in text
     assert "Telegram ID" not in text
     assert "Формат списания" not in text
     assert "Лимит устройств" not in text
@@ -240,12 +241,12 @@ def test_topup_amount_confirmation_text_prompts_next_step():
     assert "способ оплаты" in text
 
 
-def test_topup_provider_selection_text_lists_yookassa():
+def test_topup_provider_selection_text_points_to_buttons_only():
     text = client_handlers.topup_provider_selection_text(Decimal("350"), ["yookassa"])
 
     assert "Сумма: 350.00 ₽" in text
-    assert "YooKassa" in text
-    assert "Выберите вариант оплаты" in text
+    assert "YooKassa" not in text
+    assert "Нажмите на удобный способ оплаты ниже." in text
 
 
 def test_available_topup_provider_codes_follow_resolved_provider():

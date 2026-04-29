@@ -71,22 +71,28 @@ def portal_login_actions(token: str) -> InlineKeyboardBuilder:
 def portal_login_complete_actions(portal_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if portal_url:
-        builder.button(text="Открыть кабинет", url=portal_url, style="success")
-    builder.button(text="Меню", callback_data="client:home", style="primary")
+        builder.button(text="🚀 Открыть кабинет", url=portal_url, style="success")
+    builder.button(text="🏠 Меню", callback_data="client:home", style="primary")
     builder.adjust(1, 1)
     return builder
 
 
-def menu_actions(*, show_trial: bool, share_url: str | None = None) -> InlineKeyboardBuilder:
+def menu_actions(*, show_trial: bool, share_url: str | None = None, portal_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Баланс", callback_data="client:balance", style="primary")
-    builder.button(text="Подписка", callback_data="client:subscription", style="primary")
+    builder.button(text="💼 Кошелёк", callback_data="client:balance", style="primary")
+    builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
+    if portal_url:
+        builder.button(text="🌐 Личный кабинет", url=portal_url, style="success")
     if share_url:
-        builder.button(text="Поделиться VPN", url=share_url, style="success")
-    builder.button(text="Поддержка", callback_data="client:support", style="primary")
+        builder.button(text="📣 Поделиться VPN", url=share_url, style="success")
+    builder.button(text="🛟 Поддержка", callback_data="client:support", style="primary")
     if show_trial:
-        builder.button(text="Тест на 2 дня", callback_data="client:trial_activate", style="success")
-    row_sizes = [2, 2 if share_url else 1]
+        builder.button(text="🎁 Тест на 2 дня", callback_data="client:trial_activate", style="success")
+    row_sizes = [2]
+    second_row = int(bool(portal_url)) + int(bool(share_url))
+    if second_row:
+        row_sizes.append(second_row)
+    row_sizes.append(1)
     if show_trial:
         row_sizes.append(1)
     builder.adjust(*row_sizes)
@@ -95,11 +101,11 @@ def menu_actions(*, show_trial: bool, share_url: str | None = None) -> InlineKey
 
 def balance_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Пополнить баланс", callback_data="client:topup_menu", style="success")
-    builder.button(text="История платежей", callback_data="client:my_topups", style="primary")
-    builder.button(text="Промокод", callback_data="client:promo_prompt", style="primary")
-    builder.button(text="Рефералка", callback_data="client:referral", style="success")
-    builder.button(text="Меню", callback_data="client:home")
+    builder.button(text="➕ Пополнить баланс", callback_data="client:topup_menu", style="success")
+    builder.button(text="🧾 История платежей", callback_data="client:my_topups", style="primary")
+    builder.button(text="🎟 Промокод", callback_data="client:promo_prompt", style="primary")
+    builder.button(text="👥 Рефералка", callback_data="client:referral", style="success")
+    builder.button(text="🏠 Меню", callback_data="client:home")
     builder.adjust(2, 2, 1)
     return builder
 
@@ -109,19 +115,24 @@ def profile_actions(
     agreement_url: str | None = None,
     privacy_url: str | None = None,
     share_url: str | None = None,
+    portal_url: str | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if agreement_url:
-        builder.button(text="Пользовательское соглашение", url=agreement_url, style="primary")
+        builder.button(text="📘 Пользовательское соглашение", url=agreement_url, style="primary")
     if privacy_url:
-        builder.button(text="Политика конфиденциальности", url=privacy_url)
+        builder.button(text="🔐 Политика конфиденциальности", url=privacy_url)
+    if portal_url:
+        builder.button(text="🌐 Личный кабинет", url=portal_url, style="success")
     if share_url:
-        builder.button(text="Поделиться VPN", url=share_url, style="success")
-    builder.button(text="Подписка", callback_data="client:subscription", style="primary")
-    builder.button(text="Меню", callback_data="client:home")
+        builder.button(text="📣 Поделиться VPN", url=share_url, style="success")
+    builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
+    builder.button(text="🏠 Меню", callback_data="client:home")
     row_sizes: list[int] = []
     if agreement_url or privacy_url:
         row_sizes.append(2 if agreement_url and privacy_url else 1)
+    if portal_url:
+        row_sizes.append(1)
     if share_url:
         row_sizes.append(1)
     row_sizes.extend([1, 1])
@@ -174,9 +185,9 @@ def subscription_link_actions(*, show_traffic: bool, help_url: str | None = None
 def support_actions(support_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if support_url:
-        builder.button(text="Аккаунт поддержки", url=support_url, style="primary")
-    builder.button(text="Не работает VPN?", callback_data="client:support_issue", style="primary")
-    builder.button(text="Меню", callback_data="client:home")
+        builder.button(text="💬 Аккаунт поддержки", url=support_url, style="primary")
+    builder.button(text="🛠 Не работает VPN?", callback_data="client:support_issue", style="primary")
+    builder.button(text="🏠 Меню", callback_data="client:home")
     builder.adjust(2, 1)
     return builder
 
@@ -184,10 +195,10 @@ def support_actions(support_url: str | None = None) -> InlineKeyboardBuilder:
 def site_actions(site_url: str | None = None, portal_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if site_url:
-        builder.button(text="Открыть сайт", url=site_url, style="primary")
+        builder.button(text="🌐 Открыть сайт", url=site_url, style="primary")
     if portal_url:
-        builder.button(text="Личный кабинет", url=portal_url, style="success")
-    builder.button(text="Меню", callback_data="client:home")
+        builder.button(text="🚀 Личный кабинет", url=portal_url, style="success")
+    builder.button(text="🏠 Меню", callback_data="client:home")
     row_sizes: list[int] = []
     links_count = int(bool(site_url)) + int(bool(portal_url))
     if links_count:
@@ -249,30 +260,39 @@ def topup_actions() -> InlineKeyboardBuilder:
 def topup_amount_confirm_actions(amount_token: str) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(
-        text="Оплатить",
+        text="💳 Оплатить",
         callback_data=f"client:topup_provider_menu:{amount_token}",
         style="success",
     )
-    builder.button(text="Изменить сумму", callback_data="client:topup_menu", style="primary")
-    builder.button(text="Баланс", callback_data="client:balance")
+    builder.button(text="✏️ Изменить сумму", callback_data="client:topup_menu", style="primary")
+    builder.button(text="💼 Кошелёк", callback_data="client:balance")
     builder.adjust(1, 1, 1)
     return builder
 
 
-def topup_provider_actions(amount_token: str, providers: list[tuple[str, str]]) -> InlineKeyboardBuilder:
+def topup_provider_actions(
+    amount_token: str,
+    providers: list[tuple[str, str]],
+    *,
+    provider_urls: dict[str, str] | None = None,
+) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+    url_map = provider_urls or {}
     for provider_code, provider_label in providers:
-        builder.button(
-            text=provider_label,
-            callback_data=f"client:topup_provider:{provider_code}:{amount_token}",
-            style="success",
-        )
+        if provider_code in url_map:
+            builder.button(text=provider_label, url=url_map[provider_code], style="success")
+        else:
+            builder.button(
+                text=provider_label,
+                callback_data=f"client:topup_provider:{provider_code}:{amount_token}",
+                style="success",
+            )
     builder.button(
-        text="Назад",
+        text="⬅️ Назад",
         callback_data=f"client:topup_confirm_amount:{amount_token}",
         style="primary",
     )
-    builder.button(text="Баланс", callback_data="client:balance")
+    builder.button(text="💼 Кошелёк", callback_data="client:balance")
     builder.adjust(*([1] * len(providers)), 1, 1)
     return builder
 
@@ -291,10 +311,10 @@ def topup_checkout_actions(
         builder.button(text=payment_label, url=payment_url, style="success")
         action_count += 1
     if can_check and request_id:
-        builder.button(text="Проверить оплату", callback_data=f"client:topup_check:{request_id}", style="primary")
+        builder.button(text="🔎 Проверить оплату", callback_data=f"client:topup_check:{request_id}", style="primary")
         action_count += 1
-    builder.button(text="История платежей", callback_data="client:my_topups", style="primary")
-    builder.button(text="Баланс", callback_data="client:balance")
+    builder.button(text="🧾 История платежей", callback_data="client:my_topups", style="primary")
+    builder.button(text="💼 Кошелёк", callback_data="client:balance")
     if action_count:
         rows.append(action_count)
     rows.extend([1, 1])
