@@ -267,6 +267,27 @@ def test_topup_provider_status_text_explains_missing_yookassa_settings():
     assert "тестовая заглушка" in text
 
 
+def test_balance_topup_status_text_reflects_live_yookassa():
+    text = client_handlers.balance_topup_status_text(
+        configured_provider="yookassa",
+        resolved_provider="yookassa",
+        missing_settings=[],
+    )
+
+    assert text == "Пополнение доступно через YooKassa."
+
+
+def test_balance_topup_status_text_reflects_stub_fallback():
+    text = client_handlers.balance_topup_status_text(
+        configured_provider="yookassa",
+        resolved_provider="stub",
+        missing_settings=["YOOKASSA_SECRET_KEY"],
+    )
+
+    assert "YOOKASSA_SECRET_KEY" in text
+    assert "тестовая заглушка" in text
+
+
 @pytest.mark.asyncio
 async def test_get_access_state_auto_verifies_subscribed_user(test_services, monkeypatch):
     message = DummyMessage(text="Меню", user_id=21003)

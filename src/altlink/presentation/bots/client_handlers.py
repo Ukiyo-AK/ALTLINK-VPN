@@ -157,6 +157,23 @@ def topup_provider_status_text(*, configured_provider: str, resolved_provider: s
     return "Пополнение будет обработано автоматически."
 
 
+def balance_topup_status_text(*, configured_provider: str, resolved_provider: str, missing_settings: list[str]) -> str:
+    if configured_provider == "yookassa":
+        if resolved_provider == "yookassa":
+            return "Пополнение доступно через YooKassa."
+        missing = ", ".join(missing_settings) or "YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY"
+        return (
+            "YooKassa выбрана как касса, но бот не видит полную настройку.\n"
+            f"Не хватает: {missing}.\n"
+            "Пока используется тестовая заглушка."
+        )
+    if resolved_provider == "manual":
+        return "Пополнение пока проходит вручную через администратора."
+    if resolved_provider == "stub":
+        return "Пополнение сейчас работает через тестовую заглушку и зачисляется автоматически."
+    return "Способ пополнения будет определён автоматически."
+
+
 def topup_status_label(raw_status: str) -> str:
     labels = {
         "approved": "зачислено",
@@ -1030,22 +1047,6 @@ async def show_home(target: Message | CallbackQuery, container: AppContainer, hu
     )
 
 
-async def show_balance(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
-    user = await ensure_user(target.from_user, container, hub)
-    requests = await hub.topups.list_requests(user_id=user.id)
-    await send_card_with_optional_media(
-        target,
-        (
-            "Баланс\n\n"
-            f"На счёте: {Decimal(user.balance_rub):.2f} ₽\n"
-            f"Платежей в истории: {len(requests)}\n\n"
-            "Пополнение сейчас работает через тестовую заглушку и зачисляется автоматически."
-        ),
-        primary_markup=balance_actions().as_markup(),
-        media_section="balance",
-    )
-
-
 async def show_profile(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
     user = await ensure_user(target.from_user, container, hub)
     subscription = await hub.accounts.get_current_subscription(user.id)
@@ -1100,6 +1101,9 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
     requests = await hub.topups.list_requests(user_id=user.id)
     pending_requests = len([item for item in requests if str(item.status) == "new"])
     pending_discount, _, _ = await hub.promos.calculate_discount(user.id, Decimal("100"))
+    configured_provider = hub.topups.configured_provider()
+    resolved_provider = hub.topups.resolved_provider()
+    missing_settings = hub.topups.yookassa_missing_settings()
     await send_card_with_optional_media(
         target,
         (
@@ -1109,7 +1113,7 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
             f"Ожидают подтверждения: {pending_requests}\n"
             f"Ваш реферальный код: {getattr(user, 'referral_code', 'будет создан позже')}\n"
             f"Ожидающая скидка по промокоду: {pending_discount:.2f} ₽\n\n"
-            "Пополнение пока проходит вручную через администратора.\n"
+            f"{balance_topup_status_text(configured_provider=configured_provider, resolved_provider=resolved_provider, missing_settings=missing_settings)}\n"
             "Промокод можно ввести кнопкой ниже, а реферальную ссылку открыть отдельно."
         ),
         primary_markup=balance_actions().as_markup(),
