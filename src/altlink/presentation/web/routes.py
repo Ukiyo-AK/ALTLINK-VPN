@@ -7,11 +7,10 @@ import re
 from decimal import Decimal
 from html import escape
 from pathlib import Path
-from urllib.parse import quote, urlparse, urlsplit, urlunsplit
+from urllib.parse import urlparse
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from sqlalchemy import select
@@ -31,11 +30,6 @@ from altlink.utils.latency import (
 )
 from altlink.utils.qr import render_qr_png
 from altlink.utils.security import generate_token
-from altlink.utils.subscriptions import (
-    build_client_announce_text,
-    decode_announce_header,
-    encode_announce_header,
-)
 from altlink.utils.telegram_web import check_channel_membership, verify_telegram_auth_payload
 
 router = APIRouter(tags=["web"])
@@ -138,73 +132,6 @@ def portal_login_qr_data_url(payload: str | None) -> str | None:
     if not payload:
         return None
     return f"data:image/png;base64,{base64.b64encode(render_qr_png(payload)).decode('ascii')}"
-
-
-def upstream_subscription_url(settings, short_uuid: str, client_type: str | None = None) -> str | None:
-    public_url = settings.remnawave_subscription_public_base
-    parsed = urlparse(public_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not short_uuid:
-        return None
-
-    url = f"{public_url.rstrip('/')}/{short_uuid}"
-    if client_type:
-        url = f"{url}/{client_type}"
-    return url
-
-
-def append_subscription_client_type(url: str, client_type: str | None = None) -> str:
-    if not client_type:
-        return url
-    parsed = urlsplit(url)
-    path = f"{parsed.path.rstrip('/')}/{quote(client_type, safe='')}"
-    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
-
-
-def forwarded_subscription_headers(request: Request) -> dict[str, str]:
-    allowed = (
-        "user-agent",
-        "x-hwid",
-        "x-device-os",
-        "x-ver-os",
-        "x-device-model",
-        "accept",
-    )
-    headers: dict[str, str] = {}
-    for name in allowed:
-        value = request.headers.get(name)
-        if value:
-            headers[name] = value
-    return headers
-
-
-def build_announce_header(user, subscription, settings, existing_value: str | None = None) -> str:
-    lines = [build_client_announce_text(user, subscription, settings)]
-    existing_text = decode_announce_header(existing_value)
-    if existing_text:
-        lines.append(existing_text)
-    return encode_announce_header("\n\n".join(lines))
-
-
-def filtered_proxy_headers(headers: httpx.Headers) -> dict[str, str]:
-    excluded = {
-        "connection",
-        "content-encoding",
-        "content-length",
-        "content-type",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailer",
-        "transfer-encoding",
-        "upgrade",
-    }
-    result: dict[str, str] = {}
-    for key, value in headers.items():
-        if key.lower() in excluded:
-            continue
-        result[key] = value
-    return result
 
 
 async def ensure_portal_login_attempt(request: Request, hub):
@@ -578,63 +505,6 @@ async def latency_probe(request: Request) -> JSONResponse:
             "probes": probes,
         },
         headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
-    )
-
-
-@router.get("/sub/{short_uuid}")
-@router.get("/sub/{short_uuid}/{client_type}")
-async def subscription_proxy(request: Request, short_uuid: str, client_type: str | None = None):
-    async with request.app.state.container.hub() as hub:
-        user = await hub.accounts.get_user_by_remnawave_short_uuid(short_uuid)
-        subscription = await hub.accounts.get_current_subscription(user.id) if user is not None else None
-        upstream_url = None
-        explicit_subscription_base = (request.app.state.settings.remnawave_subscription_base_url or "").strip()
-        if explicit_subscription_base:
-            upstream_url = upstream_subscription_url(request.app.state.settings, short_uuid, client_type)
-        elif getattr(hub, "remnawave", None) is not None:
-            try:
-                info = await hub.remnawave.get_subscription_info(short_uuid)
-            except Exception:
-                info = None
-            if info and getattr(info, "subscriptionUrl", None):
-                upstream_url = append_subscription_client_type(info.subscriptionUrl, client_type)
-        if not upstream_url:
-            upstream_url = upstream_subscription_url(request.app.state.settings, short_uuid, client_type)
-
-    if not upstream_url:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Subscription proxy is not configured.")
-
-    query_params = list(request.query_params.multi_items())
-    try:
-        async with httpx.AsyncClient(
-            timeout=request.app.state.settings.remnawave_timeout_seconds,
-            follow_redirects=True,
-        ) as client:
-            upstream_response = await client.get(
-                upstream_url,
-                params=query_params,
-                headers=forwarded_subscription_headers(request),
-            )
-    except httpx.HTTPError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Не удалось получить подписку из Remnawave: {exc}",
-        ) from exc
-
-    response_headers = filtered_proxy_headers(upstream_response.headers)
-    if user is not None and upstream_response.status_code == 200:
-        response_headers["announce"] = build_announce_header(
-            user,
-            subscription,
-            request.app.state.settings,
-            upstream_response.headers.get("announce"),
-        )
-
-    return Response(
-        content=upstream_response.content,
-        status_code=upstream_response.status_code,
-        media_type=upstream_response.headers.get("content-type"),
-        headers=response_headers,
     )
 
 

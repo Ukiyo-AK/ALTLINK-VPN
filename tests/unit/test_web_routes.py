@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
@@ -10,11 +9,9 @@ import pytest
 
 from altlink.domain.enums import PlanCode
 from altlink.presentation.web.routes import (
-    build_announce_header,
     group_portal_plans,
     is_foreign_latency_target,
     latency_probe,
-    subscription_proxy,
     load_document_text,
     ensure_portal_login_attempt,
     portal_bot_login_url,
@@ -26,7 +23,6 @@ from altlink.presentation.web.routes import (
     server_probe_port,
     LATENCY_RECHECK_THRESHOLD_MS,
 )
-from altlink.utils.subscriptions import build_client_announce_text, local_subscription_proxy_url
 
 
 def plan(
@@ -262,161 +258,6 @@ def test_portal_bot_login_helpers_build_deeplink_and_qr():
     assert deep_link == "https://t.me/altlink_bot?start=login_demo-token"
     assert qr_data_url is not None
     assert qr_data_url.startswith("data:image/png;base64,")
-
-
-def test_local_subscription_proxy_url_builds_backend_link():
-    settings = SimpleNamespace(backend_public_url="https://altlink.online")
-
-    assert local_subscription_proxy_url(settings, "demo-short") == "https://altlink.online/sub/demo-short"
-    assert local_subscription_proxy_url(settings, "demo-short", "clash") == "https://altlink.online/sub/demo-short/clash"
-
-
-def test_build_client_announce_text_includes_tariff_balance_and_status():
-    settings = SimpleNamespace()
-    user = SimpleNamespace(balance_rub=Decimal("149.50"), status="active")
-    subscription = SimpleNamespace(plan=SimpleNamespace(name="Pro", device_limit=8))
-
-    text = build_client_announce_text(user, subscription, settings)
-
-    assert "🧾 Тариф: Pro" in text
-    assert "💳 Баланс: 149.50 ₽" in text
-    assert "📱 Устройств: до 8" in text
-    assert "🔔 Статус: доступ активен" in text
-
-
-def test_build_announce_header_appends_upstream_announce():
-    settings = SimpleNamespace()
-    user = SimpleNamespace(balance_rub=Decimal("75"), status="trial")
-    subscription = SimpleNamespace(plan=SimpleNamespace(name="Тестовый период", device_limit=2))
-
-    header = build_announce_header(user, subscription, settings, "base64:0J/RgNC40LLQtdGC")
-
-    assert header.startswith("base64:")
-    assert "Привет" in base64.b64decode(header.split(":", 1)[1]).decode("utf-8")
-
-
-@pytest.mark.asyncio
-async def test_subscription_proxy_overrides_announce_and_preserves_upstream_body(test_services, monkeypatch):
-    test_services.settings.backend_public_url = "https://altlink.online"
-    test_services.settings.remnawave_subscription_base_url = "https://sub.remna.example"
-
-    async with test_services.hub() as hub:
-        user = await hub.accounts.get_or_create_user(
-            telegram_id=42001,
-            username="announce_user",
-            first_name="Announce",
-            last_name="User",
-            language_code="ru",
-        )
-        await hub.billing.activate_trial(user.id)
-        user = await hub.accounts.get_user(user.id)
-        short_uuid = user.remnawave_short_uuid
-
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            self.kwargs = kwargs
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def get(self, url, *, params=None, headers=None):
-            assert url == f"https://sub.remna.example/{short_uuid}"
-            assert headers["user-agent"] == "Happ/1.0"
-            assert headers["x-hwid"] == "device-1"
-            return SimpleNamespace(
-                status_code=200,
-                content=b"vmess://demo",
-                headers={
-                    "content-type": "text/plain; charset=utf-8",
-                    "content-disposition": "attachment; filename=demo",
-                    "announce": "base64:0J/RgNC40LLQtdGC",
-                },
-            )
-
-    monkeypatch.setattr("altlink.presentation.web.routes.httpx.AsyncClient", FakeAsyncClient)
-
-    request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(container=test_services, settings=test_services.settings)),
-        headers={
-            "user-agent": "Happ/1.0",
-            "x-hwid": "device-1",
-        },
-        query_params=SimpleNamespace(multi_items=lambda: []),
-    )
-
-    response = await subscription_proxy(request, short_uuid)
-
-    assert response.status_code == 200
-    assert response.body == b"vmess://demo"
-    assert response.headers["content-disposition"] == "attachment; filename=demo"
-    decoded = base64.b64decode(response.headers["announce"].split(":", 1)[1]).decode("utf-8")
-    assert "🧾 Тариф:" in decoded
-    assert "💳 Баланс:" in decoded
-    assert "Привет" in decoded
-
-
-@pytest.mark.asyncio
-async def test_subscription_proxy_uses_real_remnawave_subscription_url_when_explicit_base_is_missing(test_services, monkeypatch):
-    test_services.settings.backend_public_url = "https://altlink.online"
-    test_services.settings.remnawave_base_url = "https://panel.remna.example"
-    test_services.settings.remnawave_subscription_base_url = ""
-
-    async with test_services.hub() as hub:
-        user = await hub.accounts.get_or_create_user(
-            telegram_id=42002,
-            username="proxy_real_url",
-            first_name="Proxy",
-            last_name="RealUrl",
-            language_code="ru",
-        )
-        await hub.billing.activate_trial(user.id)
-        user = await hub.accounts.get_user(user.id)
-        short_uuid = user.remnawave_short_uuid
-
-    async def fake_get_subscription_info(short_uuid_value: str):
-        assert short_uuid_value == short_uuid
-        return SimpleNamespace(
-            isFound=True,
-            user=None,
-            links=[],
-            ssConfLinks={},
-            subscriptionUrl=f"https://sub.remna.example/public/subscriptions/{short_uuid_value}",
-        )
-
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            self.kwargs = kwargs
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        async def get(self, url, *, params=None, headers=None):
-            assert url == f"https://sub.remna.example/public/subscriptions/{short_uuid}"
-            return SimpleNamespace(
-                status_code=200,
-                content=b"vmess://real-upstream",
-                headers={"content-type": "text/plain; charset=utf-8"},
-            )
-
-    monkeypatch.setattr(test_services.remnawave, "get_subscription_info", fake_get_subscription_info)
-    monkeypatch.setattr("altlink.presentation.web.routes.httpx.AsyncClient", FakeAsyncClient)
-
-    request = SimpleNamespace(
-        app=SimpleNamespace(state=SimpleNamespace(container=test_services, settings=test_services.settings)),
-        headers={"user-agent": "Happ/1.0"},
-        query_params=SimpleNamespace(multi_items=lambda: []),
-    )
-
-    response = await subscription_proxy(request, short_uuid)
-
-    assert response.status_code == 200
-    assert response.body == b"vmess://real-upstream"
 
 
 @pytest.mark.asyncio

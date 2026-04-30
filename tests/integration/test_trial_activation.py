@@ -56,7 +56,7 @@ async def test_trial_activation_uses_any_available_server_when_ten_gbit_unavaila
 
 
 @pytest.mark.asyncio
-async def test_subscription_bundle_prefers_local_proxy_link_when_backend_public_url_configured(test_services):
+async def test_subscription_bundle_keeps_direct_remnawave_link(test_services):
     test_services.settings.backend_public_url = "https://altlink.online"
 
     async with test_services.hub() as hub:
@@ -70,4 +70,4 @@ async def test_subscription_bundle_prefers_local_proxy_link_when_backend_public_
         await hub.billing.activate_trial(user.id)
         bundle = await hub.accounts.get_subscription_bundle(user.id)
 
-    assert bundle["subscription_info"].subscriptionUrl == f"https://altlink.online/sub/{user.remnawave_short_uuid}"
+    assert bundle["subscription_info"].subscriptionUrl == f"https://sub.example/{user.remnawave_short_uuid}"
