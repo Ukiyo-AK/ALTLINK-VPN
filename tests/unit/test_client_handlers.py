@@ -537,9 +537,12 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "🟡" not in text
     assert "До 2 устройств" in text
     assert "До 8 устройств" in text
+    assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "серверы со скоростью до 10 Гбит/с" in text
     assert "🛡️ Белые списки доступны отдельно: 4 ₽ за 1 ГБ" in text
     assert "🛡️ Обход белых списков без ограничений" in text
+    assert "⚡ — высокоскоростной сервер" in text
+    assert "«Обход БС» — сервер белых списков" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
     assert "ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!" in text
 
@@ -610,7 +613,8 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     assert "<b>Start</b>" in text
     assert "До 2 устройств" in text
     assert "Безлимитный трафик на основном сервере" in text
-    assert "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с" in text
+    assert "⚡ Один случайный высокоскоростной сервер" in text
+    assert "В интерфейсе он отмечен ⚡" in text
     assert "Что такое обход белых списков" in text
     assert "4 ₽ за 1 ГБ" in text
 
