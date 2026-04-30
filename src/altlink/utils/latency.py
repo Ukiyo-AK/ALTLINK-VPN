@@ -51,8 +51,11 @@ async def single_probe_server_latency(server, *, timeout_seconds: float = 2.5) -
     started = time.perf_counter()
     writer = None
     try:
+        host = server_probe_host(server)
+        if not host:
+            raise ValueError("empty server address")
         _, writer = await asyncio.wait_for(
-            asyncio.open_connection(server.address, server_probe_port(server)),
+            asyncio.open_connection(host, server_probe_port(server)),
             timeout=timeout_seconds,
         )
         latency_ms = max(1, round((time.perf_counter() - started) * 1000))

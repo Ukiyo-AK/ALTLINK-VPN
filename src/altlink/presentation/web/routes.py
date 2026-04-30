@@ -463,7 +463,6 @@ async def latency_probe(request: Request) -> JSONResponse:
         server
         for server in servers
         if getattr(server, "is_available", False)
-        and getattr(server, "is_connected", False)
         and (not requested_server_ids or getattr(server, "id", None) in requested_server_ids)
         and (include_local or is_foreign_latency_target(server))
     ]
@@ -473,6 +472,7 @@ async def latency_probe(request: Request) -> JSONResponse:
             "name": getattr(server, "name", None),
             "address": getattr(server, "address", None),
             "country_code": (getattr(server, "country_code", "") or "").upper(),
+            "is_connected": bool(getattr(server, "is_connected", False)),
             "probe_scheme": settings.latency_probe_scheme,
             "probe_port": settings.latency_probe_port,
             "probe_path": settings.latency_probe_path,

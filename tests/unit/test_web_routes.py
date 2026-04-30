@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from altlink.domain.enums import PlanCode
+from altlink.utils.latency import single_probe_server_latency
 from altlink.presentation.web.routes import (
     group_portal_plans,
     is_foreign_latency_target,
@@ -128,6 +129,36 @@ def test_server_latency_helpers_filter_and_choose_port():
 
 
 @pytest.mark.asyncio
+async def test_single_probe_server_latency_uses_normalized_host(monkeypatch):
+    captured: dict[str, object] = {}
+    server = SimpleNamespace(
+        name="NL Node",
+        country_code="NL",
+        address="https://nl.example.com:9443/node",
+        inbounds=[SimpleNamespace(port=2053, is_active=True)],
+    )
+
+    class DummyWriter:
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def fake_open_connection(host, port):
+        captured["host"] = host
+        captured["port"] = port
+        return object(), DummyWriter()
+
+    monkeypatch.setattr("asyncio.open_connection", fake_open_connection)
+
+    result = await single_probe_server_latency(server)
+
+    assert result["reachable"] is True
+    assert captured == {"host": "nl.example.com", "port": 2053}
+
+
+@pytest.mark.asyncio
 async def test_probe_server_latency_rechecks_high_values(monkeypatch):
     server = SimpleNamespace(name="FI Node", country_code="FI", address="node.example", inbounds=[])
     calls = [
@@ -230,8 +261,11 @@ async def test_latency_probe_can_limit_to_requested_servers_and_include_local(mo
     assert b"RU Main" in response.body
     assert b"server_id\":\"ru-1" in response.body
     assert b"probe_url\":\"https://ru.example.com:44443/ping" in response.body
+    assert b"DE Node" in response.body
+    assert b"server_id\":\"de-1" in response.body
+    assert b"probe_url\":\"https://de.example.com:44443/ping" in response.body
+    assert b"is_connected\":false" in response.body
     assert b"3500" in response.body
-    assert b"DE Node" not in response.body
     assert b"NL Node" not in response.body
 
 
