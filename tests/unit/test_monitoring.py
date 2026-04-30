@@ -73,3 +73,24 @@ async def test_record_server_latency_state_alerts_only_on_new_unreachable_server
 
         repeat_alerts = await hub.monitoring.record_server_latency_state([unhealthy_probe])
         assert repeat_alerts == []
+
+
+@pytest.mark.asyncio
+async def test_manual_client_maintenance_blocks_regular_users_but_allows_exceptions(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=41001,
+            username="maintenance_tester",
+            first_name="Maintenance",
+            last_name="Tester",
+            language_code="ru",
+        )
+        await hub.monitoring.set_manual_client_maintenance(True)
+
+        assert await hub.monitoring.is_client_maintenance_active(telegram_id=41002) is True
+
+        await hub.monitoring.add_manual_maintenance_exception(user)
+        assert await hub.monitoring.is_client_maintenance_active(telegram_id=user.telegram_id) is False
+
+        await hub.monitoring.remove_manual_maintenance_exception(user)
+        assert await hub.monitoring.is_client_maintenance_active(telegram_id=user.telegram_id) is True

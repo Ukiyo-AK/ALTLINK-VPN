@@ -79,6 +79,56 @@ async def test_users_search_handles_reply_after_prompt(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_maintenance_toggle_updates_manual_state(monkeypatch):
+    rendered_states: list[dict] = []
+    state = {"enabled": False, "exceptions": []}
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_get_admin_by_telegram_id(telegram_id: int):
+        return SimpleNamespace(id="admin-1")
+
+    async def fake_get_manual_client_maintenance_state():
+        return dict(state)
+
+    async def fake_set_manual_client_maintenance(enabled: bool, *, actor_admin_id: str | None = None):
+        state["enabled"] = enabled
+        state["updated_by_admin_id"] = actor_admin_id
+        return dict(state)
+
+    async def fake_render_manual_maintenance_screen(target, *, container, manual_state: dict):
+        rendered_states.append(dict(manual_state))
+
+    class DummyCallback:
+        from_user = SimpleNamespace(id=42)
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            accounts=SimpleNamespace(get_admin_by_telegram_id=fake_get_admin_by_telegram_id),
+            monitoring=SimpleNamespace(
+                get_manual_client_maintenance_state=fake_get_manual_client_maintenance_state,
+                set_manual_client_maintenance=fake_set_manual_client_maintenance,
+            ),
+        )
+
+    container = SimpleNamespace(hub=fake_hub, settings=SimpleNamespace(remnawave_base_url="https://panel.example.com"))
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_manual_maintenance_screen", fake_render_manual_maintenance_screen)
+
+    await admin_handlers.maintenance_toggle(DummyCallback(), container)
+
+    assert state["enabled"] is True
+    assert state["updated_by_admin_id"] == "admin-1"
+    assert rendered_states
+    assert rendered_states[0]["enabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_toggle_server_callback_parses_callback_data(monkeypatch):
     calls: list[tuple[str, object]] = []
 

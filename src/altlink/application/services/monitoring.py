@@ -23,14 +23,100 @@ class MonitoringService(BaseService):
     REMNAWAVE_STATUS_KEY = "monitoring.remnawave_status"
     SERVER_OPERATIONAL_STATUS_KEY = "monitoring.server_operational_status"
     SERVER_LATENCY_STATUS_KEY = "monitoring.server_latency_status"
+    CLIENT_MANUAL_MAINTENANCE_KEY = "monitoring.client_manual_maintenance"
 
-    async def is_client_maintenance_active(self) -> bool:
+    async def is_client_maintenance_active(self, telegram_id: int | None = None) -> bool:
+        manual_state = await self.get_manual_client_maintenance_state()
+        if manual_state.get("enabled") and not self._is_manual_maintenance_exception(manual_state, telegram_id):
+            return True
+
         if not self._remnawave_is_configured():
             return False
         state = await self._read_setting(self.REMNAWAVE_STATUS_KEY)
         if not isinstance(state, dict):
             return False
         return state.get("available") is False
+
+    async def get_manual_client_maintenance_state(self) -> dict:
+        raw_state = await self._read_setting(self.CLIENT_MANUAL_MAINTENANCE_KEY)
+        return self._normalize_manual_maintenance_state(raw_state)
+
+    async def set_manual_client_maintenance(
+        self,
+        enabled: bool,
+        *,
+        actor_admin_id: str | None = None,
+    ) -> dict:
+        state = await self.get_manual_client_maintenance_state()
+        if state.get("enabled") == bool(enabled):
+            return state
+
+        state["enabled"] = bool(enabled)
+        state["updated_at"] = utc_now().isoformat()
+        state["updated_by_admin_id"] = actor_admin_id
+        await self._write_setting(
+            self.CLIENT_MANUAL_MAINTENANCE_KEY,
+            state,
+            description="Ручной режим технических работ клиентского бота и список исключений.",
+        )
+        await self.log_event(
+            level=SystemEventLevel.WARNING if enabled else SystemEventLevel.INFO,
+            event_type="client_manual_maintenance_enabled" if enabled else "client_manual_maintenance_disabled",
+            message="Ручной режим технических работ клиентского бота включён."
+            if enabled
+            else "Ручной режим технических работ клиентского бота отключён.",
+            payload={"exceptions": state.get("exceptions", [])},
+            actor_admin_id=actor_admin_id,
+        )
+        return state
+
+    async def add_manual_maintenance_exception(self, user, *, actor_admin_id: str | None = None) -> dict:
+        state = await self.get_manual_client_maintenance_state()
+        exceptions = state.get("exceptions", [])
+        serialized = self._serialize_manual_exception_user(user)
+        existing = {str(item.get("user_id")) for item in exceptions}
+        if serialized["user_id"] not in existing:
+            exceptions.append(serialized)
+            exceptions.sort(key=lambda item: str(item.get("telegram_id") or 0))
+            state["exceptions"] = exceptions
+            state["updated_at"] = utc_now().isoformat()
+            state["updated_by_admin_id"] = actor_admin_id
+            await self._write_setting(
+                self.CLIENT_MANUAL_MAINTENANCE_KEY,
+                state,
+                description="Ручной режим технических работ клиентского бота и список исключений.",
+            )
+            await self.log_event(
+                level=SystemEventLevel.INFO,
+                event_type="client_manual_maintenance_exception_added",
+                message="Пользователь добавлен в исключения ручных техработ клиентского бота.",
+                payload=serialized,
+                actor_admin_id=actor_admin_id,
+            )
+        return state
+
+    async def remove_manual_maintenance_exception(self, user, *, actor_admin_id: str | None = None) -> dict:
+        state = await self.get_manual_client_maintenance_state()
+        exceptions = state.get("exceptions", [])
+        user_id = str(getattr(user, "id", "") or "")
+        filtered = [item for item in exceptions if str(item.get("user_id") or "") != user_id]
+        if len(filtered) != len(exceptions):
+            state["exceptions"] = filtered
+            state["updated_at"] = utc_now().isoformat()
+            state["updated_by_admin_id"] = actor_admin_id
+            await self._write_setting(
+                self.CLIENT_MANUAL_MAINTENANCE_KEY,
+                state,
+                description="Ручной режим технических работ клиентского бота и список исключений.",
+            )
+            await self.log_event(
+                level=SystemEventLevel.INFO,
+                event_type="client_manual_maintenance_exception_removed",
+                message="Пользователь удалён из исключений ручных техработ клиентского бота.",
+                payload=self._serialize_manual_exception_user(user),
+                actor_admin_id=actor_admin_id,
+            )
+        return state
 
     async def capture_remnawave_status(self, *, error: str | None = None) -> dict:
         now = utc_now().isoformat()
@@ -208,3 +294,55 @@ class MonitoringService(BaseService):
             getattr(inbound, "is_active", False) and getattr(inbound, "remnawave_inbound_uuid", None)
             for inbound in getattr(server, "inbounds", None) or []
         )
+
+    def _normalize_manual_maintenance_state(self, raw_state) -> dict:
+        state = raw_state if isinstance(raw_state, dict) else {}
+        exceptions = state.get("exceptions")
+        if not isinstance(exceptions, list):
+            exceptions = []
+        normalized_exceptions = []
+        for item in exceptions:
+            if not isinstance(item, dict):
+                continue
+            telegram_id = item.get("telegram_id")
+            try:
+                telegram_id = int(telegram_id)
+            except (TypeError, ValueError):
+                continue
+            normalized_exceptions.append(
+                {
+                    "user_id": str(item.get("user_id") or ""),
+                    "telegram_id": telegram_id,
+                    "username": str(item.get("username") or "").strip() or None,
+                    "label": str(item.get("label") or "").strip() or self._exception_label(telegram_id, item.get("username")),
+                }
+            )
+        return {
+            "enabled": bool(state.get("enabled")),
+            "updated_at": state.get("updated_at"),
+            "updated_by_admin_id": state.get("updated_by_admin_id"),
+            "exceptions": normalized_exceptions,
+        }
+
+    def _serialize_manual_exception_user(self, user) -> dict:
+        telegram_id = int(getattr(user, "telegram_id"))
+        username = (getattr(user, "username", None) or "").strip() or None
+        return {
+            "user_id": str(getattr(user, "id")),
+            "telegram_id": telegram_id,
+            "username": username,
+            "label": self._exception_label(telegram_id, username),
+        }
+
+    def _exception_label(self, telegram_id: int, username: str | None) -> str:
+        if username:
+            return f"@{str(username).lstrip('@')}"
+        return str(telegram_id)
+
+    def _is_manual_maintenance_exception(self, state: dict, telegram_id: int | None) -> bool:
+        if telegram_id is None:
+            return False
+        for item in state.get("exceptions", []):
+            if int(item.get("telegram_id", 0)) == int(telegram_id):
+                return True
+        return False

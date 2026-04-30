@@ -273,3 +273,65 @@ async def test_plan_switch_keeps_compensation_message_only_in_transaction_histor
     ]
     assert compensation_descriptions == ["Компенсация остатка прошлого тарифа при смене плана"]
     assert switched.notes is None or "Компенсация остатка прошлого тарифа" not in switched.notes
+
+
+@pytest.mark.asyncio
+async def test_refresh_subscription_traffic_reads_fresh_usage_from_remnawave(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3009,
+            username="traffic_refresh",
+            first_name="Traffic",
+            last_name="Refresh",
+            language_code="ru",
+        )
+        await hub.accounts.adjust_balance(
+            user_id=user.id,
+            amount_rub=Decimal("500"),
+            transaction_type=BalanceTransactionType.TOPUP,
+            description="Seed balance",
+        )
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        user = await hub.accounts.get_user(user.id)
+        test_services.remnawave.set_usage(
+            user.remnawave_user_uuid,
+            used_bytes=7 * 1024**3,
+            lifetime_used_bytes=11 * 1024**3,
+        )
+        refreshed = await hub.billing.refresh_subscription_traffic(user.id)
+
+    assert refreshed is not None
+    assert refreshed.traffic_used_bytes == 7 * 1024**3
+
+
+@pytest.mark.asyncio
+async def test_plan_switch_preserves_traffic_counters(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3010,
+            username="switch_traffic",
+            first_name="Switch",
+            last_name="Traffic",
+            language_code="ru",
+        )
+        await hub.accounts.adjust_balance(
+            user_id=user.id,
+            amount_rub=Decimal("1000"),
+            transaction_type=BalanceTransactionType.TOPUP,
+            description="Seed balance",
+        )
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        user = await hub.accounts.get_user(user.id)
+        test_services.remnawave.set_usage(
+            user.remnawave_user_uuid,
+            used_bytes=9 * 1024**3,
+            lifetime_used_bytes=15 * 1024**3,
+        )
+        current = await hub.billing.refresh_subscription_traffic(user.id)
+        switched = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=True)
+        remote_user = await hub.remnawave.get_user(user.remnawave_user_uuid)
+
+    assert current is not None
+    assert current.traffic_used_bytes == 9 * 1024**3
+    assert switched.traffic_used_bytes == 9 * 1024**3
+    assert remote_user.userTraffic.usedTrafficBytes == 9 * 1024**3

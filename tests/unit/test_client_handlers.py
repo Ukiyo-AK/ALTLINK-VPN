@@ -118,6 +118,26 @@ async def test_ensure_client_access_shows_promo_step_after_registration_and_chan
 
 
 @pytest.mark.asyncio
+async def test_ensure_client_access_allows_manual_maintenance_exception(test_services):
+    message = DummyMessage(text="Меню", user_id=21010)
+
+    async with test_services.hub() as hub:
+        created = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        await hub.accounts.complete_registration(created.id)
+        await hub.accounts.mark_channel_verified(created.id)
+        await hub.accounts.mark_promo_onboarding_completed(created.id)
+        await hub.monitoring.set_manual_client_maintenance(True)
+        await hub.monitoring.add_manual_maintenance_exception(created)
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_client_access(message, test_services, hub)
+
+    assert user is not None
+    assert user.id == created.id
+    assert message.answers == []
+
+
+@pytest.mark.asyncio
 async def test_start_with_portal_login_token_shows_confirmation_prompt(test_services):
     message = DummyMessage(text="/start login_demo-token", user_id=21008)
 
@@ -465,7 +485,7 @@ async def test_ensure_client_access_shows_maintenance_stub_when_panel_is_unavail
     message = DummyMessage(text="Меню", user_id=21005)
 
     class DummyMonitoring:
-        async def is_client_maintenance_active(self):
+        async def is_client_maintenance_active(self, telegram_id=None):
             return True
 
     container = SimpleNamespace(settings=SimpleNamespace(support_username="@altlink_support"))

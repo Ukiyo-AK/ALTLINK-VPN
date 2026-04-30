@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -34,6 +35,12 @@ from altlink.presentation.bots.admin_keyboards import (
     DATABASE_BACKUP_EXPORT,
     DATABASE_BACKUP_IMPORT,
     DATABASE_BACKUP_OPEN,
+    MAINTENANCE_ADD_EXCEPTION,
+    MAINTENANCE_CANCEL,
+    MAINTENANCE_OPEN,
+    MAINTENANCE_PICK_ADD_PREFIX,
+    MAINTENANCE_REMOVE_PREFIX,
+    MAINTENANCE_TOGGLE,
     PROMO_TOGGLE_PREFIX,
     PAYMENT_APPROVE_PREFIX,
     PAYMENT_PAGE_PREFIX,
@@ -56,6 +63,9 @@ from altlink.presentation.bots.admin_keyboards import (
     database_import_confirmation_actions,
     database_import_prompt_actions,
     broadcast_preview_actions,
+    maintenance_actions,
+    maintenance_prompt_actions,
+    maintenance_user_pick_actions,
     payment_browser_actions,
     promo_list_actions,
     server_actions,
@@ -91,6 +101,7 @@ ADMIN_MENU_TEXTS = {
     "Рассылка",
     "Логи",
     "База данных",
+    "Техработы",
     "Помощь",
 }
 TOP_METRIC_LABELS = {
@@ -140,6 +151,10 @@ class DirectMessageStates(StatesGroup):
 class DatabaseImportStates(StatesGroup):
     waiting_for_document = State()
     waiting_for_confirmation = State()
+
+
+class MaintenanceStates(StatesGroup):
+    waiting_for_add_exception_query = State()
 
 
 async def is_admin(telegram_id: int, container: AppContainer) -> bool:
@@ -248,6 +263,43 @@ def format_database_import_confirmation(summary: dict) -> str:
     return (
         format_database_backup_summary(summary, title="Резервная копия загружена")
         + "\n\nИмпорт заменит текущую локальную базу целиком. Продолжить?"
+    )
+
+
+def format_maintenance_screen(manual_state: dict, *, automatic_active: bool) -> str:
+    exceptions = list((manual_state or {}).get("exceptions") or [])
+    lines = [
+        "Техработы клиентского бота",
+        "",
+        f"Ручной режим: {'включён' if manual_state.get('enabled') else 'выключен'}",
+        f"Авто-режим из-за недоступности панели: {'активен' if automatic_active else 'не активен'}",
+    ]
+    updated_at = manual_state.get("updated_at")
+    if updated_at:
+        lines.append(f"Последнее изменение: {updated_at}")
+    lines.extend(
+        [
+            "",
+            "При включённом ручном режиме обычные пользователи увидят сообщение о технических работах.",
+            "Исключения работают только для ручного режима и не обходят недоступность Remnawave.",
+            "",
+            "Исключения:",
+        ]
+    )
+    if exceptions:
+        for item in exceptions:
+            label = str(item.get("label") or item.get("telegram_id") or item.get("user_id"))
+            lines.append(f"• {label}")
+    else:
+        lines.append("Исключений пока нет.")
+    return "\n".join(lines)
+
+
+def maintenance_exception_prompt_text() -> str:
+    return (
+        "Добавить исключение\n\n"
+        "Отправьте Telegram ID, @username, локальный UUID или Remnawave UUID пользователя.\n"
+        "Этот пользователь сможет пользоваться клиентским ботом даже при включённых ручных техработах."
     )
 
 
@@ -519,6 +571,8 @@ async def route_admin_menu_action(message: Message, state: FSMContext, container
         await system_logs_screen(message, container)
     elif text == "База данных":
         await database_backup_screen(message, state, container)
+    elif text == "Техработы":
+        await maintenance_screen(message, state, container)
     else:
         await admin_help(message, container)
     return True
@@ -529,6 +583,37 @@ async def database_backup_screen(target: Message | CallbackQuery, state: FSMCont
         clear_pending_database_import(target.from_user.id)
     await state.clear()
     await render_admin(target, format_database_backup_screen(), reply_markup=database_backup_actions().as_markup())
+
+
+async def render_manual_maintenance_screen(
+    target: Message | CallbackQuery,
+    *,
+    container: AppContainer,
+    manual_state: dict,
+) -> None:
+    automatic_active = False
+    async with container.hub() as hub:
+        dashboard = getattr(hub, "dashboard", None)
+        if getattr(container.settings, "remnawave_base_url", "") and dashboard is not None:
+            status = await dashboard.panel_status()
+            automatic_active = not bool(status.get("remnawave_ok"))
+    await render_admin(
+        target,
+        format_maintenance_screen(manual_state, automatic_active=automatic_active),
+        reply_markup=maintenance_actions(manual_state).as_markup(),
+    )
+
+
+async def maintenance_screen(
+    target: Message | CallbackQuery,
+    state: FSMContext | None,
+    container: AppContainer,
+) -> None:
+    if state is not None:
+        await state.clear()
+    async with container.hub() as hub:
+        manual_state = await hub.monitoring.get_manual_client_maintenance_state()
+    await render_manual_maintenance_screen(target, container=container, manual_state=manual_state)
 
 
 async def show_user_card(target: Message | CallbackQuery, user_id: str, container: AppContainer):
@@ -1102,6 +1187,7 @@ async def admin_help(message: Message, container: AppContainer):
         "Рассылка: сообщение всем пользователям с текстом, файлами, медиа, gif, голосовыми, кружками и стикерами.\n"
         "Логи: последние системные события приложения.\n"
         "База данных: экспорт JSON backup и импорт с подтверждением через админ-бота.\n"
+        "Техработы: ручное отключение клиентского бота и список исключений для тестовых пользователей.\n"
         "Если нужно быстро найти пользователя, просто нажмите «Пользователи» и отправьте ID, username или UUID.",
     )
 
@@ -1111,6 +1197,13 @@ async def database_backup_menu(message: Message, state: FSMContext, container: A
     if not await is_admin(message.from_user.id, container):
         return
     await database_backup_screen(message, state, container)
+
+
+@router.message(F.text == "Техработы")
+async def maintenance_menu(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    await maintenance_screen(message, state, container)
 
 
 @router.message(F.text == "Платежи")
@@ -1869,6 +1962,93 @@ async def database_backup_open(callback: CallbackQuery, state: FSMContext, conta
     await database_backup_screen(callback, state, container)
 
 
+@router.callback_query(F.data == MAINTENANCE_OPEN)
+async def maintenance_open(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await maintenance_screen(callback, state, container)
+
+
+@router.callback_query(F.data == MAINTENANCE_TOGGLE)
+async def maintenance_toggle(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    async with container.hub() as hub:
+        admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
+        current = await hub.monitoring.get_manual_client_maintenance_state()
+        updated = await hub.monitoring.set_manual_client_maintenance(
+            not bool(current.get("enabled")),
+            actor_admin_id=admin.id if admin else None,
+        )
+    await render_manual_maintenance_screen(callback, container=container, manual_state=updated)
+
+
+@router.callback_query(F.data == MAINTENANCE_ADD_EXCEPTION)
+async def maintenance_add_exception_prompt(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await state.set_state(MaintenanceStates.waiting_for_add_exception_query)
+    await render_admin(
+        callback,
+        maintenance_exception_prompt_text(),
+        reply_markup=maintenance_prompt_actions().as_markup(),
+    )
+
+
+@router.callback_query(F.data == MAINTENANCE_CANCEL)
+async def maintenance_cancel(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await maintenance_screen(callback, state, container)
+
+
+@router.callback_query(F.data.startswith(f"{MAINTENANCE_PICK_ADD_PREFIX}:"))
+async def maintenance_pick_add_exception(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    user_id = callback.data.split(":")[-1]
+    async with container.hub() as hub:
+        admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
+        try:
+            user = await hub.accounts.get_user(user_id)
+        except NotFoundError:
+            await callback.answer("Пользователь не найден, попробуйте поиск ещё раз.", show_alert=True)
+            return
+        updated = await hub.monitoring.add_manual_maintenance_exception(
+            user,
+            actor_admin_id=admin.id if admin else None,
+        )
+    await state.clear()
+    await render_manual_maintenance_screen(callback, container=container, manual_state=updated)
+
+
+@router.callback_query(F.data.startswith(f"{MAINTENANCE_REMOVE_PREFIX}:"))
+async def maintenance_remove_exception(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    user_id = callback.data.split(":")[-1]
+    async with container.hub() as hub:
+        admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
+        current = await hub.monitoring.get_manual_client_maintenance_state()
+        item = next((entry for entry in current.get("exceptions", []) if str(entry.get("user_id")) == user_id), None)
+        if item is None:
+            await callback.answer("Исключение уже удалено.", show_alert=True)
+            return
+        try:
+            user = await hub.accounts.get_user(user_id)
+        except NotFoundError:
+            user = SimpleNamespace(
+                id=user_id,
+                telegram_id=item.get("telegram_id"),
+                username=item.get("username"),
+            )
+        updated = await hub.monitoring.remove_manual_maintenance_exception(
+            user,
+            actor_admin_id=admin.id if admin else None,
+        )
+    await render_manual_maintenance_screen(callback, container=container, manual_state=updated)
+
+
 @router.callback_query(F.data == DATABASE_BACKUP_EXPORT)
 async def database_backup_export(callback: CallbackQuery, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
@@ -1990,6 +2170,53 @@ async def database_backup_import_confirmation_fallback(message: Message, state: 
     )
 
 
+@router.message(MaintenanceStates.waiting_for_add_exception_query)
+async def maintenance_add_exception_submit(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    if await route_admin_menu_action(message, state, container):
+        return
+    query = normalize_user_lookup_query(message.text or "")
+    if not query:
+        await render_admin(
+            message,
+            maintenance_exception_prompt_text(),
+            reply_markup=maintenance_prompt_actions().as_markup(),
+        )
+        return
+
+    updated: dict | None = None
+    async with container.hub() as hub:
+        users = await hub.accounts.list_users(query)
+        if not users:
+            await render_admin(
+                message,
+                "Пользователь не найден.\n\n"
+                + maintenance_exception_prompt_text(),
+                reply_markup=maintenance_prompt_actions().as_markup(),
+            )
+            return
+        if len(users) == 1:
+            admin = await hub.accounts.get_admin_by_telegram_id(message.from_user.id)
+            updated = await hub.monitoring.add_manual_maintenance_exception(
+                users[0],
+                actor_admin_id=admin.id if admin else None,
+            )
+    if updated is not None:
+        await state.clear()
+        await render_manual_maintenance_screen(message, container=container, manual_state=updated)
+        return
+
+    lines = [f"Найдено пользователей: {len(users)}.", "", "Выберите, кого добавить в исключения:"]
+    for item in users[:10]:
+        lines.append(f"• {user_label(item)} — {item.telegram_id}")
+    await render_admin(
+        message,
+        "\n".join(lines),
+        reply_markup=maintenance_user_pick_actions(users[:10]).as_markup(),
+    )
+
+
 @router.message(UserLookupStates.waiting_for_query)
 async def user_lookup_state_handler(message: Message, state: FSMContext, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
@@ -2017,6 +2244,7 @@ async def admin_message_fallback(message: Message, state: FSMContext, container:
         PromoStates.waiting_for_payload.state,
         BroadcastStates.waiting_for_text.state,
         BroadcastStates.waiting_for_media.state,
+        MaintenanceStates.waiting_for_add_exception_query.state,
     }:
         return
 

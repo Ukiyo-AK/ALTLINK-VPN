@@ -124,6 +124,7 @@ class BillingService(BaseService):
             raise ConflictError("Для тестового периода используйте отдельный сценарий.")
 
         existing = await self.accounts.get_current_subscription(user_id)
+        preserve_traffic_on_switch = existing is not None
         discount_rub = Decimal("0.00")
         discount_promo = None
         discount_redemption = None
@@ -177,10 +178,10 @@ class BillingService(BaseService):
             cycle_days_processed=plan.period_days,
             accrued_debt_rub=Decimal("0"),
             traffic_limit_bytes=plan.traffic_limit_bytes,
-            traffic_used_bytes=0,
-            whitelist_traffic_used_bytes=0,
+            traffic_used_bytes=existing.traffic_used_bytes if existing else 0,
+            whitelist_traffic_used_bytes=existing.whitelist_traffic_used_bytes if existing else 0,
             whitelist_traffic_billed_bytes=0,
-            last_traffic_reset_at=now,
+            last_traffic_reset_at=existing.last_traffic_reset_at if existing else now,
             auto_renew=True,
             notes=" ".join(notes) or None,
         )
@@ -196,7 +197,15 @@ class BillingService(BaseService):
             await self.catalog.assign_preferred_server(user.id, plan.code)
 
         await self.catalog.rebuild_user_access_matrix()
-        await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=True)
+        remote_user = await self._sync_remote_state(
+            user,
+            subscription,
+            plan,
+            enable=True,
+            reset_traffic=not preserve_traffic_on_switch,
+        )
+        if remote_user is not None and preserve_traffic_on_switch:
+            await self._apply_remote_usage(user, subscription, remote_user)
         if discount_redemption is not None and discount_rub > 0:
             await self.promos.consume_discount(
                 discount_redemption,
@@ -401,15 +410,29 @@ class BillingService(BaseService):
                     source="remnawave",
                 )
             )
-            user.last_seen_at = remote_user.userTraffic.onlineAt or user.last_seen_at
             if subscription is None:
                 continue
 
-            subscription.traffic_used_bytes = remote_user.userTraffic.usedTrafficBytes
-            if subscription.plan and is_metered_plan_code(subscription.plan.code):
-                await self._refresh_whitelist_usage(user, subscription)
+            await self._apply_remote_usage(user, subscription, remote_user)
 
         await self.catalog.rebuild_user_access_matrix()
+
+    async def refresh_subscription_traffic(self, user_id: str) -> Subscription | None:
+        subscription = await self.accounts.get_current_subscription(user_id)
+        if subscription is None:
+            return None
+
+        user = await self.accounts.get_user(user_id)
+        if self.remnawave is None or not user.remnawave_user_uuid:
+            return subscription
+
+        try:
+            remote_user = await self.remnawave.get_user(user.remnawave_user_uuid)
+        except httpx.HTTPError:
+            return subscription
+
+        await self._apply_remote_usage(user, subscription, remote_user)
+        return subscription
 
     async def _cancel_subscription(self, subscription: Subscription, user: User) -> None:
         subscription.status = SubscriptionStatus.CANCELED
@@ -467,6 +490,14 @@ class BillingService(BaseService):
         total = sum(node.total for node in usage.topNodes if node.uuid in whitelist_node_ids)
         subscription.whitelist_traffic_used_bytes = max(total, 0)
 
+    async def _apply_remote_usage(self, user: User, subscription: Subscription, remote_user) -> None:
+        user.last_seen_at = remote_user.userTraffic.onlineAt or user.last_seen_at
+        subscription.traffic_used_bytes = remote_user.userTraffic.usedTrafficBytes
+        if remote_user.lastTrafficResetAt is not None:
+            subscription.last_traffic_reset_at = remote_user.lastTrafficResetAt
+        if subscription.plan and is_metered_plan_code(subscription.plan.code):
+            await self._refresh_whitelist_usage(user, subscription)
+
     def _compute_renewal_charge(self, subscription: Subscription, plan: Plan) -> Decimal:
         whitelist_charge = Decimal("0.00")
         if is_metered_plan_code(plan.code):
@@ -498,9 +529,9 @@ class BillingService(BaseService):
         *,
         enable: bool,
         reset_traffic: bool,
-    ) -> None:
+    ):
         if self.remnawave is None:
-            return
+            return None
 
         await self.accounts.ensure_remote_user_link(user)
         user_servers = await self.catalog.get_user_servers(user.id)
@@ -549,6 +580,8 @@ class BillingService(BaseService):
                         raise
             if reset_traffic:
                 await self.remnawave.reset_user_traffic(remote.uuid)
+                remote = await self.remnawave.get_user(remote.uuid)
+            return remote
         except httpx.HTTPStatusError as exc:
             raise ConflictError(self._format_remnawave_error(exc)) from exc
 

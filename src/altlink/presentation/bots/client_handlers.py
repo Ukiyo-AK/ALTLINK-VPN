@@ -196,18 +196,22 @@ def topup_status_label(raw_status: str) -> str:
 def technical_maintenance_text(settings) -> str:
     return (
         "Технические работы\n\n"
-        "Панель VPN сейчас временно недоступна, поэтому управление подпиской, серверами и ключами приостановлено.\n"
+        "В боте сейчас идут технические работы, поэтому его функционал временно недоступен.\n"
         "Попробуйте снова чуть позже.\n\n"
         f"Если вопрос срочный, напишите в поддержку: {support_username_label(settings)}"
     )
 
 
-async def client_maintenance_active(container: AppContainer, hub=None) -> bool:
+async def client_maintenance_active(
+    container: AppContainer,
+    telegram_id: int | None = None,
+    hub=None,
+) -> bool:
     monitoring = getattr(hub, "monitoring", None) if hub is not None else None
     if monitoring is not None:
-        return await monitoring.is_client_maintenance_active()
+        return await monitoring.is_client_maintenance_active(telegram_id=telegram_id)
     async with container.hub() as inner_hub:
-        return await inner_hub.monitoring.is_client_maintenance_active()
+        return await inner_hub.monitoring.is_client_maintenance_active(telegram_id=telegram_id)
 
 
 async def show_technical_maintenance(target: Message | CallbackQuery, container: AppContainer) -> None:
@@ -1078,7 +1082,7 @@ async def show_promo_onboarding_step(target: Message | CallbackQuery) -> None:
 
 
 async def ensure_client_access(message: Message | CallbackQuery, container: AppContainer, hub=None):
-    if await client_maintenance_active(container, hub):
+    if await client_maintenance_active(container, message.from_user.id, hub):
         await show_technical_maintenance(message, container)
         return None
     user, consent_ok, channel_ok = await get_access_state(message, container, hub)
@@ -1133,6 +1137,7 @@ async def show_profile(target: Message | CallbackQuery, container: AppContainer,
 
 async def show_subscription(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
     user = await ensure_user(target.from_user, container, hub)
+    await hub.billing.refresh_subscription_traffic(user.id)
     bundle = await hub.accounts.get_subscription_bundle(user.id)
     user_servers = await hub.catalog.get_user_servers(user.id)
     subscription = bundle.get("subscription")
@@ -1283,6 +1288,9 @@ async def route_message_action(message: Message, state: FSMContext, container: A
 @router.message(CommandStart())
 async def start(message: Message, container: AppContainer):
     async with container.hub() as hub:
+        if await client_maintenance_active(container, message.from_user.id, hub):
+            await show_technical_maintenance(message, container)
+            return
         provisional_user = await ensure_user(message.from_user, container, hub)
         start_payload = (message.text or "").split(maxsplit=1)
         if len(start_payload) > 1 and start_payload[1].startswith("login_"):
@@ -1355,6 +1363,9 @@ async def start(message: Message, container: AppContainer):
 async def portal_login_confirm(callback: CallbackQuery, container: AppContainer):
     token = (callback.data or "").split(":", 3)[-1].strip()
     async with container.hub() as hub:
+        if await client_maintenance_active(container, callback.from_user.id, hub):
+            await show_technical_maintenance(callback, container)
+            return
         user = await ensure_user(callback.from_user, container, hub)
         try:
             await hub.portal_auth.approve_login_attempt(token, user.id)
@@ -1477,7 +1488,7 @@ async def home_callback(callback: CallbackQuery, container: AppContainer):
 @router.callback_query(F.data == "client:show_agreement")
 async def show_agreement(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
-        if await client_maintenance_active(container, hub):
+        if await client_maintenance_active(container, callback.from_user.id, hub):
             await show_technical_maintenance(callback, container)
             return
         user = await ensure_user(callback.from_user, container, hub)
@@ -1498,7 +1509,7 @@ async def show_agreement(callback: CallbackQuery, container: AppContainer):
 @router.callback_query(F.data == "client:check_channel")
 async def check_channel(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
-        if await client_maintenance_active(container, hub):
+        if await client_maintenance_active(container, callback.from_user.id, hub):
             await show_technical_maintenance(callback, container)
             return
         user, consent_ok, channel_ok = await get_access_state(callback, container, hub)
@@ -1534,7 +1545,7 @@ async def check_channel(callback: CallbackQuery, container: AppContainer):
 @router.callback_query(F.data == "client:complete_registration")
 async def complete_registration(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
-        if await client_maintenance_active(container, hub):
+        if await client_maintenance_active(container, callback.from_user.id, hub):
             await show_technical_maintenance(callback, container)
             return
         user = await ensure_user(callback.from_user, container, hub)
@@ -2266,7 +2277,7 @@ async def traffic(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-        subscription = await hub.accounts.get_current_subscription(user.id)
+        subscription = await hub.billing.refresh_subscription_traffic(user.id)
         if not subscription:
             text = "Трафик и списания\n\nУ вас пока нет активной подписки."
         elif not show_metered_usage(subscription):

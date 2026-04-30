@@ -64,6 +64,7 @@ async def run_scheduler() -> None:
         await run_startup_job(sync_servers_job, container, "sync_servers")
         await run_startup_job(server_latency_job, container, "server_latency")
         await run_startup_job(billing_job, container, "billing")
+        await run_startup_job(traffic_job, container, "traffic")
         await run_startup_job(notifications_job, container, "notifications")
         while True:
             await asyncio.sleep(3600)

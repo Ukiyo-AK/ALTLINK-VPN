@@ -33,6 +33,12 @@ DATABASE_BACKUP_EXPORT = "admin:db:export"
 DATABASE_BACKUP_IMPORT = "admin:db:import"
 DATABASE_BACKUP_CONFIRM_IMPORT = "admin:db:confirm"
 DATABASE_BACKUP_CANCEL_IMPORT = "admin:db:cancel"
+MAINTENANCE_OPEN = "adm:mo"
+MAINTENANCE_TOGGLE = "adm:mt"
+MAINTENANCE_ADD_EXCEPTION = "adm:ma"
+MAINTENANCE_REMOVE_PREFIX = "adm:mr"
+MAINTENANCE_PICK_ADD_PREFIX = "adm:mpa"
+MAINTENANCE_CANCEL = "adm:mc"
 
 
 def admin_menu() -> ReplyKeyboardMarkup:
@@ -44,6 +50,7 @@ def admin_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="Запросы поддержки"), KeyboardButton(text="Промокоды")],
             [KeyboardButton(text="Создать промокод"), KeyboardButton(text="Рассылка")],
             [KeyboardButton(text="Логи"), KeyboardButton(text="База данных")],
+            [KeyboardButton(text="Техработы")],
             [KeyboardButton(text="Помощь")],
         ],
         resize_keyboard=True,
@@ -230,6 +237,51 @@ def database_import_confirmation_actions() -> InlineKeyboardBuilder:
     builder.button(text="Заменить базу из backup", callback_data=DATABASE_BACKUP_CONFIRM_IMPORT, style="danger")
     builder.button(text="Отмена", callback_data=DATABASE_BACKUP_CANCEL_IMPORT)
     builder.adjust(1, 1)
+    return builder
+
+
+def maintenance_actions(state: dict) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    enabled = bool((state or {}).get("enabled"))
+    exceptions = list((state or {}).get("exceptions") or [])
+    builder.button(
+        text="Выключить техработы" if enabled else "Включить техработы",
+        callback_data=MAINTENANCE_TOGGLE,
+        style="danger" if enabled else "success",
+    )
+    builder.button(text="Добавить исключение", callback_data=MAINTENANCE_ADD_EXCEPTION, style="primary")
+    builder.button(text="Обновить", callback_data=MAINTENANCE_OPEN)
+    for item in exceptions[:12]:
+        user_id = str(item.get("user_id") or "").strip()
+        if not user_id:
+            continue
+        label = str(item.get("label") or item.get("telegram_id") or user_id)
+        builder.button(text=f"Убрать {label}", callback_data=f"{MAINTENANCE_REMOVE_PREFIX}:{user_id}", style="danger")
+    if exceptions:
+        builder.adjust(1, 2, *([1] * min(len(exceptions), 12)))
+    else:
+        builder.adjust(1, 2)
+    return builder
+
+
+def maintenance_prompt_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Назад", callback_data=MAINTENANCE_CANCEL)
+    builder.adjust(1)
+    return builder
+
+
+def maintenance_user_pick_actions(items) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    for item in items[:10]:
+        label = f"@{item.username}" if item.username else str(item.telegram_id)
+        builder.button(
+            text=f"{label} • {item.telegram_id}",
+            callback_data=f"{MAINTENANCE_PICK_ADD_PREFIX}:{item.id}",
+            style="primary",
+        )
+    builder.button(text="Назад", callback_data=MAINTENANCE_CANCEL)
+    builder.adjust(*([1] * (min(len(items), 10) + 1)))
     return builder
 
 
