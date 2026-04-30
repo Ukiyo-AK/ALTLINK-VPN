@@ -24,6 +24,7 @@ def test_web_templates_use_relative_asset_paths(template_name: str):
 
     assert "{{ url_for('static', path='style.css') }}" not in content
     assert "{{ url_for('media', path='logo.png') }}" not in content
+    assert 'rel="icon"' in content
     assert 'href="/static/style.css"' in content
     assert 'src="/media/logo.png"' in content
 
