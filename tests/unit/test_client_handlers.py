@@ -261,9 +261,10 @@ def test_profile_text_keeps_only_key_details_and_links():
 
     assert "💳 Баланс: 99.00 ₽" in text
     assert "Тариф: Pro" in text
-    assert "📍 Подключение: NL Node" in text
     assert "Сайт: https://altlink.online" not in text
     assert "Кабинет: https://altlink.online/portal" not in text
+    assert "NL Node" not in text
+    assert "Подключение:" not in text
     assert "Сервер:" not in text
     assert "Telegram ID" not in text
     assert "Формат списания" not in text

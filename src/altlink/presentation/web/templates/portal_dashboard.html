@@ -200,10 +200,9 @@
             title="Нажмите, чтобы скопировать"
           >{{ portal_subscription_payload }}</div>
           <div class="toolbar copy-link-toolbar">
-            <button class="button compact" type="button" data-copy-button>Скопировать ссылку</button>
             <a class="button ghost compact" href="{{ connection_help_url }}">Помощь по подключению</a>
           </div>
-          <p class="muted copy-link-hint" data-copy-hint>Нажмите на ссылку или кнопку, чтобы скопировать её.</p>
+          <p class="muted copy-link-hint" data-copy-hint>Нажмите на ссылку, чтобы скопировать её.</p>
         </div>
         {% else %}
         <p class="muted">Ссылка появится после активации теста или тарифа.</p>
@@ -313,25 +312,22 @@
       copyRoots.forEach((root) => {
         const payload = root.dataset.copyText;
         const target = root.querySelector("[data-copy-target]");
-        const button = root.querySelector("[data-copy-button]");
         const hint = root.querySelector("[data-copy-hint]");
-        const originalButtonText = button?.textContent || "";
         const originalHintText = hint?.textContent || "";
         let restoreTimer = null;
 
-        if (!payload || !target || !button) {
+        if (!payload || !target) {
           return;
         }
 
         const restoreState = () => {
           target.classList.remove("is-copied");
-          button.textContent = originalButtonText;
           if (hint) {
             hint.textContent = originalHintText;
           }
         };
 
-        const showTemporaryState = (buttonText, hintText, copied = false) => {
+        const showTemporaryState = (hintText, copied = false) => {
           if (restoreTimer) {
             window.clearTimeout(restoreTimer);
           }
@@ -340,7 +336,6 @@
           } else {
             target.classList.remove("is-copied");
           }
-          button.textContent = buttonText;
           if (hint) {
             hint.textContent = hintText;
           }
@@ -350,17 +345,15 @@
         const handleCopy = async () => {
           try {
             await copyText(payload);
-            showTemporaryState("Скопировано", "Ссылка скопирована в буфер обмена.", true);
+            showTemporaryState("Ссылка скопирована в буфер обмена.", true);
           } catch (error) {
             showTemporaryState(
-              "Скопировать ссылку",
               "Не удалось скопировать автоматически. Удерживайте ссылку, чтобы скопировать её вручную.",
             );
           }
         };
 
         target.addEventListener("click", handleCopy);
-        button.addEventListener("click", handleCopy);
         target.addEventListener("keydown", (event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();

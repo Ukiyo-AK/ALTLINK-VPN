@@ -49,8 +49,8 @@ def test_portal_dashboard_template_supports_one_tap_copy_for_subscription_link()
 
     assert "data-copy-root" in content
     assert "data-copy-target" in content
-    assert "data-copy-button" in content
-    assert "Скопировать ссылку" in content
+    assert "data-copy-button" not in content
+    assert ">Скопировать ссылку<" not in content
 
 
 def test_public_templates_keep_personal_account_action_only_where_needed():

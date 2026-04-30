@@ -884,7 +884,6 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
 
 def profile_text(user, subscription, settings) -> str:
     plan_name = subscription.plan.name if subscription and subscription.plan else "не выбран"
-    assigned = user.assigned_server.name if getattr(user, "assigned_server", None) else "ещё не назначено"
     lines = [
         "👤 Профиль",
         "",
@@ -898,7 +897,6 @@ def profile_text(user, subscription, settings) -> str:
             lines.append(f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
         else:
             lines.append(f"Действует до: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
-    lines.append(f"📍 Подключение: {assigned}")
     return "\n".join(lines)
 
 
