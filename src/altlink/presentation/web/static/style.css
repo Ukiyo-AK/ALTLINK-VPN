@@ -330,6 +330,38 @@ textarea {
   border: 1px dashed rgba(203, 187, 165, 0.8);
 }
 
+.copy-link-card {
+  gap: 0.75rem;
+}
+
+.copy-codeblock {
+  cursor: copy;
+  user-select: all;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.copy-codeblock:hover,
+.copy-codeblock:focus-visible {
+  border-color: rgba(13, 143, 119, 0.45);
+  background: rgba(219, 244, 237, 0.72);
+  box-shadow: 0 0 0 3px rgba(13, 143, 119, 0.12);
+  outline: none;
+}
+
+.copy-codeblock.is-copied {
+  border-style: solid;
+  border-color: rgba(13, 143, 119, 0.45);
+  background: rgba(219, 244, 237, 0.82);
+}
+
+.copy-link-toolbar {
+  margin-bottom: 0;
+}
+
+.copy-link-hint {
+  margin: 0;
+}
+
 .alert {
   margin-bottom: 1rem;
   padding: 0.95rem 1rem;
@@ -978,6 +1010,9 @@ textarea {
     right: -0.8rem;
     height: min(10rem, 46%);
     opacity: 0.12;
+  }
+  .copy-link-toolbar {
+    width: 100%;
   }
 }
 

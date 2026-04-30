@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import CopyTextButton, KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from altlink.domain.enums import PlanCode
@@ -173,8 +173,19 @@ def subscription_actions(
     return builder
 
 
-def subscription_link_actions(*, show_traffic: bool, help_url: str | None = None) -> InlineKeyboardBuilder:
+def subscription_link_actions(
+    *,
+    show_traffic: bool,
+    help_url: str | None = None,
+    copy_payload: str | None = None,
+) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+    if copy_payload:
+        builder.button(
+            text="📋 Скопировать ссылку",
+            copy_text=CopyTextButton(text=copy_payload),
+            style="success",
+        )
     if help_url:
         builder.button(text="Помощь по подключению", url=help_url, style="primary")
     if show_traffic:
@@ -182,10 +193,12 @@ def subscription_link_actions(*, show_traffic: bool, help_url: str | None = None
     builder.button(text="Подписка", callback_data="client:subscription", style="primary")
     builder.button(text="Меню", callback_data="client:home")
     row_sizes: list[int] = []
-    if help_url:
+    top_row = int(bool(copy_payload)) + int(bool(help_url))
+    if top_row:
+        row_sizes.append(top_row)
+    if show_traffic:
         row_sizes.append(1)
-    row_sizes.append(2 if show_traffic else 1)
-    row_sizes.append(1)
+    row_sizes.append(2)
     builder.adjust(*row_sizes)
     return builder
 

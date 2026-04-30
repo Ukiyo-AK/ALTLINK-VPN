@@ -404,6 +404,7 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_channel_ok": channel_ok,
         "portal_show_usage_details": show_usage_details,
         "portal_trial_available": trial_available,
+        "portal_subscription_payload": payload,
         "portal_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/portal",
         "client_bot_url": f"https://t.me/{request.app.state.settings.client_bot_name.lstrip('@')}" if request.app.state.settings.client_bot_name else None,
         "connection_help_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/help/connect",

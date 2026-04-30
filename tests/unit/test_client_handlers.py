@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from aiogram import Bot, Dispatcher
@@ -260,12 +261,35 @@ def test_profile_text_keeps_only_key_details_and_links():
 
     assert "💳 Баланс: 99.00 ₽" in text
     assert "Тариф: Pro" in text
-    assert "Сервер: NL Node" in text
+    assert "📍 NL Node" in text
     assert "Сайт: https://altlink.online" not in text
     assert "Кабинет: https://altlink.online/portal" not in text
+    assert "Сервер:" not in text
     assert "Telegram ID" not in text
     assert "Формат списания" not in text
     assert "Лимит устройств" not in text
+
+
+def test_subscription_text_hides_billing_cycle_line():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+    user = SimpleNamespace(balance_rub=Decimal("99.00"), status="active")
+    subscription = SimpleNamespace(
+        plan=SimpleNamespace(name="Pro", code=PlanCode.UNLIMITED, device_limit=6),
+        auto_renew=True,
+        next_billing_at=datetime(2026, 1, 1, 12, 0, 0),
+        notes=None,
+        traffic_used_bytes=0,
+        whitelist_traffic_used_bytes=0,
+    )
+
+    text = client_handlers.subscription_text(
+        {"user": user, "subscription": subscription},
+        user_servers=[],
+        settings=settings,
+    )
+
+    assert "Тариф: Pro" in text
+    assert "Формат списания" not in text
 
 
 def test_agreement_text_uses_link_instead_of_stub_when_available():
@@ -436,6 +460,69 @@ async def test_activate_plan_with_insufficient_balance_shows_topup_actions(monke
     callbacks = [button.callback_data for button in buttons if button.callback_data]
     assert "client:topup_menu" in callbacks
     assert "client:plan_menu" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    callback = SimpleNamespace(data="client:plan_menu")
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.plan_menu_v2(callback, container)
+
+    text = str(captured["text"])
+    assert "🟢 Start" in text
+    assert "Один сервер, 2 устройства." in text
+    assert "Белые списки для него считаются отдельно по 4 ₽ за 1 ГБ." in text
+    assert "🟡 Pro" in text
+    assert "Все активные серверы, 6 устройств." in text
+    assert "Безлимит на все сервера." in text
+
+
+@pytest.mark.asyncio
+async def test_plan_family_menu_uses_updated_copy(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    callback = SimpleNamespace(data="client:plan_family:unlimited", answer=AsyncMock())
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.plan_family_menu(callback, container)
+
+    text = str(captured["text"])
+    assert "🟡 Pro" in text
+    assert "Все активные серверы, 6 устройств." in text
+    assert "Безлимит на все сервера." in text
 
 
 @pytest.mark.asyncio

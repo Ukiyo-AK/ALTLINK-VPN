@@ -44,6 +44,15 @@ def test_portal_login_template_uses_bot_confirm_flow_instead_of_widget():
     assert "portal-login-qr-image" in content
 
 
+def test_portal_dashboard_template_supports_one_tap_copy_for_subscription_link():
+    content = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
+
+    assert "data-copy-root" in content
+    assert "data-copy-target" in content
+    assert "data-copy-button" in content
+    assert "Скопировать ссылку" in content
+
+
 def test_public_templates_keep_personal_account_action_only_where_needed():
     landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
     portal_login = (TEMPLATE_ROOT / "portal_login.html").read_text(encoding="utf-8")

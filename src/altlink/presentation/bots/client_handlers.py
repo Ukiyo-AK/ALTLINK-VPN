@@ -523,10 +523,11 @@ def subscription_markup(subscription):
     ).as_markup()
 
 
-def subscription_link_markup(settings, subscription):
+def subscription_link_markup(settings, subscription, copy_payload: str | None = None):
     return subscription_link_actions(
         show_traffic=show_metered_usage(subscription),
         help_url=connection_help_url(settings),
+        copy_payload=copy_payload,
     ).as_markup()
 
 
@@ -884,7 +885,7 @@ def profile_text(user, subscription, settings) -> str:
             lines.append(f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
         else:
             lines.append(f"Действует до: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
-    lines.append(f"Сервер: {assigned}")
+    lines.append(f"📍 {assigned}")
     return "\n".join(lines)
 
 
@@ -932,7 +933,6 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         "",
         f"Статус: {user.status}",
         f"Тариф: {subscription.plan.name}",
-        f"Формат списания: {billing_cycle_label(subscription.plan)}",
         f"Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
         f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}",
         f"Лимит устройств: {device_limit_label(subscription.plan)}",
@@ -2038,11 +2038,13 @@ async def plan_menu_v2(callback: CallbackQuery, container: AppContainer):
         callback,
         (
             "Тарифы\n\n"
-            "Сначала выберите тариф.\n"
-            "После этого бот предложит оформить его на месяц или на неделю.\n\n"
-            "Start: один основной сервер, 2 устройства.\n"
-            "Белые списки для него считаются отдельно по 4 ₽ за ГБ.\n\n"
-            "Pro: все активные серверы, 8 устройств."
+            "Выберите подходящий вариант, а затем срок подключения.\n\n"
+            "🟢 Start\n"
+            "Один сервер, 2 устройства.\n"
+            "Белые списки для него считаются отдельно по 4 ₽ за 1 ГБ.\n\n"
+            "🟡 Pro\n"
+            "Все активные серверы, 6 устройств.\n"
+            "Безлимит на все сервера."
         ),
         reply_markup=plan_actions().as_markup(),
     )
@@ -2062,19 +2064,19 @@ async def plan_family_menu(callback: CallbackQuery, container: AppContainer):
 
     if family == "10gbit":
         text = (
-            "Start\n\n"
+            "🟢 Start\n\n"
+            "Один сервер, 2 устройства.\n"
+            "Белые списки для него считаются отдельно по 4 ₽ за 1 ГБ.\n\n"
             f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽.\n"
-            f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽.\n"
-            "Лимит: 2 устройства.\n"
-            "Белые списки оплачиваются отдельно по 4 ₽ за ГБ."
+            f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽."
         )
     else:
         text = (
-            "Pro\n\n"
+            "🟡 Pro\n\n"
+            "Все активные серверы, 6 устройств.\n"
+            "Безлимит на все сервера.\n\n"
             f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽.\n"
-            f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽.\n"
-            "Лимит: 8 устройств.\n"
-            "Трафик и белые списки отдельно не тарифицируются."
+            f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽."
         )
 
     await answer_or_edit(
@@ -2262,7 +2264,7 @@ async def subscription_link(callback: CallbackQuery, container: AppContainer):
                 f"{payload}\n\n"
                 "Откройте ссылку в VPN-клиенте или отсканируйте QR-код."
             ),
-            reply_markup=subscription_link_markup(container.settings, subscription),
+            reply_markup=subscription_link_markup(container.settings, subscription, copy_payload=payload),
         )
 
 

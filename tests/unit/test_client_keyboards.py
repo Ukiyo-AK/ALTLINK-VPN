@@ -19,6 +19,7 @@ from altlink.presentation.bots.client_keyboards import (
     portal_login_complete_actions,
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
+    subscription_link_actions,
     subscription_actions,
     topup_amount_confirm_actions,
     topup_checkout_actions,
@@ -183,6 +184,21 @@ def test_subscription_actions_render_cancel_and_hide_traffic():
         for text in row
     ]
     assert "Трафик и списания" not in unlimited_flat
+
+
+def test_subscription_link_actions_offer_one_tap_copy():
+    markup = subscription_link_actions(
+        show_traffic=True,
+        help_url="https://altlink.online/help/connect",
+        copy_payload="https://sub.example/demo",
+    ).as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+    buttons = inline_buttons(markup)
+
+    assert "📋 Скопировать ссылку" in flat
+    copy_button = next(button for button in buttons if button["text"] == "📋 Скопировать ссылку")
+    assert copy_button["copy_text"] == {"text": "https://sub.example/demo"}
+    assert copy_button["style"] == "success"
 
 
 def test_plan_actions_switch_to_two_step_flow():
