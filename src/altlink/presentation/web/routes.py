@@ -7,7 +7,7 @@ import re
 from decimal import Decimal
 from html import escape
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse, urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request, status
@@ -150,6 +150,14 @@ def upstream_subscription_url(settings, short_uuid: str, client_type: str | None
     if client_type:
         url = f"{url}/{client_type}"
     return url
+
+
+def append_subscription_client_type(url: str, client_type: str | None = None) -> str:
+    if not client_type:
+        return url
+    parsed = urlsplit(url)
+    path = f"{parsed.path.rstrip('/')}/{quote(client_type, safe='')}"
+    return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
 
 
 def forwarded_subscription_headers(request: Request) -> dict[str, str]:
@@ -576,13 +584,25 @@ async def latency_probe(request: Request) -> JSONResponse:
 @router.get("/sub/{short_uuid}")
 @router.get("/sub/{short_uuid}/{client_type}")
 async def subscription_proxy(request: Request, short_uuid: str, client_type: str | None = None):
-    upstream_url = upstream_subscription_url(request.app.state.settings, short_uuid, client_type)
-    if not upstream_url:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Subscription proxy is not configured.")
-
     async with request.app.state.container.hub() as hub:
         user = await hub.accounts.get_user_by_remnawave_short_uuid(short_uuid)
         subscription = await hub.accounts.get_current_subscription(user.id) if user is not None else None
+        upstream_url = None
+        explicit_subscription_base = (request.app.state.settings.remnawave_subscription_base_url or "").strip()
+        if explicit_subscription_base:
+            upstream_url = upstream_subscription_url(request.app.state.settings, short_uuid, client_type)
+        elif getattr(hub, "remnawave", None) is not None:
+            try:
+                info = await hub.remnawave.get_subscription_info(short_uuid)
+            except Exception:
+                info = None
+            if info and getattr(info, "subscriptionUrl", None):
+                upstream_url = append_subscription_client_type(info.subscriptionUrl, client_type)
+        if not upstream_url:
+            upstream_url = upstream_subscription_url(request.app.state.settings, short_uuid, client_type)
+
+    if not upstream_url:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Subscription proxy is not configured.")
 
     query_params = list(request.query_params.multi_items())
     try:

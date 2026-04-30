@@ -359,6 +359,67 @@ async def test_subscription_proxy_overrides_announce_and_preserves_upstream_body
 
 
 @pytest.mark.asyncio
+async def test_subscription_proxy_uses_real_remnawave_subscription_url_when_explicit_base_is_missing(test_services, monkeypatch):
+    test_services.settings.backend_public_url = "https://altlink.online"
+    test_services.settings.remnawave_base_url = "https://panel.remna.example"
+    test_services.settings.remnawave_subscription_base_url = ""
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=42002,
+            username="proxy_real_url",
+            first_name="Proxy",
+            last_name="RealUrl",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        user = await hub.accounts.get_user(user.id)
+        short_uuid = user.remnawave_short_uuid
+
+    async def fake_get_subscription_info(short_uuid_value: str):
+        assert short_uuid_value == short_uuid
+        return SimpleNamespace(
+            isFound=True,
+            user=None,
+            links=[],
+            ssConfLinks={},
+            subscriptionUrl=f"https://sub.remna.example/public/subscriptions/{short_uuid_value}",
+        )
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, *, params=None, headers=None):
+            assert url == f"https://sub.remna.example/public/subscriptions/{short_uuid}"
+            return SimpleNamespace(
+                status_code=200,
+                content=b"vmess://real-upstream",
+                headers={"content-type": "text/plain; charset=utf-8"},
+            )
+
+    monkeypatch.setattr(test_services.remnawave, "get_subscription_info", fake_get_subscription_info)
+    monkeypatch.setattr("altlink.presentation.web.routes.httpx.AsyncClient", FakeAsyncClient)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(container=test_services, settings=test_services.settings)),
+        headers={"user-agent": "Happ/1.0"},
+        query_params=SimpleNamespace(multi_items=lambda: []),
+    )
+
+    response = await subscription_proxy(request, short_uuid)
+
+    assert response.status_code == 200
+    assert response.body == b"vmess://real-upstream"
+
+
+@pytest.mark.asyncio
 async def test_portal_login_status_returns_missing_without_attempt_token(test_services):
     request = SimpleNamespace(
         session={},
