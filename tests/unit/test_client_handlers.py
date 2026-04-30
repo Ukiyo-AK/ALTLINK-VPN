@@ -297,7 +297,40 @@ def test_subscription_link_caption_uses_telegram_code_formatting():
     caption = client_handlers.subscription_link_caption("https://sub.example/demo?x=1&y=2")
 
     assert "<code>https://sub.example/demo?x=1&amp;y=2</code>" in caption
-    assert "удобно копировать через меню Telegram" in caption
+    assert "удобно копировать через меню Telegram" not in caption
+
+
+@pytest.mark.asyncio
+async def test_try_edit_tracked_client_card_preserves_parse_mode_for_captions():
+    captured: dict[str, object] = {}
+
+    async def fake_edit_message_caption(*, chat_id, message_id, caption, reply_markup=None, parse_mode=None):
+        captured["chat_id"] = chat_id
+        captured["message_id"] = message_id
+        captured["caption"] = caption
+        captured["parse_mode"] = parse_mode
+        return None
+
+    target = SimpleNamespace(
+        chat=SimpleNamespace(id=4321),
+        bot=SimpleNamespace(edit_message_caption=fake_edit_message_caption),
+    )
+    client_handlers.CLIENT_LAST_CARD[4321] = (99, True)
+
+    try:
+        result = await client_handlers.try_edit_tracked_client_card(
+            target,
+            "<b>formatted</b>",
+            reply_markup=None,
+            media_file=None,
+            parse_mode="HTML",
+        )
+    finally:
+        client_handlers.CLIENT_LAST_CARD.pop(4321, None)
+
+    assert result is True
+    assert captured["caption"] == "<b>formatted</b>"
+    assert captured["parse_mode"] == "HTML"
 
 
 def test_agreement_text_uses_link_instead_of_stub_when_available():
@@ -497,6 +530,7 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
 
     text = str(captured["text"])
     assert captured["kwargs"]["parse_mode"] == "HTML"
+    assert "<b>🌍 Тарифы ALTLINK VPN</b>" in text
     assert "<b>Start</b>" in text
     assert "<b>Pro</b>" in text
     assert "🟢" not in text
@@ -504,8 +538,10 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "До 2 устройств" in text
     assert "До 8 устройств" in text
     assert "серверы со скоростью до 10 Гбит/с" in text
-    assert "Трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ" in text
-    assert "работают все сайты и приложения без таких ограничений" in text
+    assert "🛡️ Белые списки доступны отдельно: 4 ₽ за 1 ГБ" in text
+    assert "🛡️ Обход белых списков без ограничений" in text
+    assert "на мобильном интернете работают только отдельные российские сервисы" in text
+    assert "ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!" in text
 
 
 @pytest.mark.asyncio
@@ -536,11 +572,12 @@ async def test_plan_family_menu_uses_updated_copy(monkeypatch):
     text = str(captured["text"])
     assert captured["kwargs"]["parse_mode"] == "HTML"
     assert "<b>Pro</b>" in text
-    assert "🟡" not in text
     assert "До 8 устройств" in text
     assert "Безлимитный трафик на всех серверах" in text
     assert "Разные локации для выбора под ваш маршрут" in text
-    assert "доступ ко всем сайтам и приложениям" in text
+    assert "🛡️ Обход белых списков без ограничений" in text
+    assert "на мобильном интернете работают только отдельные российские сервисы" in text
+    assert "ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!" in text
 
 
 @pytest.mark.asyncio
@@ -571,10 +608,10 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     text = str(captured["text"])
     assert captured["kwargs"]["parse_mode"] == "HTML"
     assert "<b>Start</b>" in text
-    assert "🟢" not in text
     assert "До 2 устройств" in text
     assert "Безлимитный трафик на основном сервере" in text
-    assert "Белые списки / обход глушилок" in text
+    assert "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с" in text
+    assert "Что такое обход белых списков" in text
     assert "4 ₽ за 1 ГБ" in text
 
 

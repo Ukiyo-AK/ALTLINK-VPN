@@ -12,6 +12,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, InputMediaPhoto, Message
+from aiogram.utils.formatting import Bold, as_list, as_marked_list
 
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
@@ -529,7 +530,6 @@ def subscription_link_caption(payload: str) -> str:
     return (
         "🔗 Ваша персональная ссылка VPN\n\n"
         f"<code>{escaped_payload}</code>\n\n"
-        "Ссылка оформлена как код, поэтому её удобно копировать через меню Telegram.\n"
         "Откройте её в VPN-клиенте или отсканируйте QR-код."
     )
 
@@ -575,7 +575,7 @@ async def is_channel_member(telegram_id: int, container: AppContainer) -> bool:
 
 async def answer_or_edit(message: Message | CallbackQuery, text: str, *, reply_markup=None, **kwargs):
     if isinstance(message, CallbackQuery):
-        if await try_edit_tracked_client_card(message, text, reply_markup=reply_markup, media_file=None):
+        if await try_edit_tracked_client_card(message, text, reply_markup=reply_markup, media_file=None, **kwargs):
             await message.answer()
             return message.message
         try:
@@ -725,6 +725,7 @@ async def try_edit_tracked_client_card(
     *,
     reply_markup,
     media_file,
+    parse_mode: str | None = None,
 ) -> bool:
     anchor = target.message if isinstance(target, CallbackQuery) else target
     tracked = CLIENT_LAST_CARD.get(anchor.chat.id)
@@ -735,7 +736,7 @@ async def try_edit_tracked_client_card(
     try:
         if media_file is not None and has_media:
             await anchor.bot.edit_message_media(
-                media=InputMediaPhoto(media=FSInputFile(str(media_file)), caption=text),
+                media=InputMediaPhoto(media=FSInputFile(str(media_file)), caption=text, parse_mode=parse_mode),
                 chat_id=anchor.chat.id,
                 message_id=message_id,
                 reply_markup=reply_markup,
@@ -748,6 +749,7 @@ async def try_edit_tracked_client_card(
                 chat_id=anchor.chat.id,
                 message_id=message_id,
                 reply_markup=reply_markup,
+                parse_mode=parse_mode,
             )
             CLIENT_LAST_CARD[anchor.chat.id] = (message_id, False)
             return True
@@ -757,6 +759,7 @@ async def try_edit_tracked_client_card(
                 message_id=message_id,
                 caption=text,
                 reply_markup=reply_markup,
+                parse_mode=parse_mode,
             )
             CLIENT_LAST_CARD[anchor.chat.id] = (message_id, True)
             return True
@@ -989,62 +992,93 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
 
 
 def plan_menu_text() -> str:
-    return (
-        "<b>Тарифы ALTLINK VPN</b>\n\n"
-        "<b>Start</b>\n"
-        "• Один основной сервер\n"
-        "• До 2 устройств\n"
-        "• Безлимитный трафик на основном сервере\n"
-        "• Подходит для стабильного базового подключения\n"
-        "• В сети доступны разные локации и серверы со скоростью до 10 Гбит/с\n"
-        "• Трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ\n\n"
-        "<b>Pro</b>\n"
-        "• Все активные серверы\n"
-        "• До 8 устройств\n"
-        "• Безлимитный трафик на всех серверах\n"
-        "• Разные локации и серверы со скоростью до 10 Гбит/с\n"
-        "• Обход белых списков уже включён\n\n"
-        "<b>Что такое обход белых списков</b>\n"
-        "Это режим для ситуаций, когда без обхода у части провайдеров работают только отдельные российские сервисы, "
-        "а иностранные сайты и приложения не открываются. С этим доступом работают все сайты и приложения без таких ограничений.\n\n"
-        "Выберите тариф, а затем срок подключения."
-    )
+    return as_list(
+        Bold("🌍 Тарифы ALTLINK VPN"),
+        as_list(
+            Bold("Start"),
+            as_marked_list(
+                "🔹 Один основной сервер",
+                "📱 До 2 устройств",
+                "∞ Безлимитный трафик на основном сервере",
+                "🌐 Разные локации и серверы со скоростью до 10 Гбит/с",
+                "🛡️ Белые списки доступны отдельно: 4 ₽ за 1 ГБ",
+                marker="• ",
+            ),
+            sep="\n",
+        ),
+        as_list(
+            Bold("Pro"),
+            as_marked_list(
+                "🚀 Все активные серверы",
+                "📱 До 8 устройств",
+                "∞ Безлимитный трафик на всех серверах",
+                "🌐 Разные локации и серверы со скоростью до 10 Гбит/с",
+                "🛡️ Обход белых списков без ограничений",
+                marker="• ",
+            ),
+            sep="\n",
+        ),
+        as_list(
+            Bold("Что такое обход белых списков"),
+            "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а иностранные сайты и приложения не открываются. ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!",
+            sep="\n",
+        ),
+        "Выберите тариф, а затем срок подключения.",
+        sep="\n\n",
+    ).as_html()
 
 
 def plan_family_text(family: str) -> str:
     if family == "10gbit":
-        return (
-            "<b>Start</b>\n\n"
-            "• Один основной сервер\n"
-            "• До 2 устройств\n"
-            "• Безлимитный трафик на основном сервере\n"
-            "• Сервер назначается из сети ALTLINK с локациями в разных странах\n"
-            "• Серверы сети рассчитаны на скорость до 10 Гбит/с\n\n"
-            "<b>Белые списки / обход глушилок</b>\n"
-            "Это нужно, когда без обхода у провайдера работают только отдельные российские сервисы, "
-            "а иностранные сайты и приложения не открываются.\n"
-            "Для Start такой трафик считается отдельно: 4 ₽ за 1 ГБ.\n\n"
-            "<b>Стоимость</b>\n"
-            f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽\n"
-            f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽"
-        )
+        return as_list(
+            Bold("Start"),
+            as_marked_list(
+                "🔹 Один основной сервер",
+                "📱 До 2 устройств",
+                "∞ Безлимитный трафик на основном сервере",
+                "🌐 Сервер назначается из сети ALTLINK с локациями в разных странах",
+                "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с",
+                marker="• ",
+            ),
+            as_list(
+                Bold("Что такое обход белых списков"),
+                "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а иностранные сайты и приложения не открываются. ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!",
+                sep="\n",
+            ),
+            "🛡️ Для Start трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ.",
+            as_list(
+                Bold("Стоимость"),
+                f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
+                f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽",
+                sep="\n",
+            ),
+            sep="\n\n",
+        ).as_html()
 
-    return (
-        "<b>Pro</b>\n\n"
-        "• Все активные серверы\n"
-        "• До 8 устройств\n"
-        "• Безлимитный трафик на всех серверах\n"
-        "• Разные локации для выбора под ваш маршрут\n"
-        "• Серверы сети рассчитаны на скорость до 10 Гбит/с\n"
-        "• Обход белых списков уже включён\n\n"
-        "<b>Что даёт обход белых списков</b>\n"
-        "Если без обхода у провайдера работают только отдельные российские сервисы, "
-        "а иностранные сайты и приложения не открываются, этот режим снимает такие ограничения "
-        "и даёт доступ ко всем сайтам и приложениям.\n\n"
-        "<b>Стоимость</b>\n"
-        f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽\n"
-        f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽"
-    )
+    return as_list(
+        Bold("Pro"),
+        as_marked_list(
+            "🚀 Все активные серверы",
+            "📱 До 8 устройств",
+            "∞ Безлимитный трафик на всех серверах",
+            "🌐 Разные локации для выбора под ваш маршрут",
+            "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с",
+            "🛡️ Обход белых списков без ограничений",
+            marker="• ",
+        ),
+        as_list(
+            Bold("Что такое обход белых списков"),
+            "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а иностранные сайты и приложения не открываются. ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!",
+            sep="\n",
+        ),
+        as_list(
+            Bold("Стоимость"),
+            f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽",
+            f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽",
+            sep="\n",
+        ),
+        sep="\n\n",
+    ).as_html()
 
 
 def support_text(settings) -> str:
