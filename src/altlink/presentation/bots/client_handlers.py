@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 from decimal import Decimal, InvalidOperation
 import re
@@ -523,11 +524,20 @@ def subscription_markup(subscription):
     ).as_markup()
 
 
-def subscription_link_markup(settings, subscription, copy_payload: str | None = None):
+def subscription_link_caption(payload: str) -> str:
+    escaped_payload = html.escape(payload)
+    return (
+        "🔗 Ваша персональная ссылка VPN\n\n"
+        f"<code>{escaped_payload}</code>\n\n"
+        "Ссылка оформлена как код, поэтому её удобно копировать через меню Telegram.\n"
+        "Откройте её в VPN-клиенте или отсканируйте QR-код."
+    )
+
+
+def subscription_link_markup(settings, subscription):
     return subscription_link_actions(
         show_traffic=show_metered_usage(subscription),
         help_url=connection_help_url(settings),
-        copy_payload=copy_payload,
     ).as_markup()
 
 
@@ -669,6 +679,7 @@ async def edit_or_send_dynamic_media_card(
     filename: str,
     caption: str,
     reply_markup,
+    parse_mode: str | None = None,
 ) -> None:
     anchor = callback.message
     try:
@@ -678,6 +689,7 @@ async def edit_or_send_dynamic_media_card(
             media=InputMediaPhoto(
                 media=BufferedInputFile(image_bytes, filename=filename),
                 caption=caption,
+                parse_mode=parse_mode,
             ),
             reply_markup=reply_markup,
         )
@@ -686,6 +698,7 @@ async def edit_or_send_dynamic_media_card(
         sent = await anchor.answer_photo(
             BufferedInputFile(image_bytes, filename=filename),
             caption=caption,
+            parse_mode=parse_mode,
             reply_markup=reply_markup,
         )
         remember_client_card(sent, has_media=True)
@@ -871,7 +884,7 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
 
 def profile_text(user, subscription, settings) -> str:
     plan_name = subscription.plan.name if subscription and subscription.plan else "не выбран"
-    assigned = user.assigned_server.name if getattr(user, "assigned_server", None) else "ещё не назначен"
+    assigned = user.assigned_server.name if getattr(user, "assigned_server", None) else "ещё не назначено"
     lines = [
         "👤 Профиль",
         "",
@@ -885,7 +898,7 @@ def profile_text(user, subscription, settings) -> str:
             lines.append(f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
         else:
             lines.append(f"Действует до: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
-    lines.append(f"📍 {assigned}")
+    lines.append(f"📍 Подключение: {assigned}")
     return "\n".join(lines)
 
 
@@ -975,6 +988,65 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         ]
     )
     return "\n".join(lines)
+
+
+def plan_menu_text() -> str:
+    return (
+        "<b>Тарифы ALTLINK VPN</b>\n\n"
+        "<b>Start</b>\n"
+        "• Один основной сервер\n"
+        "• До 2 устройств\n"
+        "• Безлимитный трафик на основном сервере\n"
+        "• Подходит для стабильного базового подключения\n"
+        "• В сети доступны разные локации и серверы со скоростью до 10 Гбит/с\n"
+        "• Трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ\n\n"
+        "<b>Pro</b>\n"
+        "• Все активные серверы\n"
+        "• До 8 устройств\n"
+        "• Безлимитный трафик на всех серверах\n"
+        "• Разные локации и серверы со скоростью до 10 Гбит/с\n"
+        "• Обход белых списков уже включён\n\n"
+        "<b>Что такое обход белых списков</b>\n"
+        "Это режим для ситуаций, когда без обхода у части провайдеров работают только отдельные российские сервисы, "
+        "а иностранные сайты и приложения не открываются. С этим доступом работают все сайты и приложения без таких ограничений.\n\n"
+        "Выберите тариф, а затем срок подключения."
+    )
+
+
+def plan_family_text(family: str) -> str:
+    if family == "10gbit":
+        return (
+            "<b>Start</b>\n\n"
+            "• Один основной сервер\n"
+            "• До 2 устройств\n"
+            "• Безлимитный трафик на основном сервере\n"
+            "• Сервер назначается из сети ALTLINK с локациями в разных странах\n"
+            "• Серверы сети рассчитаны на скорость до 10 Гбит/с\n\n"
+            "<b>Белые списки / обход глушилок</b>\n"
+            "Это нужно, когда без обхода у провайдера работают только отдельные российские сервисы, "
+            "а иностранные сайты и приложения не открываются.\n"
+            "Для Start такой трафик считается отдельно: 4 ₽ за 1 ГБ.\n\n"
+            "<b>Стоимость</b>\n"
+            f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽\n"
+            f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽"
+        )
+
+    return (
+        "<b>Pro</b>\n\n"
+        "• Все активные серверы\n"
+        "• До 8 устройств\n"
+        "• Безлимитный трафик на всех серверах\n"
+        "• Разные локации для выбора под ваш маршрут\n"
+        "• Серверы сети рассчитаны на скорость до 10 Гбит/с\n"
+        "• Обход белых списков уже включён\n\n"
+        "<b>Что даёт обход белых списков</b>\n"
+        "Если без обхода у провайдера работают только отдельные российские сервисы, "
+        "а иностранные сайты и приложения не открываются, этот режим снимает такие ограничения "
+        "и даёт доступ ко всем сайтам и приложениям.\n\n"
+        "<b>Стоимость</b>\n"
+        f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽\n"
+        f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽"
+    )
 
 
 def support_text(settings) -> str:
@@ -2036,17 +2108,9 @@ async def plan_menu_v2(callback: CallbackQuery, container: AppContainer):
             return
     await answer_or_edit(
         callback,
-        (
-            "Тарифы\n\n"
-            "Выберите подходящий вариант, а затем срок подключения.\n\n"
-            "🟢 Start\n"
-            "Один сервер, 2 устройства.\n"
-            "Белые списки для него считаются отдельно по 4 ₽ за 1 ГБ.\n\n"
-            "🟡 Pro\n"
-            "Все активные серверы, 6 устройств.\n"
-            "Безлимит на все сервера."
-        ),
+        plan_menu_text(),
         reply_markup=plan_actions().as_markup(),
+        parse_mode="HTML",
     )
 
 
@@ -2062,27 +2126,13 @@ async def plan_family_menu(callback: CallbackQuery, container: AppContainer):
         if user is None:
             return
 
-    if family == "10gbit":
-        text = (
-            "🟢 Start\n\n"
-            "Один сервер, 2 устройства.\n"
-            "Белые списки для него считаются отдельно по 4 ₽ за 1 ГБ.\n\n"
-            f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽.\n"
-            f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽."
-        )
-    else:
-        text = (
-            "🟡 Pro\n\n"
-            "Все активные серверы, 6 устройств.\n"
-            "Безлимит на все сервера.\n\n"
-            f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽.\n"
-            f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽."
-        )
+    text = plan_family_text(family)
 
     await answer_or_edit(
         callback,
         text,
         reply_markup=plan_period_actions(family).as_markup(),
+        parse_mode="HTML",
     )
 
 
@@ -2259,12 +2309,9 @@ async def subscription_link(callback: CallbackQuery, container: AppContainer):
             callback,
             image_bytes=image,
             filename="altlink-vpn-qr.png",
-            caption=(
-                "🔗 Ваша персональная ссылка VPN\n\n"
-                f"{payload}\n\n"
-                "Откройте ссылку в VPN-клиенте или отсканируйте QR-код."
-            ),
-            reply_markup=subscription_link_markup(container.settings, subscription, copy_payload=payload),
+            caption=subscription_link_caption(payload),
+            reply_markup=subscription_link_markup(container.settings, subscription),
+            parse_mode="HTML",
         )
 
 

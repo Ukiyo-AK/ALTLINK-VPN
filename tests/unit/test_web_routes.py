@@ -52,8 +52,8 @@ def test_group_portal_plans_merges_monthly_and_weekly_variants():
             plan(PlanCode.TRIAL, sort_order=0, price_rub="0", period_days=2, description="trial", device_limit=2, is_trial=True),
             plan(PlanCode.SINGLE_10GBIT, sort_order=10, price_rub="69", period_days=30, description="10g", device_limit=2),
             plan(PlanCode.SINGLE_10GBIT_WEEKLY, sort_order=15, price_rub="25", period_days=7, description="10g weekly", device_limit=2),
-            plan(PlanCode.UNLIMITED, sort_order=20, price_rub="199", period_days=30, description="unlimited", device_limit=6),
-            plan(PlanCode.UNLIMITED_WEEKLY, sort_order=25, price_rub="65", period_days=7, description="unlimited weekly", device_limit=6),
+            plan(PlanCode.UNLIMITED, sort_order=20, price_rub="199", period_days=30, description="unlimited", device_limit=8),
+            plan(PlanCode.UNLIMITED_WEEKLY, sort_order=25, price_rub="65", period_days=7, description="unlimited weekly", device_limit=8),
         ]
     )
 
@@ -72,7 +72,7 @@ def test_group_portal_plans_merges_monthly_and_weekly_variants():
 
 def test_group_portal_plans_keeps_device_limit_on_group():
     groups = group_portal_plans(
-        [plan(PlanCode.UNLIMITED, sort_order=20, price_rub="199", period_days=30, description="unlimited", device_limit=6)]
+        [plan(PlanCode.UNLIMITED, sort_order=20, price_rub="199", period_days=30, description="unlimited", device_limit=8)]
     )
 
     assert groups == [
@@ -80,7 +80,7 @@ def test_group_portal_plans_keeps_device_limit_on_group():
             "family": "unlimited",
             "title": "Pro",
             "description": "unlimited",
-            "device_limit": 6,
+            "device_limit": 8,
             "periods": [
                 {
                     "label": "На месяц",

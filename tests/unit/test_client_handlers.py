@@ -261,7 +261,7 @@ def test_profile_text_keeps_only_key_details_and_links():
 
     assert "💳 Баланс: 99.00 ₽" in text
     assert "Тариф: Pro" in text
-    assert "📍 NL Node" in text
+    assert "📍 Подключение: NL Node" in text
     assert "Сайт: https://altlink.online" not in text
     assert "Кабинет: https://altlink.online/portal" not in text
     assert "Сервер:" not in text
@@ -274,7 +274,7 @@ def test_subscription_text_hides_billing_cycle_line():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("99.00"), status="active")
     subscription = SimpleNamespace(
-        plan=SimpleNamespace(name="Pro", code=PlanCode.UNLIMITED, device_limit=6),
+        plan=SimpleNamespace(name="Pro", code=PlanCode.UNLIMITED, device_limit=8),
         auto_renew=True,
         next_billing_at=datetime(2026, 1, 1, 12, 0, 0),
         notes=None,
@@ -290,6 +290,13 @@ def test_subscription_text_hides_billing_cycle_line():
 
     assert "Тариф: Pro" in text
     assert "Формат списания" not in text
+
+
+def test_subscription_link_caption_uses_telegram_code_formatting():
+    caption = client_handlers.subscription_link_caption("https://sub.example/demo?x=1&y=2")
+
+    assert "<code>https://sub.example/demo?x=1&amp;y=2</code>" in caption
+    assert "удобно копировать через меню Telegram" in caption
 
 
 def test_agreement_text_uses_link_instead_of_stub_when_available():
@@ -469,6 +476,7 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
         captured["text"] = text
         captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
         return None
 
     async def fake_ensure_client_access(callback, container, hub):
@@ -487,12 +495,16 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     await client_handlers.plan_menu_v2(callback, container)
 
     text = str(captured["text"])
-    assert "🟢 Start" in text
-    assert "Один сервер, 2 устройства." in text
-    assert "Белые списки для него считаются отдельно по 4 ₽ за 1 ГБ." in text
-    assert "🟡 Pro" in text
-    assert "Все активные серверы, 6 устройств." in text
-    assert "Безлимит на все сервера." in text
+    assert captured["kwargs"]["parse_mode"] == "HTML"
+    assert "<b>Start</b>" in text
+    assert "<b>Pro</b>" in text
+    assert "🟢" not in text
+    assert "🟡" not in text
+    assert "До 2 устройств" in text
+    assert "До 8 устройств" in text
+    assert "серверы со скоростью до 10 Гбит/с" in text
+    assert "Трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ" in text
+    assert "работают все сайты и приложения без таких ограничений" in text
 
 
 @pytest.mark.asyncio
@@ -502,6 +514,7 @@ async def test_plan_family_menu_uses_updated_copy(monkeypatch):
     async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
         captured["text"] = text
         captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
         return None
 
     async def fake_ensure_client_access(callback, container, hub):
@@ -520,9 +533,48 @@ async def test_plan_family_menu_uses_updated_copy(monkeypatch):
     await client_handlers.plan_family_menu(callback, container)
 
     text = str(captured["text"])
-    assert "🟡 Pro" in text
-    assert "Все активные серверы, 6 устройств." in text
-    assert "Безлимит на все сервера." in text
+    assert captured["kwargs"]["parse_mode"] == "HTML"
+    assert "<b>Pro</b>" in text
+    assert "🟡" not in text
+    assert "До 8 устройств" in text
+    assert "Безлимитный трафик на всех серверах" in text
+    assert "Разные локации для выбора под ваш маршрут" in text
+    assert "доступ ко всем сайтам и приложениям" in text
+
+
+@pytest.mark.asyncio
+async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    callback = SimpleNamespace(data="client:plan_family:10gbit", answer=AsyncMock())
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.plan_family_menu(callback, container)
+
+    text = str(captured["text"])
+    assert captured["kwargs"]["parse_mode"] == "HTML"
+    assert "<b>Start</b>" in text
+    assert "🟢" not in text
+    assert "До 2 устройств" in text
+    assert "Безлимитный трафик на основном сервере" in text
+    assert "Белые списки / обход глушилок" in text
+    assert "4 ₽ за 1 ГБ" in text
 
 
 @pytest.mark.asyncio

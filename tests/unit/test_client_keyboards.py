@@ -186,19 +186,18 @@ def test_subscription_actions_render_cancel_and_hide_traffic():
     assert "Трафик и списания" not in unlimited_flat
 
 
-def test_subscription_link_actions_offer_one_tap_copy():
+def test_subscription_link_actions_keep_only_help_and_navigation():
     markup = subscription_link_actions(
         show_traffic=True,
         help_url="https://altlink.online/help/connect",
-        copy_payload="https://sub.example/demo",
     ).as_markup()
     flat = [text for row in inline_rows(markup) for text in row]
-    buttons = inline_buttons(markup)
 
-    assert "📋 Скопировать ссылку" in flat
-    copy_button = next(button for button in buttons if button["text"] == "📋 Скопировать ссылку")
-    assert copy_button["copy_text"] == {"text": "https://sub.example/demo"}
-    assert copy_button["style"] == "success"
+    assert "📋 Скопировать ссылку" not in flat
+    assert "Помощь по подключению" in flat
+    assert "Трафик и списания" in flat
+    assert "Подписка" in flat
+    assert "Меню" in flat
 
 
 def test_plan_actions_switch_to_two_step_flow():
