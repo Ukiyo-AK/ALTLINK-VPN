@@ -10,6 +10,7 @@ from altlink.presentation.bots.client_keyboards import (
     agreement_actions,
     balance_actions,
     channel_actions,
+    insufficient_balance_actions,
     main_menu,
     menu_actions,
     plan_actions,
@@ -87,6 +88,34 @@ def test_agreement_actions_change_after_confirmation():
     accepted = agreement_actions(consent_accepted=True).as_markup()
     accepted_flat = [text for row in inline_rows(accepted) for text in row]
     assert accepted_flat == ["Соглашение подтверждено", "Меню"]
+
+
+def test_agreement_actions_include_legal_link_when_available():
+    markup = agreement_actions(
+        consent_accepted=False,
+        agreement_url="https://altlink.online/legal/agreement",
+    ).as_markup()
+    buttons = inline_buttons(markup)
+
+    assert len(buttons) == 2
+    open_button = next(button for button in buttons if button.get("url"))
+    confirm_button = next(button for button in buttons if button.get("callback_data") == "client:complete_registration")
+    assert open_button["url"] == "https://altlink.online/legal/agreement"
+    assert open_button["style"] == "primary"
+    assert confirm_button["style"] == "success"
+
+
+def test_insufficient_balance_actions_lead_to_topup():
+    markup = insufficient_balance_actions().as_markup()
+    buttons = inline_buttons(markup)
+    callbacks = [button["callback_data"] for button in buttons if "callback_data" in button]
+
+    assert len(buttons) == 3
+    topup_button = next(button for button in buttons if button.get("callback_data") == "client:topup_menu")
+    assert topup_button["callback_data"] == "client:topup_menu"
+    assert topup_button["style"] == "success"
+    assert "client:plan_menu" in callbacks
+    assert "client:balance" in callbacks
 
 
 def test_channel_actions_include_subscription_check():

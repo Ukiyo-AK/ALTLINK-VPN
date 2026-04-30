@@ -53,3 +53,21 @@ async def test_trial_activation_uses_any_available_server_when_ten_gbit_unavaila
         assert user.assigned_server is not None
         assert user.assigned_server.server_type.value in {"whitelist", "regular"}
         assert {node.nodeName for node in bundle["accessible_nodes"]} == {"Whitelist EU", "Regular Warsaw"}
+
+
+@pytest.mark.asyncio
+async def test_subscription_bundle_prefers_local_proxy_link_when_backend_public_url_configured(test_services):
+    test_services.settings.backend_public_url = "https://altlink.online"
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=2003,
+            username="proxybundle",
+            first_name="Proxy",
+            last_name="Bundle",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        bundle = await hub.accounts.get_subscription_bundle(user.id)
+
+    assert bundle["subscription_info"].subscriptionUrl == f"https://altlink.online/sub/{user.remnawave_short_uuid}"

@@ -30,6 +30,7 @@ from altlink.infrastructure.db.models import (
 )
 from altlink.infrastructure.remnawave_schemas import RemoteUser
 from altlink.utils.security import hash_password, verify_password
+from altlink.utils.subscriptions import local_subscription_proxy_url
 from altlink.utils.time import utc_now
 
 
@@ -95,6 +96,11 @@ class AccountService(BaseService):
     async def get_user_by_telegram_id(self, telegram_id: int) -> User | None:
         return await self.session.scalar(
             select(User).options(joinedload(User.assigned_server)).where(User.telegram_id == telegram_id)
+        )
+
+    async def get_user_by_remnawave_short_uuid(self, short_uuid: str) -> User | None:
+        return await self.session.scalar(
+            select(User).options(joinedload(User.assigned_server)).where(User.remnawave_short_uuid == short_uuid)
         )
 
     async def list_users(self, search: str | None = None) -> Sequence[User]:
@@ -270,6 +276,9 @@ class AccountService(BaseService):
         accessible_nodes = await self.remnawave.get_accessible_nodes(user.remnawave_user_uuid)
         connection_keys = await self.remnawave.get_connection_keys(user.remnawave_user_uuid)
         subscription_info = await self.remnawave.get_subscription_info(user.remnawave_short_uuid)
+        local_url = local_subscription_proxy_url(self.settings, user.remnawave_short_uuid)
+        if local_url:
+            subscription_info = subscription_info.model_copy(update={"subscriptionUrl": local_url})
 
         return {
             "user": user,

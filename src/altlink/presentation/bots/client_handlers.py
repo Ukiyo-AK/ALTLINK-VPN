@@ -31,6 +31,7 @@ from altlink.presentation.bots.client_keyboards import (
     agreement_actions,
     balance_actions,
     channel_actions,
+    insufficient_balance_actions,
     main_menu,
     menu_actions,
     plan_actions,
@@ -746,21 +747,26 @@ async def try_edit_tracked_client_card(
     return False
 
 
-def agreement_text(*, consent_accepted: bool = False) -> str:
+def agreement_text(*, consent_accepted: bool = False, agreement_link_available: bool = False) -> str:
     intro = (
-        "Согласие уже подтверждено. Если нужно, ниже остаётся временная текстовая заглушка."
+        "Согласие уже подтверждено. Полный документ можно открыть по кнопке ниже."
         if consent_accepted
-        else "Подтвердите согласие, чтобы открыть доступ к меню и управлению VPN."
+        else "Откройте полный текст соглашения по кнопке ниже и подтвердите согласие, чтобы открыть доступ к меню и управлению VPN."
+    )
+    tail = (
+        "\n\nЕсли ссылка не открывается, напишите в поддержку."
+        if agreement_link_available
+        else "\n\nЕсли ссылка пока недоступна, напишите в поддержку."
     )
     return (
         "Шаг 1 из 3. Пользовательское соглашение\n\n"
         f"{intro}\n\n"
-        "Сейчас в боте используется временная заглушка вместо полного текста соглашения.\n\n"
         "Подтверждая соглашение, вы соглашаетесь с тем, что:\n"
         "1. Используете сервис на свой аккаунт.\n"
         "2. Самостоятельно отвечаете за безопасность своих устройств.\n"
         "3. Соблюдаете правила Telegram и законодательства вашей страны.\n"
-        "4. Полный текст соглашения будет опубликован позже и заменит эту заглушку."
+        "4. Соблюдаете правила использования сервиса и подключений."
+        f"{tail}"
     )
 
 
@@ -1035,10 +1041,11 @@ async def show_pending_access_steps(
 ) -> None:
     anchor = target.message if isinstance(target, CallbackQuery) else target
     if not consent_ok:
+        legal_url = agreement_url(container.settings)
         await send_card_with_optional_media(
             anchor,
-            agreement_text(consent_accepted=False),
-            primary_markup=agreement_actions(consent_accepted=False).as_markup(),
+            agreement_text(consent_accepted=False, agreement_link_available=bool(legal_url)),
+            primary_markup=agreement_actions(consent_accepted=False, agreement_url=legal_url).as_markup(),
             media_section="onboarding",
             force_new_message=True,
         )
@@ -1474,13 +1481,16 @@ async def show_agreement(callback: CallbackQuery, container: AppContainer):
             await show_technical_maintenance(callback, container)
             return
         user = await ensure_user(callback.from_user, container, hub)
+        legal_url = agreement_url(container.settings)
         await answer_or_edit(
             callback,
             agreement_text(
-                consent_accepted=bool(user.registration_completed_at and user.consent_accepted_at)
+                consent_accepted=bool(user.registration_completed_at and user.consent_accepted_at),
+                agreement_link_available=bool(legal_url),
             ),
             reply_markup=agreement_actions(
-                consent_accepted=bool(user.registration_completed_at and user.consent_accepted_at)
+                consent_accepted=bool(user.registration_completed_at and user.consent_accepted_at),
+                agreement_url=legal_url,
             ).as_markup(),
         )
 
@@ -1534,8 +1544,11 @@ async def complete_registration(callback: CallbackQuery, container: AppContainer
         show_trial = await hub.accounts.can_offer_trial(refreshed.id) if (consent_ok and channel_ok) else False
     await answer_or_edit(
         callback,
-        agreement_text(consent_accepted=True),
-        reply_markup=agreement_actions(consent_accepted=True).as_markup(),
+        agreement_text(consent_accepted=True, agreement_link_available=bool(agreement_url(container.settings))),
+        reply_markup=agreement_actions(
+            consent_accepted=True,
+            agreement_url=agreement_url(container.settings),
+        ).as_markup(),
     )
     if not channel_ok:
         await send_card_with_optional_media(
@@ -2132,6 +2145,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
         )
         return
     current_subscription = None
+    reply_markup = None
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
@@ -2146,12 +2160,15 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
             )
             current_subscription = subscription
         except ConflictError as exc:
+            reply_markup = insufficient_balance_actions().as_markup()
             text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
         if current_subscription is None:
             current_subscription = await hub.accounts.get_current_subscription(user.id)
-    await answer_or_edit(callback, text, reply_markup=subscription_markup(current_subscription))
+    if reply_markup is None:
+        reply_markup = subscription_markup(current_subscription)
+    await answer_or_edit(callback, text, reply_markup=reply_markup)
     return
     current_subscription = None
     async with container.hub() as hub:

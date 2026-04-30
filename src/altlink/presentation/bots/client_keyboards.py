@@ -30,8 +30,10 @@ def channel_actions(channel_url: str | None = None) -> InlineKeyboardBuilder:
     return builder
 
 
-def agreement_actions(consent_accepted: bool = False) -> InlineKeyboardBuilder:
+def agreement_actions(consent_accepted: bool = False, agreement_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+    if agreement_url:
+        builder.button(text="📘 Открыть соглашение", url=agreement_url, style="primary")
     builder.button(
         text="Соглашение подтверждено" if consent_accepted else "Подтвердить соглашение",
         callback_data="client:complete_registration",
@@ -39,9 +41,15 @@ def agreement_actions(consent_accepted: bool = False) -> InlineKeyboardBuilder:
     )
     if consent_accepted:
         builder.button(text="Меню", callback_data="client:home", style="primary")
-        builder.adjust(1, 1)
+        if agreement_url:
+            builder.adjust(1, 1, 1)
+        else:
+            builder.adjust(1, 1)
     else:
-        builder.adjust(1)
+        if agreement_url:
+            builder.adjust(1, 1)
+        else:
+            builder.adjust(1)
     return builder
 
 
@@ -214,6 +222,15 @@ def plan_actions() -> InlineKeyboardBuilder:
     builder.button(text="Pro", callback_data="client:plan_family:unlimited", style="primary")
     builder.button(text="Меню", callback_data="client:home")
     builder.adjust(2, 1)
+    return builder
+
+
+def insufficient_balance_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Пополнить баланс", callback_data="client:topup_menu", style="success")
+    builder.button(text="⬅️ К тарифам", callback_data="client:plan_menu", style="primary")
+    builder.button(text="💳 Баланс", callback_data="client:balance", style="primary")
+    builder.adjust(1, 1, 1)
     return builder
 
 

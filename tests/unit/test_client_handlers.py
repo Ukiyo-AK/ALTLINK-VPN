@@ -9,7 +9,7 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
-from altlink.domain.enums import PromoRewardKind
+from altlink.domain.enums import PlanCode, PromoRewardKind
 from altlink.presentation.bots import client_handlers
 from altlink.settings import Settings
 
@@ -65,6 +65,21 @@ async def test_ensure_client_access_sends_agreement_and_channel_messages_separat
     assert len(message.answers) == 2
     assert "Шаг 1 из 3" in str(message.answers[0]["text"])
     assert "Шаг 2 из 3" in str(message.answers[1]["text"])
+
+
+@pytest.mark.asyncio
+async def test_ensure_client_access_includes_real_agreement_link(test_services):
+    test_services.settings.backend_public_url = "https://altlink.online"
+    message = DummyMessage(text="/start", user_id=21009)
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_client_access(message, test_services, hub)
+
+    assert user is None
+    agreement_markup = message.answers[0]["reply_markup"]
+    buttons = [button for row in agreement_markup.inline_keyboard for button in row]
+    open_button = next(button for button in buttons if button.url)
+    assert open_button.url == "https://altlink.online/legal/agreement"
 
 
 @pytest.mark.asyncio
@@ -233,6 +248,14 @@ def test_profile_text_keeps_only_key_details_and_links():
     assert "Лимит устройств" not in text
 
 
+def test_agreement_text_uses_link_instead_of_stub_when_available():
+    text = client_handlers.agreement_text(consent_accepted=False, agreement_link_available=True)
+
+    assert "\u041e\u0442\u043a\u0440\u043e\u0439\u0442\u0435 \u043f\u043e\u043b\u043d\u044b\u0439 \u0442\u0435\u043a\u0441\u0442 \u0441\u043e\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f \u043f\u043e \u043a\u043d\u043e\u043f\u043a\u0435 \u043d\u0438\u0436\u0435" in text
+    assert "\u0415\u0441\u043b\u0438 \u0441\u0441\u044b\u043b\u043a\u0430 \u043d\u0435 \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442\u0441\u044f" in text
+    assert "\u0437\u0430\u0433\u043b\u0443\u0448\u043a" not in text
+
+
 def test_topup_amount_confirmation_text_prompts_next_step():
     text = client_handlers.topup_amount_confirmation_text(Decimal("350"))
 
@@ -351,6 +374,48 @@ async def test_promo_submit_finishes_onboarding_after_success(test_services):
     assert refreshed.promo_onboarding_completed_at is not None
     assert refreshed.balance_rub == Decimal("100.00")
     assert any("Промокод применён" in str(item["text"]) for item in message.answers)
+
+
+@pytest.mark.asyncio
+async def test_activate_plan_with_insufficient_balance_shows_topup_actions(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["target"] = target
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    class DummyBilling:
+        async def activate_paid_plan(self, user_id, plan_code, charge_user=True):
+            raise client_handlers.ConflictError("РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ СЃСЂРµРґСЃС‚РІ.")
+
+    class DummyAccounts:
+        async def get_current_subscription(self, user_id):
+            return None
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(billing=DummyBilling(), accounts=DummyAccounts())
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    callback = SimpleNamespace(data=f"client:activate_plan:{PlanCode.UNLIMITED.value}")
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.activate_plan(callback, container)
+
+    assert "РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ СЃСЂРµРґСЃС‚РІ." in str(captured["text"])
+    markup = captured["reply_markup"]
+    buttons = [button for row in markup.inline_keyboard for button in row]
+    callbacks = [button.callback_data for button in buttons if button.callback_data]
+    assert "client:topup_menu" in callbacks
+    assert "client:plan_menu" in callbacks
 
 
 @pytest.mark.asyncio
