@@ -10,7 +10,6 @@ import pytest
 from altlink.domain.enums import PlanCode
 from altlink.utils.latency import single_probe_server_latency
 from altlink.presentation.web.routes import (
-    format_latency_probe_debug_message,
     group_portal_plans,
     is_foreign_latency_target,
     latency_probe,
@@ -270,73 +269,6 @@ async def test_latency_probe_can_limit_to_requested_servers_and_include_local(mo
     assert b"is_connected\":false" in response.body
     assert b"3500" in response.body
     assert b"NL Node" not in response.body
-
-
-@pytest.mark.asyncio
-async def test_latency_probe_notifies_admin_bot_with_probe_urls(monkeypatch):
-    servers = [
-        SimpleNamespace(id="nl-1", name="NL Node", address="nl.example.com", country_code="NL", is_available=True, is_connected=True, inbounds=[]),
-    ]
-    sent: dict[str, object] = {}
-
-    async def fake_list_servers():
-        return servers
-
-    async def fake_list_admin_telegram_ids():
-        return [101, 202]
-
-    async def fake_send_telegram_messages(*, bot_token, chat_ids, text, reply_markup=None):
-        sent["bot_token"] = bot_token
-        sent["chat_ids"] = list(chat_ids)
-        sent["text"] = text
-        return len(sent["chat_ids"])
-
-    @asynccontextmanager
-    async def fake_hub():
-        yield SimpleNamespace(
-            catalog=SimpleNamespace(list_servers=fake_list_servers),
-            accounts=SimpleNamespace(list_admin_telegram_ids=fake_list_admin_telegram_ids),
-        )
-
-    monkeypatch.setattr("altlink.presentation.web.routes.send_telegram_messages", fake_send_telegram_messages)
-
-    request = SimpleNamespace(
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                container=SimpleNamespace(hub=fake_hub),
-                settings=SimpleNamespace(
-                    admin_bot_token="admin-token",
-                    latency_probe_scheme="https",
-                    latency_probe_port=44443,
-                    latency_probe_path="/ping",
-                    browser_latency_timeout_ms=4000,
-                ),
-            )
-        ),
-        query_params={"include_local": "1"},
-    )
-
-    response = await latency_probe(request)
-
-    assert response.status_code == 200
-    assert sent["bot_token"] == "admin-token"
-    assert sent["chat_ids"] == [101, 202]
-    assert "https://nl.example.com:44443/ping" in str(sent["text"])
-    assert "Порт: 44443" in str(sent["text"])
-
-
-def test_format_latency_probe_debug_message_explains_empty_probe_list():
-    text = format_latency_probe_debug_message(
-        probes=[],
-        requested_server_ids={"missing"},
-        include_local=True,
-        settings=SimpleNamespace(latency_probe_port=44443, latency_probe_path="/ping"),
-    )
-
-    assert "Целей для проверки: 0" in text
-    assert "Список пустой" in text
-    assert "missing" in text
-
 
 def test_portal_login_capabilities_require_valid_bot_configuration():
     settings = SimpleNamespace(

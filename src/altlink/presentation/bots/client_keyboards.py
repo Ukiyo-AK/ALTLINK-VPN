@@ -311,7 +311,7 @@ def topup_provider_actions(
             )
     builder.button(
         text="⬅️ Назад",
-        callback_data=f"client:topup_confirm_amount:{amount_token}",
+        callback_data="client:topup_menu",
         style="primary",
     )
     builder.button(text="💳 Баланс", callback_data="client:balance")

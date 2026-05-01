@@ -370,7 +370,7 @@ def test_topup_provider_status_text_explains_missing_yookassa_settings():
         missing_settings=["YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY"],
     )
 
-    assert "YooKassa выбрана как касса" in text
+    assert "Юкасса СБП выбрана как касса" in text
     assert "YOOKASSA_SHOP_ID" in text
     assert "YOOKASSA_SECRET_KEY" in text
     assert "тестовая заглушка" in text
@@ -383,7 +383,7 @@ def test_balance_topup_status_text_reflects_live_yookassa():
         missing_settings=[],
     )
 
-    assert text == "Пополнение доступно через YooKassa."
+    assert text == "Пополнение доступно через Юкасса СБП."
 
 
 def test_balance_topup_status_text_reflects_stub_fallback():

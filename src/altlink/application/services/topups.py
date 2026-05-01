@@ -106,7 +106,7 @@ class TopupService(BaseService):
             await self.log_event(
                 level=SystemEventLevel.WARNING,
                 event_type="topup_provider_fallback_stub",
-                message="YooKassa включена, но не настроена полностью. Использована заглушка.",
+                message="Юкасса СБП включена, но не настроена полностью. Использована заглушка.",
                 payload={"missing_settings": self.yookassa_missing_settings()},
             )
         if provider == "yookassa":
@@ -389,7 +389,7 @@ class TopupService(BaseService):
         payment_id = str(data.get("id") or "").strip()
         payment_url = self._extract_yookassa_confirmation_url(data)
         if not payment_id or not payment_url:
-            raise ConflictError("YooKassa не вернула данные для оплаты.")
+            raise ConflictError("Юкасса СБП не вернула данные для оплаты.")
         return payment_id, payment_url
 
     async def _fetch_yookassa_payment(self, payment_id: str) -> dict:

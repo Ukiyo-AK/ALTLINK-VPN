@@ -21,7 +21,6 @@ from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType, T
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
 from altlink.infrastructure.db.models import Subscription, SystemSetting, User
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
-from altlink.presentation.bots.common import send_telegram_messages
 from altlink.utils.latency import (
     LATENCY_RECHECK_THRESHOLD_MS,
     browser_probe_url,
@@ -56,40 +55,6 @@ def latency_disclaimer_text() -> str:
         "Показываем задержку от вашего устройства до серверов ALTLINK. "
         "Это помогает точнее оценить подключение, но значение может немного меняться из-за вашей сети и маршрута."
     )
-
-
-def format_latency_probe_debug_message(
-    *,
-    probes: list[dict],
-    requested_server_ids: set[str],
-    include_local: bool,
-    settings,
-) -> str:
-    lines = [
-        "Диагностика пинга сайта",
-        "",
-        f"Режим: браузер пользователя -> probe endpoint",
-        f"Порт: {getattr(settings, 'latency_probe_port', 44443)}",
-        f"Путь: {getattr(settings, 'latency_probe_path', '/ping')}",
-        f"include_local: {'да' if include_local else 'нет'}",
-    ]
-    if requested_server_ids:
-        lines.append(f"Запрошенные server_id: {', '.join(sorted(requested_server_ids))}")
-    lines.extend(["", f"Целей для проверки: {len(probes)}"])
-
-    if probes:
-        for index, probe in enumerate(probes[:20], start=1):
-            connected = "connected" if probe.get("is_connected") else "not connected"
-            lines.append(
-                f"{index}. {probe.get('name') or 'server'} [{probe.get('country_code') or '—'}] "
-                f"({connected}) -> {probe.get('probe_url') or 'нет URL'}"
-            )
-        if len(probes) > 20:
-            lines.append(f"...и ещё {len(probes) - 20}")
-    else:
-        lines.append("Список пустой: браузеру нечего проверять.")
-
-    return "\n".join(lines)
 
 
 def get_csrf_token(request: Request) -> str:
@@ -491,11 +456,8 @@ async def latency_probe(request: Request) -> JSONResponse:
         else False
     )
 
-    admin_ids: list[int] = []
     async with request.app.state.container.hub() as hub:
         servers = await hub.catalog.list_servers()
-        if getattr(request.app.state.settings, "admin_bot_token", "") and hasattr(hub, "accounts"):
-            admin_ids = await hub.accounts.list_admin_telegram_ids()
     settings = request.app.state.settings
     targets = [
         server
@@ -531,17 +493,6 @@ async def latency_probe(request: Request) -> JSONResponse:
             item.get("name", ""),
         ),
     )
-    if admin_ids and getattr(settings, "admin_bot_token", ""):
-        await send_telegram_messages(
-            bot_token=settings.admin_bot_token,
-            chat_ids=admin_ids,
-            text=format_latency_probe_debug_message(
-                probes=probes,
-                requested_server_ids=requested_server_ids,
-                include_local=include_local,
-                settings=settings,
-            ),
-        )
     return JSONResponse(
         {
             "ok": True,

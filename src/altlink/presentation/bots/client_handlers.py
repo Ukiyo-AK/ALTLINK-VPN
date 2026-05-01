@@ -103,7 +103,7 @@ def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
 
 def topup_provider_label(provider: str) -> str:
     labels = {
-        "yookassa": "💳 YooKassa",
+        "yookassa": "💳 Юкасса СБП",
         "manual": "💬 Через поддержку",
         "stub": "🧪 Тестовая касса",
     }
@@ -147,10 +147,10 @@ def topup_provider_selection_text(amount: Decimal, providers: list[str]) -> str:
 def topup_provider_status_text(*, configured_provider: str, resolved_provider: str, missing_settings: list[str]) -> str:
     if configured_provider == "yookassa":
         if resolved_provider == "yookassa":
-            return "Оплата откроется через кассу YooKassa."
+            return "Оплата откроется через Юкасса СБП."
         missing = ", ".join(missing_settings) or "YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY"
         return (
-            "YooKassa выбрана как касса, но бот не видит полную настройку.\n"
+            "Юкасса СБП выбрана как касса, но бот не видит полную настройку.\n"
             f"Не хватает: {missing}.\n"
             "Пока используется тестовая заглушка."
         )
@@ -164,10 +164,10 @@ def topup_provider_status_text(*, configured_provider: str, resolved_provider: s
 def balance_topup_status_text(*, configured_provider: str, resolved_provider: str, missing_settings: list[str]) -> str:
     if configured_provider == "yookassa":
         if resolved_provider == "yookassa":
-            return "Пополнение доступно через YooKassa."
+            return "Пополнение доступно через Юкасса СБП."
         missing = ", ".join(missing_settings) or "YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY"
         return (
-            "YooKassa выбрана как касса, но бот не видит полную настройку.\n"
+            "Юкасса СБП выбрана как касса, но бот не видит полную настройку.\n"
             f"Не хватает: {missing}.\n"
             "Пока используется тестовая заглушка."
         )
@@ -323,7 +323,7 @@ async def handle_topup_checkout(
                 "💳 Ссылка на оплату готова.\n\n"
                 f"Сумма: {amount:.2f} ₽\n"
                 f"Номер заявки: {checkout.request.id}\n"
-                "Откройте ссылку, завершите оплату в YooKassa и затем нажмите кнопку проверки статуса."
+                "Откройте ссылку, завершите оплату в Юкасса СБП и затем нажмите кнопку проверки статуса."
             ),
             payment_url=checkout.payment_url,
             payment_label="Оплатить",
@@ -371,6 +371,68 @@ async def show_topup_provider_menu(
             provider_urls=provider_urls or {},
         ).as_markup(),
     )
+
+
+async def continue_topup_flow(
+    target: Message | CallbackQuery,
+    container: AppContainer,
+    *,
+    user,
+    amount: Decimal,
+) -> None:
+    provider_urls: dict[str, str] = {}
+    checkout = None
+    admin_telegram_ids: list[int] = []
+
+    async with container.hub() as hub:
+        configured_provider = hub.topups.configured_provider()
+        resolved_provider = hub.topups.resolved_provider()
+        providers = available_topup_provider_codes(configured_provider, resolved_provider)
+
+        if len(providers) == 1:
+            try:
+                checkout = await hub.topups.create_checkout(user.id, amount, provider_code=providers[0])
+            except ConflictError as exc:
+                await answer_or_edit(target, str(exc), reply_markup=balance_actions().as_markup())
+                return
+            if checkout.provider == "manual":
+                admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
+        elif "yookassa" in providers:
+            requests = await hub.topups.list_requests(user_id=user.id)
+            reusable = next(
+                (
+                    item
+                    for item in requests
+                    if str(item.status) == "new"
+                    and (getattr(item, "provider_code", "") or "").strip().lower() == "yookassa"
+                    and Decimal(item.amount_rub) == amount
+                    and getattr(item, "external_payment_url", None)
+                ),
+                None,
+            )
+            if reusable is not None and reusable.external_payment_url:
+                provider_urls["yookassa"] = reusable.external_payment_url
+            else:
+                try:
+                    checkout = await hub.topups.create_checkout(user.id, amount, provider_code="yookassa")
+                except ConflictError as exc:
+                    await answer_or_edit(target, str(exc), reply_markup=balance_actions().as_markup())
+                    return
+                if checkout.payment_url:
+                    provider_urls["yookassa"] = checkout.payment_url
+
+    if len(providers) == 1 and checkout is not None:
+        await handle_topup_checkout(
+            target,
+            container,
+            user=user,
+            amount=amount,
+            checkout=checkout,
+            admin_telegram_ids=admin_telegram_ids,
+        )
+        return
+
+    await show_topup_provider_menu(target, amount, providers, provider_urls=provider_urls)
 
 
 def agreement_url(settings) -> str | None:
@@ -945,11 +1007,11 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
     lines = [
         "🔐 Подписка",
         "",
-        f"Статус: {user.status}",
-        f"Тариф: {subscription.plan.name}",
-        f"Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
-        f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}",
-        f"Лимит устройств: {device_limit_label(subscription.plan)}",
+        f"✨ Статус: {user.status}",
+        f"🧾 Тариф: {subscription.plan.name}",
+        f"🔁 Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
+        f"📅 Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}",
+        f"📱 Лимит устройств: {device_limit_label(subscription.plan)}",
     ]
     if subscription.notes:
         lines.extend(["", subscription.notes])
@@ -966,7 +1028,7 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         lines.extend(
             [
                 "",
-                "Важно по серверам белых списков:",
+                "⚠️ Важно по серверам белых списков:",
                 "Используйте их только когда белые списки действительно нужны, потому что скорость на них ниже стандартных серверов.",
             ]
         )
@@ -984,7 +1046,7 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
     lines.extend(
         [
             "",
-            "Доступные серверы:",
+            "🌐 Доступные серверы:",
             "\n".join(server_lines) if server_lines else "Пока нет активных серверов.",
         ]
     )
@@ -1776,19 +1838,9 @@ async def topup_menu(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-        provider = hub.topups.resolved_provider()
-        configured_provider = hub.topups.configured_provider()
-        missing_settings = hub.topups.yookassa_missing_settings()
-    provider_text = topup_provider_status_text(
-        configured_provider=configured_provider,
-        resolved_provider=provider,
-        missing_settings=missing_settings,
-    )
     await answer_or_edit(
         callback,
-        "Выберите сумму пополнения.\n\n"
-        + provider_text
-        + "\n\nПосле этого можно будет выбрать YooKassa или оплату через поддержку, если они доступны.",
+        "Выберите сумму пополнения.",
         reply_markup=topup_actions().as_markup(),
     )
 
@@ -1800,7 +1852,7 @@ async def topup_amount(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-    await show_topup_amount_confirmation(callback, amount)
+    await continue_topup_flow(callback, container, user=user, amount=amount)
 
 
 @router.callback_query(F.data == "client:topup_custom")
@@ -1835,52 +1887,23 @@ async def topup_custom_value(message: Message, state: FSMContext, container: App
         if user is None:
             return
     await state.clear()
-    await show_topup_amount_confirmation(message, amount)
+    await continue_topup_flow(message, container, user=user, amount=amount)
 
 
 @router.callback_query(F.data.startswith("client:topup_confirm_amount:"))
 async def topup_confirm_amount(callback: CallbackQuery, container: AppContainer):
-    amount_token = callback.data.split(":")[-1]
-    amount = parse_topup_amount_token(amount_token)
-    async with container.hub() as hub:
-        user = await ensure_client_access(callback, container, hub)
-        if user is None:
-            return
-    await show_topup_amount_confirmation(callback, amount)
+    await topup_menu(callback, container)
 
 
 @router.callback_query(F.data.startswith("client:topup_provider_menu:"))
 async def topup_provider_menu(callback: CallbackQuery, container: AppContainer):
     amount_token = callback.data.split(":")[-1]
     amount = parse_topup_amount_token(amount_token)
-    provider_urls: dict[str, str] = {}
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-        configured_provider = hub.topups.configured_provider()
-        resolved_provider = hub.topups.resolved_provider()
-        providers = available_topup_provider_codes(configured_provider, resolved_provider)
-        if "yookassa" in providers:
-            requests = await hub.topups.list_requests(user_id=user.id)
-            reusable = next(
-                (
-                    item
-                    for item in requests
-                    if str(item.status) == "new"
-                    and (getattr(item, "provider_code", "") or "").strip().lower() == "yookassa"
-                    and Decimal(item.amount_rub) == amount
-                    and getattr(item, "external_payment_url", None)
-                ),
-                None,
-            )
-            if reusable is not None and reusable.external_payment_url:
-                provider_urls["yookassa"] = reusable.external_payment_url
-            else:
-                checkout = await hub.topups.create_checkout(user.id, amount, provider_code="yookassa")
-                if checkout.payment_url:
-                    provider_urls["yookassa"] = checkout.payment_url
-    await show_topup_provider_menu(callback, amount, providers, provider_urls=provider_urls)
+    await continue_topup_flow(callback, container, user=user, amount=amount)
 
 
 @router.callback_query(F.data.startswith("client:topup_provider:"))
