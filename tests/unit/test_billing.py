@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+from altlink.application.services.billing import BillingService
 from altlink.domain.billing import compute_period_end, compute_prorated_daily_charge, quantize_money
 
 
@@ -15,3 +16,11 @@ def test_prorated_daily_charges_sum_to_monthly_price():
     charges = [compute_prorated_daily_charge(Decimal("200"), 30, day) for day in range(1, 31)]
     assert quantize_money(sum(charges, Decimal("0"))) == Decimal("200.00")
     assert charges[0] == Decimal("6.67")
+
+
+def test_low_balance_reminder_window_matches_expected_checkpoints():
+    assert BillingService._low_balance_reminder_window(timedelta(days=2)) == ("3d", "меньше 3 дней")
+    assert BillingService._low_balance_reminder_window(timedelta(hours=12)) == ("1d", "меньше 1 дня")
+    assert BillingService._low_balance_reminder_window(timedelta(minutes=30)) == ("1h", "меньше 1 часа")
+    assert BillingService._low_balance_reminder_window(timedelta(days=5)) is None
+    assert BillingService._low_balance_reminder_window(timedelta(0)) is None

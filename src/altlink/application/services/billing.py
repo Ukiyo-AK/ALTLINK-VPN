@@ -33,6 +33,12 @@ from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code
 from altlink.infrastructure.db.models import Plan, Server, Subscription, TrafficSnapshot, TrialPeriod, User
 from altlink.utils.time import ensure_utc, utc_now
 
+LOW_BALANCE_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] = (
+    ("3d", timedelta(days=3), timedelta(days=1), "меньше 3 дней"),
+    ("1d", timedelta(days=1), timedelta(hours=1), "меньше 1 дня"),
+    ("1h", timedelta(hours=1), timedelta(0), "меньше 1 часа"),
+)
+
 
 class BillingService(BaseService):
     source = "billing"
@@ -373,12 +379,19 @@ class BillingService(BaseService):
                     dedupe_key=f"renewal:{subscription.id}:{now.date().isoformat()}",
                 )
             threshold = Decimal(self.settings.low_balance_threshold_rub)
-            if Decimal(user.balance_rub) <= max(threshold, renewal_charge):
+            reminder_window = self._low_balance_reminder_window(due_at - now)
+            if Decimal(user.balance_rub) <= max(threshold, renewal_charge) and reminder_window is not None:
+                reminder_key, reminder_label = reminder_window
                 await self.notifications.queue(
                     user_id=user.id,
                     notification_type=NotificationType.LOW_BALANCE,
-                    message=low_balance_message(Decimal(user.balance_rub), renewal_charge, due_at),
-                    dedupe_key=f"low-balance:{subscription.id}:{now.date().isoformat()}",
+                    message=low_balance_message(
+                        Decimal(user.balance_rub),
+                        renewal_charge,
+                        due_at,
+                        reminder_label,
+                    ),
+                    dedupe_key=f"low-balance:{subscription.id}:{due_at.isoformat()}:{reminder_key}",
                 )
 
         if state_changed:
@@ -508,6 +521,15 @@ class BillingService(BaseService):
         period_label = "еженедельное" if plan.period_days <= 7 else "ежемесячное"
         prefix = "Первое" if initial else "Продление"
         return f"{prefix} {period_label} списание по тарифу {plan.name}"
+
+    @staticmethod
+    def _low_balance_reminder_window(remaining: timedelta) -> tuple[str, str] | None:
+        if remaining <= timedelta(0):
+            return None
+        for reminder_key, upper_bound, lower_bound, reminder_label in LOW_BALANCE_REMINDER_WINDOWS:
+            if lower_bound < remaining <= upper_bound:
+                return reminder_key, reminder_label
+        return None
 
     def _calculate_residual_credit_rub(self, existing: Subscription | None) -> Decimal:
         if existing is None or existing.plan is None or existing.plan.is_trial:
