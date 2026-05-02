@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections import Counter
@@ -118,7 +119,9 @@ async def sync_dashboard_traffic_if_possible(hub) -> None:
     if billing is None:
         return
     try:
-        await billing.snapshot_traffic()
+        await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
+    except TimeoutError:
+        logger.warning("Timed out while syncing traffic snapshots before admin dashboard render.")
     except Exception:
         logger.warning("Failed to sync traffic snapshots before admin dashboard render.", exc_info=True)
 SYSTEM_EVENT_LEVEL_LABELS = {

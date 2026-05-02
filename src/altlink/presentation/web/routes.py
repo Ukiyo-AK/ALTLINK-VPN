@@ -53,7 +53,9 @@ async def sync_dashboard_traffic_if_possible(hub) -> None:
     if billing is None:
         return
     try:
-        await billing.snapshot_traffic()
+        await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
+    except TimeoutError:
+        logger.warning("Timed out while syncing traffic snapshots before web admin render.")
     except Exception:
         logger.warning("Failed to sync traffic snapshots before web admin render.", exc_info=True)
 
@@ -852,14 +854,7 @@ async def traffic_page(request: Request):
         if admin is None:
             return login_redirect()
         await sync_dashboard_traffic_if_possible(hub)
-        subscriptions = list(
-            (
-                await hub.session.scalars(
-                    select(Subscription).options(joinedload(Subscription.user), joinedload(Subscription.plan))
-                )
-            ).all()
-        )
-        subscriptions.sort(key=lambda item: item.traffic_used_bytes, reverse=True)
+        subscriptions = await hub.dashboard.list_traffic_rows()
         return render(
             request,
             "traffic.html",

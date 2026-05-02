@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends
 
 from altlink.application.services.registry import ServiceHub
@@ -12,7 +14,10 @@ router = APIRouter(prefix="/api/v1", tags=["admin-api"], dependencies=[Depends(r
 async def dashboard(hub: ServiceHub = Depends(get_hub)) -> dict:
     billing = getattr(hub, "billing", None)
     if billing is not None:
-        await billing.snapshot_traffic()
+        try:
+            await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
+        except TimeoutError:
+            pass
     return await hub.dashboard.overview()
 
 

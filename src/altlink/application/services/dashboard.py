@@ -35,6 +35,7 @@ class TrafficLeaderboardRow:
     user: User
     plan: Plan | None
     traffic_used_bytes: int
+    whitelist_traffic_used_bytes: int
     auto_renew: bool
 
 
@@ -73,8 +74,8 @@ class DashboardService(BaseService):
         latest_subscriptions = self._latest_subscriptions(subscriptions)
         top_users = await self._traffic_leaderboard_rows(subscriptions)
         plan_mix = self._paid_plan_mix(latest_subscriptions)
-        whitelist_traffic = sum(item.whitelist_traffic_used_bytes for item in latest_subscriptions)
-        total_traffic = sum(item.traffic_used_bytes for item in latest_subscriptions)
+        whitelist_traffic = sum(item.whitelist_traffic_used_bytes for item in top_users)
+        total_traffic = sum(item.traffic_used_bytes for item in top_users)
         renewal_disabled_users = len(
             [
                 item
@@ -217,6 +218,16 @@ class DashboardService(BaseService):
     async def list_plans(self) -> list[Plan]:
         return list((await self.session.scalars(select(Plan).order_by(Plan.sort_order.asc()))).all())
 
+    async def list_traffic_rows(self) -> list[TrafficLeaderboardRow]:
+        subscriptions = list(
+            (
+                await self.session.scalars(
+                    select(Subscription).options(joinedload(Subscription.plan), joinedload(Subscription.user))
+                )
+            ).all()
+        )
+        return await self._traffic_leaderboard_rows(subscriptions)
+
     async def list_settings(self) -> list[SystemSetting]:
         return list((await self.session.scalars(select(SystemSetting).order_by(SystemSetting.key.asc()))).all())
 
@@ -316,6 +327,10 @@ class DashboardService(BaseService):
                     user=user,
                     plan=subscription.plan if subscription is not None else None,
                     traffic_used_bytes=max(traffic_used_bytes, 0),
+                    whitelist_traffic_used_bytes=max(
+                        int(subscription.whitelist_traffic_used_bytes) if subscription is not None else 0,
+                        0,
+                    ),
                     auto_renew=bool(subscription.auto_renew) if subscription is not None else False,
                 )
             )

@@ -358,6 +358,60 @@ async def test_admin_dashboard_route_passes_chart_context_and_syncs_traffic(monk
 
 
 @pytest.mark.asyncio
+async def test_admin_traffic_route_uses_dashboard_rows(monkeypatch):
+    rendered: dict[str, object] = {}
+    rows = [
+        SimpleNamespace(
+            user=SimpleNamespace(username="leader", telegram_id=101),
+            plan=SimpleNamespace(name="Start"),
+            traffic_used_bytes=9 * 1024**3,
+            whitelist_traffic_used_bytes=2 * 1024**3,
+            auto_renew=True,
+        )
+    ]
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    async def fake_snapshot_traffic():
+        return None
+
+    async def fake_list_traffic_rows():
+        return rows
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            billing=SimpleNamespace(snapshot_traffic=fake_snapshot_traffic),
+            dashboard=SimpleNamespace(list_traffic_rows=fake_list_traffic_rows),
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                container=SimpleNamespace(hub=fake_hub),
+                settings=SimpleNamespace(whitelist_price_per_gb_rub=Decimal("15")),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.traffic_page(request)
+
+    assert response is rendered["context"]
+    assert rendered["template_name"] == "traffic.html"
+    assert rendered["context"]["subscriptions"] == rows
+
+
+@pytest.mark.asyncio
 async def test_portal_login_status_returns_missing_without_attempt_token(test_services):
     request = SimpleNamespace(
         session={},
