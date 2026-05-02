@@ -357,8 +357,6 @@ async def show_topup_provider_menu(
     target: Message | CallbackQuery,
     amount: Decimal,
     providers: list[str],
-    *,
-    provider_urls: dict[str, str] | None = None,
 ) -> None:
     amount_token = format_topup_amount_token(amount)
     provider_items = [(provider, topup_provider_label(provider)) for provider in providers]
@@ -368,7 +366,6 @@ async def show_topup_provider_menu(
         reply_markup=topup_provider_actions(
             amount_token,
             provider_items,
-            provider_urls=provider_urls or {},
         ).as_markup(),
     )
 
@@ -380,7 +377,6 @@ async def continue_topup_flow(
     user,
     amount: Decimal,
 ) -> None:
-    provider_urls: dict[str, str] = {}
     checkout = None
     admin_telegram_ids: list[int] = []
 
@@ -397,29 +393,6 @@ async def continue_topup_flow(
                 return
             if checkout.provider == "manual":
                 admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
-        elif "yookassa" in providers:
-            requests = await hub.topups.list_requests(user_id=user.id)
-            reusable = next(
-                (
-                    item
-                    for item in requests
-                    if str(item.status) == "new"
-                    and (getattr(item, "provider_code", "") or "").strip().lower() == "yookassa"
-                    and Decimal(item.amount_rub) == amount
-                    and getattr(item, "external_payment_url", None)
-                ),
-                None,
-            )
-            if reusable is not None and reusable.external_payment_url:
-                provider_urls["yookassa"] = reusable.external_payment_url
-            else:
-                try:
-                    checkout = await hub.topups.create_checkout(user.id, amount, provider_code="yookassa")
-                except ConflictError as exc:
-                    await answer_or_edit(target, str(exc), reply_markup=balance_actions().as_markup())
-                    return
-                if checkout.payment_url:
-                    provider_urls["yookassa"] = checkout.payment_url
 
     if len(providers) == 1 and checkout is not None:
         await handle_topup_checkout(
@@ -432,7 +405,7 @@ async def continue_topup_flow(
         )
         return
 
-    await show_topup_provider_menu(target, amount, providers, provider_urls=provider_urls)
+    await show_topup_provider_menu(target, amount, providers)
 
 
 def agreement_url(settings) -> str | None:
@@ -1121,6 +1094,99 @@ def plan_family_text(family: str) -> str:
     return as_list(
         Bold("Pro"),
         as_marked_list(
+            "🚀 Все активные серверы",
+            "📱 До 8 устройств",
+            "∞ Безлимитный трафик на всех серверах",
+            "🌐 Разные локации для выбора под ваш маршрут",
+            "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с",
+            "🛡️ Обход белых списков без ограничений",
+            marker="• ",
+        ),
+        as_list(
+            Bold("Что такое обход белых списков"),
+            "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а иностранные сайты и приложения не открываются. ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!",
+            sep="\n",
+        ),
+        as_list(
+            Bold("Стоимость"),
+            f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽",
+            f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽",
+            sep="\n",
+        ),
+        sep="\n\n",
+    ).as_html()
+
+
+def plan_menu_text() -> str:
+    return as_list(
+        Bold("🌍 Тарифы ALTLINK VPN"),
+        as_list(
+            Bold("Start"),
+            as_marked_list(
+                f"💸 От {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽ в неделю или {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽ в месяц",
+                "⚡ Один случайный высокоскоростной сервер",
+                "📱 До 2 устройств",
+                "∞ Безлимитный трафик на основном сервере",
+                "🛡️ Белые списки доступны отдельно: 4 ₽ за 1 ГБ",
+                marker="• ",
+            ),
+            sep="\n",
+        ),
+        as_list(
+            Bold("Pro"),
+            as_marked_list(
+                f"💸 От {UNLIMITED_WEEKLY_PRICE_RUB} ₽ в неделю или {UNLIMITED_MONTHLY_PRICE_RUB} ₽ в месяц",
+                "🚀 Все активные серверы",
+                "📱 До 8 устройств",
+                "∞ Безлимитный трафик на всех серверах",
+                "🌐 Разные локации и серверы со скоростью до 10 Гбит/с",
+                "🛡️ Обход белых списков без ограничений",
+                marker="• ",
+            ),
+            sep="\n",
+        ),
+        as_list(
+            Bold("Что такое обход белых списков"),
+            "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а иностранные сайты и приложения не открываются. ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!",
+            sep="\n",
+        ),
+        "Подсказка по меткам: ⚡ — высокоскоростной сервер, «Обход БС» — сервер белых списков.",
+        "Выберите тариф, а затем срок подключения.",
+        sep="\n\n",
+    ).as_html()
+
+
+def plan_family_text(family: str) -> str:
+    if family == "10gbit":
+        return as_list(
+            Bold("Start"),
+            as_marked_list(
+                f"💸 От {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽ в неделю или {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽ в месяц",
+                "⚡ Один случайный высокоскоростной сервер",
+                "📱 До 2 устройств",
+                "∞ Безлимитный трафик на основном сервере",
+                marker="• ",
+            ),
+            "📍 В интерфейсе он отмечен ⚡.",
+            as_list(
+                Bold("Что такое обход белых списков"),
+                "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а иностранные сайты и приложения не открываются. ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!",
+                sep="\n",
+            ),
+            "🛡️ Для Start трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ.",
+            as_list(
+                Bold("Стоимость"),
+                f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
+                f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽",
+                sep="\n",
+            ),
+            sep="\n\n",
+        ).as_html()
+
+    return as_list(
+        Bold("Pro"),
+        as_marked_list(
+            f"💸 От {UNLIMITED_WEEKLY_PRICE_RUB} ₽ в неделю или {UNLIMITED_MONTHLY_PRICE_RUB} ₽ в месяц",
             "🚀 Все активные серверы",
             "📱 До 8 устройств",
             "∞ Безлимитный трафик на всех серверах",

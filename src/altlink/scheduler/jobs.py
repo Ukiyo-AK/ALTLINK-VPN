@@ -76,6 +76,11 @@ async def notifications_job(container: AppContainer) -> None:
         await hub.notifications.dispatch_pending(container.settings.client_bot_token)
 
 
+async def topups_job(container: AppContainer) -> None:
+    async with container.hub() as hub:
+        await hub.topups.sync_pending_yookassa_checkouts()
+
+
 async def online_job(container: AppContainer) -> None:
     async with container.hub() as hub:
         await hub.online.refresh_online_cache(detailed=False)

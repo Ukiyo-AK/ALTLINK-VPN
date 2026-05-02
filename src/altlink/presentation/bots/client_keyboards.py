@@ -295,20 +295,14 @@ def topup_amount_confirm_actions(amount_token: str) -> InlineKeyboardBuilder:
 def topup_provider_actions(
     amount_token: str,
     providers: list[tuple[str, str]],
-    *,
-    provider_urls: dict[str, str] | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    url_map = provider_urls or {}
     for provider_code, provider_label in providers:
-        if provider_code in url_map:
-            builder.button(text=provider_label, url=url_map[provider_code], style="success")
-        else:
-            builder.button(
-                text=provider_label,
-                callback_data=f"client:topup_provider:{provider_code}:{amount_token}",
-                style="success",
-            )
+        builder.button(
+            text=provider_label,
+            callback_data=f"client:topup_provider:{provider_code}:{amount_token}",
+            style="success",
+        )
     builder.button(
         text="⬅️ Назад",
         callback_data="client:topup_menu",

@@ -232,11 +232,10 @@ def test_topup_amount_confirm_actions_show_pay_path():
     assert pay_button["style"] == "success"
 
 
-def test_topup_provider_actions_render_yookassa_as_direct_link():
+def test_topup_provider_actions_keep_provider_selection_as_callback():
     markup = topup_provider_actions(
         "350.00",
         [("yookassa", "💳 Юкасса СБП")],
-        provider_urls={"yookassa": "https://pay.example/checkout"},
     ).as_markup()
     flat = [text for row in inline_rows(markup) for text in row]
     buttons = inline_buttons(markup)
@@ -244,7 +243,7 @@ def test_topup_provider_actions_render_yookassa_as_direct_link():
     assert flat == ["💳 Юкасса СБП", "⬅️ Назад", "💳 Баланс"]
     provider_button = next(button for button in buttons if button["text"] == "💳 Юкасса СБП")
     back_button = next(button for button in buttons if button["text"] == "⬅️ Назад")
-    assert provider_button["url"] == "https://pay.example/checkout"
+    assert provider_button["callback_data"] == "client:topup_provider:yookassa:350.00"
     assert provider_button["style"] == "success"
     assert back_button["callback_data"] == "client:topup_menu"
 

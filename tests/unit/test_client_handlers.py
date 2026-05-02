@@ -363,6 +363,44 @@ def test_available_topup_provider_codes_follow_resolved_provider():
     assert client_handlers.available_topup_provider_codes("yookassa", "stub") == ["stub", "manual"]
 
 
+@pytest.mark.asyncio
+async def test_continue_topup_flow_does_not_create_checkout_before_provider_selected(monkeypatch):
+    captured: dict[str, object] = {}
+    create_checkout = AsyncMock()
+    list_requests = AsyncMock(return_value=[])
+
+    async def fake_show_topup_provider_menu(target, amount, providers):
+        captured["amount"] = amount
+        captured["providers"] = providers
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            topups=SimpleNamespace(
+                configured_provider=lambda: "yookassa",
+                resolved_provider=lambda: "yookassa",
+                create_checkout=create_checkout,
+                list_requests=list_requests,
+            ),
+            accounts=SimpleNamespace(),
+        )
+
+    monkeypatch.setattr(client_handlers, "show_topup_provider_menu", fake_show_topup_provider_menu)
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.continue_topup_flow(
+        DummyMessage(text="Пополнить", user_id=21011),
+        container,
+        user=SimpleNamespace(id="user-1"),
+        amount=Decimal("350"),
+    )
+
+    create_checkout.assert_not_awaited()
+    list_requests.assert_not_awaited()
+    assert captured["amount"] == Decimal("350")
+    assert captured["providers"] == ["yookassa", "manual"]
+
+
 def test_topup_provider_status_text_explains_missing_yookassa_settings():
     text = client_handlers.topup_provider_status_text(
         configured_provider="yookassa",
@@ -659,6 +697,35 @@ async def test_notify_admins_about_topup_request_sends_to_admin_bot(monkeypatch)
     assert sent[0]["bot_token"] == "admin-token"
     assert sent[0]["chat_ids"] == [11, 22]
     assert "req-77" in str(sent[0]["text"])
+
+
+@pytest.mark.asyncio
+async def test_handle_topup_checkout_skips_admin_notifications_for_yookassa(monkeypatch):
+    notify_admins = AsyncMock()
+    render_checkout = AsyncMock()
+
+    monkeypatch.setattr(client_handlers, "notify_admins_about_topup_request", notify_admins)
+    monkeypatch.setattr(client_handlers, "answer_or_edit_topup_checkout", render_checkout)
+
+    checkout = SimpleNamespace(
+        provider="yookassa",
+        payment_url="https://pay.yookassa.example/confirm/demo",
+        request=SimpleNamespace(id="req-yoo-1"),
+    )
+
+    await client_handlers.handle_topup_checkout(
+        DummyMessage(text="Пополнить", user_id=21012),
+        SimpleNamespace(settings=SimpleNamespace()),
+        user=SimpleNamespace(id="user-1"),
+        amount=Decimal("350"),
+        checkout=checkout,
+        admin_telegram_ids=[11, 22],
+    )
+
+    notify_admins.assert_not_awaited()
+    render_checkout.assert_awaited_once()
+    assert render_checkout.await_args.kwargs["payment_url"] == "https://pay.yookassa.example/confirm/demo"
+    assert render_checkout.await_args.kwargs["can_check"] is True
 
 
 @pytest.mark.asyncio

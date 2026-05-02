@@ -46,6 +46,33 @@
 </section>
 
 <section class="grid-two">
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Соотношение Start / Pro</h2>
+      <span class="badge">Активные платные подписки</span>
+    </div>
+    <canvas id="planMixChart"></canvas>
+  </article>
+
+  <article class="panel">
+    <h2>Срез по тарифам</h2>
+    <table class="table">
+      <thead><tr><th>Тариф</th><th>Клиентов</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Start</td>
+          <td>{{ charts.plan_mix.values[0] }}</td>
+        </tr>
+        <tr>
+          <td>Pro</td>
+          <td>{{ charts.plan_mix.values[1] }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </article>
+</section>
+
+<section class="grid-two">
   <article class="panel">
     <h2>Топ по трафику</h2>
     <table class="table">
@@ -54,7 +81,7 @@
         {% for item in overview.top_users %}
         <tr>
           <td>{{ item.user.username or item.user.telegram_id }}</td>
-          <td>{{ item.plan.name }}</td>
+          <td>{{ item.plan.name if item.plan else '—' }}</td>
           <td>{{ '%.2f'|format(item.traffic_used_bytes / 1024**3) }} ГБ</td>
           <td>{{ 'вкл' if item.auto_renew else 'выкл' }}</td>
         </tr>
@@ -141,6 +168,20 @@
       datasets: [{
         data: charts.server_types.values,
         backgroundColor: ["rgba(199, 155, 47, 0.8)", "rgba(209, 125, 38, 0.8)", "rgba(13, 143, 119, 0.8)"]
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+
+  new Chart(document.getElementById("planMixChart"), {
+    type: "doughnut",
+    data: {
+      labels: charts.plan_mix.labels,
+      datasets: [{
+        data: charts.plan_mix.values,
+        backgroundColor: ["rgba(199, 155, 47, 0.88)", "rgba(13, 143, 119, 0.82)"],
+        borderColor: ["rgba(199, 155, 47, 1)", "rgba(13, 143, 119, 1)"],
+        borderWidth: 1
       }]
     },
     options: { responsive: true, maintainAspectRatio: false }

@@ -350,6 +350,18 @@ class TopupService(BaseService):
             is_final=external_status == "canceled",
         )
 
+    async def sync_pending_yookassa_checkouts(self, *, limit: int = 100) -> int:
+        pending_requests = await self.list_requests(status=TopupStatus.NEW)
+        processed = 0
+        for request in pending_requests[:limit]:
+            if self._request_provider(request) != "yookassa":
+                continue
+            if not request.external_payment_id:
+                continue
+            await self.check_checkout_status(request.id)
+            processed += 1
+        return processed
+
     def _request_provider(self, request: TopupRequest) -> str:
         provider = (request.provider_code or "").strip().lower()
         if provider in {"manual", "stub", "yookassa"}:

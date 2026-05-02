@@ -12,6 +12,7 @@ from altlink.application.services.base import ConflictError
 from altlink.application.services.topups import TopupService
 from altlink.domain.enums import BalanceTransactionType, PlanCode
 from altlink.infrastructure.db.models import BalanceTransaction
+from altlink.scheduler.jobs import topups_job
 from altlink.utils.time import utc_now
 
 
@@ -214,6 +215,75 @@ async def test_yookassa_mode_still_allows_manual_support_checkout(test_services,
     assert checkout.admin_required is True
     assert checkout.auto_completed is False
     assert str(request.status) == "new"
+
+
+@pytest.mark.asyncio
+async def test_yookassa_scheduler_auto_approves_without_admin_confirmation(test_services, monkeypatch):
+    test_services.settings.payment_provider = "yookassa"
+    test_services.settings.yookassa_shop_id = "shop-123"
+    test_services.settings.yookassa_secret_key = "secret-456"
+
+    def transport_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path.endswith("/payments"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "pay-demo-2",
+                    "status": "pending",
+                    "confirmation": {
+                        "type": "redirect",
+                        "confirmation_url": "https://pay.yookassa.example/confirm/pay-demo-2",
+                    },
+                },
+            )
+        if request.method == "GET" and request.url.path.endswith("/payments/pay-demo-2"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "pay-demo-2",
+                    "status": "succeeded",
+                    "confirmation": {
+                        "type": "redirect",
+                        "confirmation_url": "https://pay.yookassa.example/confirm/pay-demo-2",
+                    },
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    def fake_client(self):
+        return httpx.AsyncClient(
+            base_url=self._yookassa_base_url(),
+            transport=httpx.MockTransport(transport_handler),
+            auth=httpx.BasicAuth(self.settings.yookassa_shop_id, self.settings.yookassa_secret_key),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            timeout=self.settings.yookassa_timeout_seconds,
+        )
+
+    monkeypatch.setattr(TopupService, "_yookassa_client", fake_client)
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3011,
+            username="yookassa_scheduler",
+            first_name="Yoo",
+            last_name="Scheduler",
+            language_code="ru",
+        )
+        checkout = await hub.topups.create_checkout(user.id, Decimal("510"))
+
+        assert checkout.provider == "yookassa"
+        assert checkout.admin_required is False
+        assert checkout.auto_completed is False
+
+    await topups_job(test_services)
+
+    async with test_services.hub() as hub:
+        refreshed = await hub.accounts.get_user_by_telegram_id(3011)
+        stored_request = await hub.topups.get_request(checkout.request.id)
+
+    assert str(stored_request.status) == "approved"
+    assert stored_request.approved_by_admin_id is None
+    assert Decimal(refreshed.balance_rub) == Decimal("510")
 
 
 @pytest.mark.asyncio

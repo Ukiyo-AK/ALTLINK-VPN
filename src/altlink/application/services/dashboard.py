@@ -10,6 +10,7 @@ from sqlalchemy.orm import joinedload
 
 from altlink.application.services.base import BaseService
 from altlink.domain.enums import BalanceTransactionType, ServerType, SubscriptionStatus, TopupStatus, UserStatus
+from altlink.domain.plans import is_metered_plan_code, is_unlimited_plan_code
 from altlink.infrastructure.db.models import (
     BalanceTransaction,
     Plan,
@@ -17,6 +18,7 @@ from altlink.infrastructure.db.models import (
     Subscription,
     SystemEvent,
     SystemSetting,
+    TrafficSnapshot,
     TopupRequest,
     User,
 )
@@ -26,6 +28,14 @@ from altlink.infrastructure.db.models import (
 class UserMetricRow:
     user: User
     value: Decimal | int
+
+
+@dataclass(slots=True)
+class TrafficLeaderboardRow:
+    user: User
+    plan: Plan | None
+    traffic_used_bytes: int
+    auto_renew: bool
 
 
 class DashboardService(BaseService):
@@ -60,14 +70,15 @@ class DashboardService(BaseService):
             ).all()
         )
 
-        top_users = self._latest_subscriptions(subscriptions)
-        top_users.sort(key=lambda item: item.traffic_used_bytes, reverse=True)
+        latest_subscriptions = self._latest_subscriptions(subscriptions)
+        top_users = await self._traffic_leaderboard_rows(subscriptions)
+        plan_mix = self._paid_plan_mix(latest_subscriptions)
         whitelist_traffic = sum(item.whitelist_traffic_used_bytes for item in subscriptions)
         total_traffic = sum(item.traffic_used_bytes for item in subscriptions)
         renewal_disabled_users = len(
             [
                 item
-                for item in top_users
+                for item in latest_subscriptions
                 if item.plan and not item.plan.is_trial and not item.auto_renew and item.status == SubscriptionStatus.ACTIVE
             ]
         )
@@ -117,6 +128,10 @@ class DashboardService(BaseService):
                     "labels": [day.strftime("%d.%m") for day in payments_series],
                     "values": [float(value) for value in payments_series.values()],
                 },
+                "plan_mix": {
+                    "labels": ["Start", "Pro"],
+                    "values": [plan_mix["start"], plan_mix["pro"]],
+                },
                 "server_types": {
                     "labels": ["⚡ 10 Гбит", "Белые списки", "Обычные"],
                     "values": [
@@ -149,7 +164,8 @@ class DashboardService(BaseService):
 
         latest_subscriptions = self._latest_subscriptions(subscriptions)
         if metric == "traffic":
-            rows = [UserMetricRow(item.user, item.traffic_used_bytes) for item in latest_subscriptions if item.user]
+            traffic_rows = await self._traffic_leaderboard_rows(subscriptions)
+            rows = [UserMetricRow(item.user, item.traffic_used_bytes) for item in traffic_rows if item.user]
         elif metric == "whitelist":
             rows = [
                 UserMetricRow(item.user, item.whitelist_traffic_used_bytes)
@@ -243,3 +259,65 @@ class DashboardService(BaseService):
             if current is None or item.created_at > current.created_at:
                 latest[item.user_id] = item
         return list(latest.values())
+
+    def _paid_plan_mix(self, subscriptions: list[Subscription]) -> dict[str, int]:
+        counts = {"start": 0, "pro": 0}
+        for item in subscriptions:
+            if (
+                item.plan is None
+                or item.plan.is_trial
+                or item.status not in {SubscriptionStatus.ACTIVE, SubscriptionStatus.GRACE}
+            ):
+                continue
+            if is_metered_plan_code(item.plan.code):
+                counts["start"] += 1
+            elif is_unlimited_plan_code(item.plan.code):
+                counts["pro"] += 1
+        return counts
+
+    async def _traffic_leaderboard_rows(self, subscriptions: list[Subscription]) -> list[TrafficLeaderboardRow]:
+        latest_subscriptions = {item.user_id: item for item in self._latest_subscriptions(subscriptions)}
+        snapshots = list(
+            (
+                await self.session.scalars(
+                    select(TrafficSnapshot)
+                    .options(joinedload(TrafficSnapshot.user))
+                    .order_by(TrafficSnapshot.snapshot_date.desc(), TrafficSnapshot.created_at.desc())
+                )
+            ).all()
+        )
+        latest_snapshots: dict[str, TrafficSnapshot] = {}
+        for item in snapshots:
+            if item.user_id not in latest_snapshots:
+                latest_snapshots[item.user_id] = item
+
+        rows: list[TrafficLeaderboardRow] = []
+        for user_id in latest_subscriptions.keys() | latest_snapshots.keys():
+            subscription = latest_subscriptions.get(user_id)
+            snapshot = latest_snapshots.get(user_id)
+            user = (
+                subscription.user
+                if subscription is not None and subscription.user is not None
+                else snapshot.user
+                if snapshot is not None
+                else None
+            )
+            if user is None:
+                continue
+            traffic_used_bytes = (
+                int(snapshot.lifetime_used_bytes)
+                if snapshot is not None
+                else int(subscription.traffic_used_bytes)
+                if subscription is not None
+                else 0
+            )
+            rows.append(
+                TrafficLeaderboardRow(
+                    user=user,
+                    plan=subscription.plan if subscription is not None else None,
+                    traffic_used_bytes=max(traffic_used_bytes, 0),
+                    auto_renew=bool(subscription.auto_renew) if subscription is not None else False,
+                )
+            )
+        rows.sort(key=lambda item: item.traffic_used_bytes, reverse=True)
+        return rows
