@@ -213,6 +213,8 @@ class TopupService(BaseService):
         item = await self.get_request(request_id)
         if item.status != TopupStatus.NEW:
             raise ConflictError("Подтвердить можно только новый платёж.")
+        if admin_id is not None and self._request_provider(item) != "manual":
+            return item
         item.status = TopupStatus.APPROVED
         item.admin_comment = comment
         item.approved_by_admin_id = admin_id
@@ -245,6 +247,8 @@ class TopupService(BaseService):
         item = await self.get_request(request_id)
         if item.status != TopupStatus.NEW:
             raise ConflictError("Отклонить можно только новый платёж.")
+        if admin_id is not None and self._request_provider(item) != "manual":
+            return item
         item.status = TopupStatus.REJECTED
         item.admin_comment = comment
         item.approved_by_admin_id = admin_id
@@ -366,7 +370,7 @@ class TopupService(BaseService):
         provider = (request.provider_code or "").strip().lower()
         if provider in {"manual", "stub", "yookassa"}:
             return provider
-        return self.resolved_provider()
+        return "manual"
 
     def _is_yookassa_configured(self) -> bool:
         return not self.yookassa_missing_settings()

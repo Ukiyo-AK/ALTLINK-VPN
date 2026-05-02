@@ -16,6 +16,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy import select
 
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
@@ -28,7 +29,7 @@ from altlink.domain.enums import (
     SystemEventLevel,
 )
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
-from altlink.infrastructure.db.models import PromoCode
+from altlink.infrastructure.db.models import PromoCode, TrafficSnapshot
 from altlink.presentation.bots.admin_keyboards import (
     DATABASE_BACKUP_CANCEL_IMPORT,
     DATABASE_BACKUP_CONFIRM_IMPORT,
@@ -110,6 +111,16 @@ TOP_METRIC_LABELS = {
     "balance": "балансу",
     "topups": "сумме пополнений",
 }
+
+
+async def sync_dashboard_traffic_if_possible(hub) -> None:
+    billing = getattr(hub, "billing", None)
+    if billing is None:
+        return
+    try:
+        await billing.snapshot_traffic()
+    except Exception:
+        logger.warning("Failed to sync traffic snapshots before admin dashboard render.", exc_info=True)
 SYSTEM_EVENT_LEVEL_LABELS = {
     "info": "Инфо",
     "warning": "Внимание",
@@ -324,6 +335,38 @@ def user_label(user) -> str:
     return str(user.telegram_id)
 
 
+def payment_provider_code(item) -> str:
+    provider = str(getattr(item, "provider_code", "") or "").strip().lower()
+    return provider or "manual"
+
+
+def payment_provider_label(item) -> str:
+    provider = payment_provider_code(item)
+    return {
+        "manual": "через поддержку",
+        "yookassa": "Юкасса СБП",
+        "stub": "тестовая касса",
+    }.get(provider, provider)
+
+
+def payment_requires_manual_resolution(item) -> bool:
+    return str(getattr(item, "status", "")) == "new" and payment_provider_code(item) == "manual"
+
+
+def payment_status_label(item) -> str:
+    status = str(getattr(item, "status", ""))
+    provider = payment_provider_code(item)
+    if status == "new":
+        return "незавершён" if provider == "yookassa" else "ожидает решения"
+    if status == "approved":
+        return "оплачен автоматически" if provider == "yookassa" else "подтверждён"
+    if status == "rejected":
+        return "отменён кассой" if provider == "yookassa" else "отклонён"
+    if status == "canceled":
+        return "отменён пользователем"
+    return status
+
+
 def format_top_users(metric: str, rows) -> str:
     label = TOP_METRIC_LABELS[metric]
     if not rows:
@@ -466,6 +509,54 @@ def format_payment_browser(items, active_index: int) -> str:
     return "\n".join(lines)
 
 
+def format_payment_request(item) -> str:
+    lines = [
+        "Р—Р°СЏРІРєР° РЅР° РїРѕРїРѕР»РЅРµРЅРёРµ",
+        "",
+        f"РќРѕРјРµСЂ: {item.id}",
+        f"РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ: {user_label(item.user)}",
+        f"Telegram ID: {item.user.telegram_id if item.user else 'n/a'}",
+        f"РЎСѓРјРјР°: {Decimal(item.amount_rub):.2f} в‚Ѕ",
+        f"РЎРїРѕСЃРѕР±: {payment_provider_label(item)}",
+        f"РЎС‚Р°С‚СѓСЃ: {payment_status_label(item)}",
+        f"РЎРѕР·РґР°РЅ: {item.created_at:%d.%m.%Y %H:%M}",
+    ]
+    if item.user_comment:
+        lines.extend(["", f"РљРѕРјРјРµРЅС‚Р°СЂРёР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ: {item.user_comment}"])
+    if item.admin_comment:
+        if payment_provider_code(item) == "yookassa" and str(item.admin_comment).startswith("yookassa:"):
+            lines.extend(["", f"РўРµС…РЅРёС‡РµСЃРєР°СЏ РјРµС‚РєР°: {item.admin_comment}"])
+        else:
+            lines.extend(["", f"РљРѕРјРјРµРЅС‚Р°СЂРёР№ Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂР°: {item.admin_comment}"])
+    if payment_provider_code(item) == "yookassa" and str(item.status) == "new":
+        lines.extend(["", "РџР»Р°С‚РµР¶ РїСЂРѕРІРµСЂСЏРµС‚СЃСЏ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё. Р СѓС‡РЅРѕРµ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёРµ РЅРµ С‚СЂРµР±СѓРµС‚СЃСЏ."])
+    return "\n".join(lines)
+
+
+def format_payment_browser(items, active_index: int) -> str:
+    if not items:
+        return "РџР»Р°С‚РµР¶Рё\n\nРџР»Р°С‚РµР¶РµР№ РїРѕРєР° РЅРµС‚."
+
+    current = items[active_index]
+    counts = Counter(str(item.status) for item in items)
+    manual_pending = sum(1 for item in items if payment_requires_manual_resolution(item))
+    yookassa_unfinished = sum(
+        1 for item in items if str(getattr(item, "status", "")) == "new" and payment_provider_code(item) == "yookassa"
+    )
+    lines = [
+        f"РџР»Р°С‚РµР¶Рё {active_index + 1}/{len(items)}",
+        "",
+        f"РћР¶РёРґР°СЋС‚ СЂРµС€РµРЅРёСЏ: {manual_pending}",
+        f"РќРµР·Р°РІРµСЂС€С‘РЅРЅС‹Рµ Р®РєР°СЃСЃР° РЎР‘Рџ: {yookassa_unfinished}",
+        f"РџРѕРґС‚РІРµСЂР¶РґРµРЅС‹: {counts.get('approved', 0)}",
+        f"РћС‚РєР»РѕРЅРµРЅС‹: {counts.get('rejected', 0)}",
+    ]
+    if counts.get("canceled", 0):
+        lines.append(f"РћС‚РјРµРЅРµРЅС‹: {counts.get('canceled', 0)}")
+    lines.extend(["", format_payment_request(current)])
+    return "\n".join(lines)
+
+
 def format_panel_status(status: dict) -> list[str]:
     remnawave_label = "OK" if status.get("remnawave_ok") else "ошибка"
     return [
@@ -474,6 +565,77 @@ def format_panel_status(status: dict) -> list[str]:
         f"База данных: {status.get('database_dialect', 'unknown')}",
         f"Размер БД: {status.get('db_size_gb', 0)} ГБ",
     ]
+
+
+def payment_provider_label(item) -> str:
+    provider = payment_provider_code(item)
+    return {
+        "manual": "\u0447\u0435\u0440\u0435\u0437 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u043a\u0443",
+        "yookassa": "\u042e\u043a\u0430\u0441\u0441\u0430 \u0421\u0411\u041f",
+        "stub": "\u0442\u0435\u0441\u0442\u043e\u0432\u0430\u044f \u043a\u0430\u0441\u0441\u0430",
+    }.get(provider, provider)
+
+
+def payment_status_label(item) -> str:
+    status = str(getattr(item, "status", ""))
+    provider = payment_provider_code(item)
+    if status == "new":
+        return "\u043d\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d" if provider == "yookassa" else "\u043e\u0436\u0438\u0434\u0430\u0435\u0442 \u0440\u0435\u0448\u0435\u043d\u0438\u044f"
+    if status == "approved":
+        return "\u043e\u043f\u043b\u0430\u0447\u0435\u043d \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438" if provider == "yookassa" else "\u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0451\u043d"
+    if status == "rejected":
+        return "\u043e\u0442\u043c\u0435\u043d\u0451\u043d \u043a\u0430\u0441\u0441\u043e\u0439" if provider == "yookassa" else "\u043e\u0442\u043a\u043b\u043e\u043d\u0451\u043d"
+    if status == "canceled":
+        return "\u043e\u0442\u043c\u0435\u043d\u0451\u043d \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0435\u043c"
+    return status
+
+
+def format_payment_request(item) -> str:
+    lines = [
+        "\u0417\u0430\u044f\u0432\u043a\u0430 \u043d\u0430 \u043f\u043e\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u0435",
+        "",
+        f"\u041d\u043e\u043c\u0435\u0440: {item.id}",
+        f"\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c: {user_label(item.user)}",
+        f"Telegram ID: {item.user.telegram_id if item.user else 'n/a'}",
+        f"\u0421\u0443\u043c\u043c\u0430: {Decimal(item.amount_rub):.2f} \u20bd",
+        f"\u0421\u043f\u043e\u0441\u043e\u0431: {payment_provider_label(item)}",
+        f"\u0421\u0442\u0430\u0442\u0443\u0441: {payment_status_label(item)}",
+        f"\u0421\u043e\u0437\u0434\u0430\u043d: {item.created_at:%d.%m.%Y %H:%M}",
+    ]
+    if item.user_comment:
+        lines.extend(["", f"\u041a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0439 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f: {item.user_comment}"])
+    if item.admin_comment:
+        if payment_provider_code(item) == "yookassa" and str(item.admin_comment).startswith("yookassa:"):
+            lines.extend(["", f"\u0422\u0435\u0445\u043d\u0438\u0447\u0435\u0441\u043a\u0430\u044f \u043c\u0435\u0442\u043a\u0430: {item.admin_comment}"])
+        else:
+            lines.extend(["", f"\u041a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0439 \u0430\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440\u0430: {item.admin_comment}"])
+    if payment_provider_code(item) == "yookassa" and str(item.status) == "new":
+        lines.extend(["", "\u041f\u043b\u0430\u0442\u0451\u0436 \u043f\u0440\u043e\u0432\u0435\u0440\u044f\u0435\u0442\u0441\u044f \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438. \u0420\u0443\u0447\u043d\u043e\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435 \u043d\u0435 \u0442\u0440\u0435\u0431\u0443\u0435\u0442\u0441\u044f."])
+    return "\n".join(lines)
+
+
+def format_payment_browser(items, active_index: int) -> str:
+    if not items:
+        return "\u041f\u043b\u0430\u0442\u0435\u0436\u0438\n\n\u041f\u043b\u0430\u0442\u0435\u0436\u0435\u0439 \u043f\u043e\u043a\u0430 \u043d\u0435\u0442."
+
+    current = items[active_index]
+    counts = Counter(str(item.status) for item in items)
+    manual_pending = sum(1 for item in items if payment_requires_manual_resolution(item))
+    yookassa_unfinished = sum(
+        1 for item in items if str(getattr(item, "status", "")) == "new" and payment_provider_code(item) == "yookassa"
+    )
+    lines = [
+        f"\u041f\u043b\u0430\u0442\u0435\u0436\u0438 {active_index + 1}/{len(items)}",
+        "",
+        f"\u041e\u0436\u0438\u0434\u0430\u044e\u0442 \u0440\u0435\u0448\u0435\u043d\u0438\u044f: {manual_pending}",
+        f"\u041d\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0435 \u042e\u043a\u0430\u0441\u0441\u0430 \u0421\u0411\u041f: {yookassa_unfinished}",
+        f"\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u044b: {counts.get('approved', 0)}",
+        f"\u041e\u0442\u043a\u043b\u043e\u043d\u0435\u043d\u044b: {counts.get('rejected', 0)}",
+    ]
+    if counts.get("canceled", 0):
+        lines.append(f"\u041e\u0442\u043c\u0435\u043d\u0435\u043d\u044b: {counts.get('canceled', 0)}")
+    lines.extend(["", format_payment_request(current)])
+    return "\n".join(lines)
 
 
 def format_server_card(server) -> str:
@@ -621,6 +783,22 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         card = await hub.accounts.user_card(user_id)
         user = card["user"]
         subscription = card["subscription"]
+        latest_snapshot = None
+        if subscription is not None and getattr(user, "remnawave_user_uuid", None) and getattr(hub, "billing", None):
+            try:
+                refreshed_subscription = await hub.billing.refresh_subscription_traffic(user.id)
+            except Exception:
+                logger.warning("Failed to refresh subscription traffic for user_id=%s before rendering admin card.", user.id)
+            else:
+                if refreshed_subscription is not None:
+                    subscription = refreshed_subscription
+        if getattr(hub, "session", None) is not None:
+            latest_snapshot = await hub.session.scalar(
+                select(TrafficSnapshot)
+                .where(TrafficSnapshot.user_id == user.id)
+                .order_by(TrafficSnapshot.snapshot_date.desc(), TrafficSnapshot.created_at.desc())
+                .limit(1)
+            )
         get_latest = getattr(hub.accounts, "get_latest_subscription", None)
         latest_subscription = await get_latest(user.id) if subscription is None and get_latest is not None else subscription
         activity_summary = await hub.online.get_user_activity_summary(user.id) if getattr(hub, "online", None) else None
@@ -665,7 +843,9 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         f"Транзакций: {len(transactions)}",
     ]
     if subscription:
-        lines.append(f"Трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ")
+        lines.append(f"?????? ?? ??????? ????: {subscription.traffic_used_bytes / 1024**3:.2f} ??")
+        if latest_snapshot is not None:
+            lines.append(f"????? ?????? ? ??????: {latest_snapshot.lifetime_used_bytes / 1024**3:.2f} ??")
         if is_metered_plan_code(subscription.plan.code):
             lines.append(f"Белые списки: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ")
         if subscription.notes:
@@ -785,6 +965,7 @@ async def render_payment_browser(
     request_id: str | None = None,
 ) -> None:
     async with container.hub() as hub:
+        await hub.topups.sync_pending_yookassa_checkouts()
         items = await hub.topups.list_requests()
 
     if not items:
@@ -803,6 +984,7 @@ async def render_payment_browser(
             status=str(current.status),
             index=active_index,
             total=len(items),
+            allow_manual_resolution=payment_requires_manual_resolution(current),
         ).as_markup(),
     )
 
@@ -1239,8 +1421,19 @@ async def payment_approve(callback: CallbackQuery, container: AppContainer):
         return
     request_id = callback.data.split(":")[-1]
     async with container.hub() as hub:
+        item = await hub.topups.get_request(request_id)
+        if payment_provider_code(item) != "manual":
+            await callback.answer(
+                "??? ?????? ??? ?????? ????????????? ?? ?????.",
+                show_alert=True,
+            )
+            return
         admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
-        await hub.topups.approve(request_id, admin_id=admin.id if admin else None, comment="Подтверждено в admin bot")
+        await hub.topups.approve(
+            request_id,
+            admin_id=admin.id if admin else None,
+            comment="???????????? ? admin bot",
+        )
     await render_payment_browser(callback, container, request_id=request_id)
 
 
@@ -1250,12 +1443,23 @@ async def payment_reject(callback: CallbackQuery, container: AppContainer):
         return
     request_id = callback.data.split(":")[-1]
     async with container.hub() as hub:
+        item = await hub.topups.get_request(request_id)
+        if payment_provider_code(item) != "manual":
+            await callback.answer(
+                "??? ?????? ??? ?????? ?????????? ?? ?????.",
+                show_alert=True,
+            )
+            return
         admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
-        await hub.topups.reject(request_id, admin_id=admin.id if admin else None, comment="Отклонено в admin bot")
+        await hub.topups.reject(
+            request_id,
+            admin_id=admin.id if admin else None,
+            comment="????????? ? admin bot",
+        )
     await render_payment_browser(callback, container, request_id=request_id)
 
 
-@router.message(F.text == "Пользователи")
+@router.message(F.text == "????????????")
 async def users_screen(message: Message, state: FSMContext, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
@@ -1562,6 +1766,7 @@ async def statistics(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
     async with container.hub() as hub:
+        await sync_dashboard_traffic_if_possible(hub)
         overview = await hub.dashboard.overview()
         panel = await hub.dashboard.panel_status()
     lines = [
@@ -1618,6 +1823,7 @@ async def top_users_menu(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
     async with container.hub() as hub:
+        await sync_dashboard_traffic_if_possible(hub)
         rows = await hub.dashboard.top_users("traffic")
     await render_admin(message, format_top_users("traffic", rows), reply_markup=top_users_actions("traffic").as_markup())
 
@@ -1631,6 +1837,7 @@ async def top_users(callback: CallbackQuery, container: AppContainer):
         await callback.answer("Неизвестный рейтинг.", show_alert=True)
         return
     async with container.hub() as hub:
+        await sync_dashboard_traffic_if_possible(hub)
         rows = await hub.dashboard.top_users(metric)
     await render_admin(callback, format_top_users(metric, rows), reply_markup=top_users_actions(metric).as_markup())
 

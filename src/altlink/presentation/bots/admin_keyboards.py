@@ -170,9 +170,9 @@ def support_request_actions(request_id: str, is_resolved: bool) -> InlineKeyboar
     return builder
 
 
-def payment_request_actions(request_id: str, status: str) -> InlineKeyboardBuilder:
+def payment_request_actions(request_id: str, status: str, *, allow_manual_resolution: bool = True) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    if status == "new":
+    if status == "new" and allow_manual_resolution:
         builder.button(text="Подтвердить", callback_data=f"{PAYMENT_APPROVE_PREFIX}:{request_id}", style="success")
         builder.button(text="Отклонить", callback_data=f"{PAYMENT_REJECT_PREFIX}:{request_id}", style="danger")
         builder.adjust(2)
@@ -182,7 +182,7 @@ def payment_request_actions(request_id: str, status: str) -> InlineKeyboardBuild
     return builder
 
 
-def payment_browser_actions(*, request_id: str, status: str, index: int, total: int) -> InlineKeyboardBuilder:
+def payment_browser_actions(*, request_id: str, status: str, index: int, total: int, allow_manual_resolution: bool = True) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if total > 1:
         previous_index = max(index - 1, 0)
@@ -192,7 +192,7 @@ def payment_browser_actions(*, request_id: str, status: str, index: int, total: 
         builder.button(text="▶️", callback_data=f"{PAYMENT_PAGE_PREFIX}:{next_index}")
         builder.adjust(3)
 
-    if status == "new":
+    if status == "new" and allow_manual_resolution:
         builder.button(text="Подтвердить", callback_data=f"{PAYMENT_APPROVE_PREFIX}:{request_id}", style="success")
         builder.button(text="Отклонить", callback_data=f"{PAYMENT_REJECT_PREFIX}:{request_id}", style="danger")
         builder.adjust(*( [3] if total > 1 else [] ), 2)

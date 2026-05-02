@@ -73,8 +73,8 @@ class DashboardService(BaseService):
         latest_subscriptions = self._latest_subscriptions(subscriptions)
         top_users = await self._traffic_leaderboard_rows(subscriptions)
         plan_mix = self._paid_plan_mix(latest_subscriptions)
-        whitelist_traffic = sum(item.whitelist_traffic_used_bytes for item in subscriptions)
-        total_traffic = sum(item.traffic_used_bytes for item in subscriptions)
+        whitelist_traffic = sum(item.whitelist_traffic_used_bytes for item in latest_subscriptions)
+        total_traffic = sum(item.traffic_used_bytes for item in latest_subscriptions)
         renewal_disabled_users = len(
             [
                 item

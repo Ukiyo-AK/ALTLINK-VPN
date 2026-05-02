@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from altlink.presentation.web import routes as web_routes
 from altlink.domain.enums import PlanCode
 from altlink.utils.latency import single_probe_server_latency
 from altlink.presentation.web.routes import (
@@ -293,6 +294,67 @@ def test_portal_bot_login_helpers_build_deeplink_and_qr():
     assert deep_link == "https://t.me/altlink_bot?start=login_demo-token"
     assert qr_data_url is not None
     assert qr_data_url.startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_admin_dashboard_route_passes_chart_context_and_syncs_traffic(monkeypatch):
+    sync_calls: list[str] = []
+    rendered: dict[str, object] = {}
+    overview = {
+        "active_users": 1,
+        "renewal_disabled_users": 0,
+        "blocked_users": 0,
+        "trial_users": 0,
+        "payments_total_rub": Decimal("100"),
+        "total_traffic_bytes": 5 * 1024**3,
+        "charts": {
+            "plan_mix": {"labels": ["Start", "Pro"], "values": [1, 2]},
+            "user_statuses": {"labels": [], "values": []},
+            "server_loads": {"labels": [], "values": [], "types": []},
+            "payments": {"labels": [], "values": []},
+            "server_types": {"labels": [], "values": []},
+        },
+        "top_users": [],
+        "recent_topups": [],
+    }
+
+    async def fake_snapshot_traffic():
+        sync_calls.append("sync")
+
+    async def fake_overview():
+        sync_calls.append("overview")
+        return overview
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            billing=SimpleNamespace(snapshot_traffic=fake_snapshot_traffic),
+            dashboard=SimpleNamespace(overview=fake_overview),
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.dashboard(request)
+
+    assert response is rendered["context"]
+    assert sync_calls == ["sync", "overview"]
+    assert rendered["template_name"] == "dashboard.html"
+    assert rendered["context"]["charts"] == overview["charts"]
+    assert rendered["context"]["charts_json"]
 
 
 @pytest.mark.asyncio

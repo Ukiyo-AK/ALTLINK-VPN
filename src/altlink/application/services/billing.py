@@ -444,6 +444,17 @@ class BillingService(BaseService):
         except httpx.HTTPError:
             return subscription
 
+        self.session.add(
+            TrafficSnapshot(
+                user_id=user.id,
+                subscription_id=subscription.id,
+                server_id=None,
+                snapshot_date=date.today(),
+                used_bytes=remote_user.userTraffic.usedTrafficBytes,
+                lifetime_used_bytes=remote_user.userTraffic.lifetimeUsedTrafficBytes,
+                source="remnawave_refresh",
+            )
+        )
         await self._apply_remote_usage(user, subscription, remote_user)
         return subscription
 

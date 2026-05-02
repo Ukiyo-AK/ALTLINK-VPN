@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from altlink.presentation.bots.admin_keyboards import (
+    payment_browser_actions,
+    payment_request_actions,
     server_actions,
     system_logs_actions,
     user_actions,
@@ -11,6 +13,25 @@ from altlink.presentation.bots.admin_keyboards import (
     user_subscription_actions,
 )
 
+
+def test_payment_browser_actions_hide_manual_resolution_for_automatic_topups():
+    buttons = inline_buttons(
+        payment_browser_actions(
+            request_id="req-1",
+            status="new",
+            index=0,
+            total=1,
+            allow_manual_resolution=False,
+        ).as_markup()
+    )
+    assert len(buttons) == 1
+    assert buttons[0]["callback_data"] == "adm:pf:req-1"
+    assert buttons[0]["style"] == "primary"
+
+def test_payment_request_actions_keep_manual_buttons_for_support_topups():
+    buttons = inline_buttons(payment_request_actions("req-2", "new").as_markup())
+    callback_data = [button["callback_data"] for button in buttons]
+    assert callback_data == ["adm:pa:req-2", "adm:pr:req-2"]
 
 def inline_buttons(markup) -> list[dict]:
     return [button.model_dump(exclude_none=True) for row in markup.inline_keyboard for button in row]

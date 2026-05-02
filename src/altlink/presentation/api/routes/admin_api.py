@@ -10,6 +10,9 @@ router = APIRouter(prefix="/api/v1", tags=["admin-api"], dependencies=[Depends(r
 
 @router.get("/dashboard")
 async def dashboard(hub: ServiceHub = Depends(get_hub)) -> dict:
+    billing = getattr(hub, "billing", None)
+    if billing is not None:
+        await billing.snapshot_traffic()
     return await hub.dashboard.overview()
 
 

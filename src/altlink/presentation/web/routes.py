@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import asyncio
+import logging
 import base64
 import json
 import re
@@ -34,6 +35,7 @@ from altlink.utils.telegram_web import check_channel_membership, verify_telegram
 
 router = APIRouter(tags=["web"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+logger = logging.getLogger(__name__)
 DOCUMENT_FILENAMES = {
     "agreement": "altlink_user_agreement.md",
     "privacy": "altlink_privacy_policy.md",
@@ -44,6 +46,16 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
+
+
+async def sync_dashboard_traffic_if_possible(hub) -> None:
+    billing = getattr(hub, "billing", None)
+    if billing is None:
+        return
+    try:
+        await billing.snapshot_traffic()
+    except Exception:
+        logger.warning("Failed to sync traffic snapshots before web admin render.", exc_info=True)
 
 
 def latency_target_label() -> str:
@@ -573,6 +585,7 @@ async def dashboard(request: Request):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
+        await sync_dashboard_traffic_if_possible(hub)
         overview = await hub.dashboard.overview()
         return render(
             request,
@@ -580,6 +593,7 @@ async def dashboard(request: Request):
             title="Dashboard",
             admin=admin,
             overview=overview,
+            charts=overview["charts"],
             charts_json=json.dumps(overview["charts"], ensure_ascii=False),
             active_nav="dashboard",
         )
@@ -837,6 +851,7 @@ async def traffic_page(request: Request):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
+        await sync_dashboard_traffic_if_possible(hub)
         subscriptions = list(
             (
                 await hub.session.scalars(

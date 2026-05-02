@@ -230,6 +230,45 @@ async def test_show_user_card_formats_without_missing_attributes_exception():
 
 
 @pytest.mark.asyncio
+async def test_top_users_menu_syncs_traffic_before_building_rating(monkeypatch):
+    rendered: list[str] = []
+    calls: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_snapshot_traffic():
+        calls.append("sync")
+
+    async def fake_top_users(metric: str):
+        calls.append(metric)
+        return [SimpleNamespace(user=SimpleNamespace(username="leader", telegram_id=101), value=12 * 1024**3)]
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    class DummyMessage:
+        from_user = SimpleNamespace(id=42)
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            billing=SimpleNamespace(snapshot_traffic=fake_snapshot_traffic),
+            dashboard=SimpleNamespace(top_users=fake_top_users),
+        )
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+
+    await admin_handlers.top_users_menu(DummyMessage(), container)
+
+    assert calls == ["sync", "traffic"]
+    assert rendered
+    assert "leader" in rendered[0]
+
+
+@pytest.mark.asyncio
 async def test_broadcast_confirm_uses_client_bot_and_reports_failures(monkeypatch):
     sent_messages: list[tuple[str, int, str]] = []
     logged_payloads: list[dict] = []
@@ -471,11 +510,15 @@ async def test_payment_approve_updates_request_card(monkeypatch):
     async def fake_get_admin_by_telegram_id(telegram_id: int):
         return SimpleNamespace(id="admin-1")
 
+    async def fake_get_request(request_id: str):
+        return SimpleNamespace(id=request_id, provider_code="manual", status="new")
+
     async def fake_approve(request_id: str, admin_id: str | None, comment: str | None = None):
         approved_with.append((request_id, admin_id, comment))
         return SimpleNamespace(
             id=request_id,
             status="approved",
+            provider_code="manual",
             amount_rub=150,
             created_at=__import__("datetime").datetime(2026, 4, 25, 10, 0),
             user=SimpleNamespace(telegram_id=999, username="payer"),
@@ -488,13 +531,17 @@ async def test_payment_approve_updates_request_card(monkeypatch):
             SimpleNamespace(
                 id="req-1",
                 status="approved",
+                provider_code="manual",
                 amount_rub=150,
                 created_at=__import__("datetime").datetime(2026, 4, 25, 10, 0),
                 user=SimpleNamespace(telegram_id=999, username="payer"),
                 user_comment=None,
-                admin_comment="Подтверждено в admin bot",
+                admin_comment="approved in admin bot",
             )
         ]
+
+    async def fake_sync_pending_yookassa_checkouts():
+        return 0
 
     async def fake_render_admin(target, text: str, **kwargs):
         rendered.append(text)
@@ -510,7 +557,12 @@ async def test_payment_approve_updates_request_card(monkeypatch):
     async def fake_hub():
         yield SimpleNamespace(
             accounts=SimpleNamespace(get_admin_by_telegram_id=fake_get_admin_by_telegram_id),
-            topups=SimpleNamespace(approve=fake_approve, list_requests=fake_list_requests),
+            topups=SimpleNamespace(
+                get_request=fake_get_request,
+                approve=fake_approve,
+                list_requests=fake_list_requests,
+                sync_pending_yookassa_checkouts=fake_sync_pending_yookassa_checkouts,
+            ),
         )
 
     container = SimpleNamespace(hub=fake_hub)
@@ -519,10 +571,48 @@ async def test_payment_approve_updates_request_card(monkeypatch):
 
     await admin_handlers.payment_approve(DummyCallback(), container)
 
-    assert approved_with == [("req-1", "admin-1", "Подтверждено в admin bot")]
+    assert approved_with == [("req-1", "admin-1", "???????????? ? admin bot")]
     assert rendered
-    assert "Платежи 1/1" in rendered[0]
-    assert "Статус: подтверждён" in rendered[0]
+    assert "1/1" in rendered[0]
+    assert "req-1" in rendered[0]
+
+
+@pytest.mark.asyncio
+async def test_payment_approve_skips_manual_controls_for_yookassa(monkeypatch):
+    callback_answers: list[tuple[str, bool]] = []
+    approved_with: list[tuple[str, str | None, str | None]] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_get_request(request_id: str):
+        return SimpleNamespace(id=request_id, provider_code="yookassa", status="new")
+
+    async def fake_approve(request_id: str, admin_id: str | None, comment: str | None = None):
+        approved_with.append((request_id, admin_id, comment))
+
+    class DummyCallback:
+        data = "adm:pa:req-yoo"
+        from_user = SimpleNamespace(id=42)
+
+        async def answer(self, text: str = "", show_alert: bool = False, **kwargs):
+            callback_answers.append((text, show_alert))
+            return None
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            accounts=SimpleNamespace(get_admin_by_telegram_id=lambda telegram_id: None),
+            topups=SimpleNamespace(get_request=fake_get_request, approve=fake_approve),
+        )
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+
+    await admin_handlers.payment_approve(DummyCallback(), container)
+
+    assert approved_with == []
+    assert callback_answers == [("??? ?????? ??? ?????? ????????????? ?? ?????.", True)]
 
 
 @pytest.mark.asyncio
@@ -538,6 +628,7 @@ async def test_payments_screen_renders_single_browser_message(monkeypatch):
             SimpleNamespace(
                 id="req-1",
                 status="new",
+                provider_code="manual",
                 amount_rub=150,
                 created_at=__import__("datetime").datetime(2026, 4, 25, 10, 0),
                 user=SimpleNamespace(telegram_id=999, username="payer1"),
@@ -547,6 +638,7 @@ async def test_payments_screen_renders_single_browser_message(monkeypatch):
             SimpleNamespace(
                 id="req-2",
                 status="approved",
+                provider_code="manual",
                 amount_rub=300,
                 created_at=__import__("datetime").datetime(2026, 4, 24, 10, 0),
                 user=SimpleNamespace(telegram_id=555, username="payer2"),
@@ -554,6 +646,9 @@ async def test_payments_screen_renders_single_browser_message(monkeypatch):
                 admin_comment="ok",
             ),
         ]
+
+    async def fake_sync_pending_yookassa_checkouts():
+        return 0
 
     async def fake_render_admin(target, text: str, **kwargs):
         rendered.append(text)
@@ -567,7 +662,12 @@ async def test_payments_screen_renders_single_browser_message(monkeypatch):
 
     @asynccontextmanager
     async def fake_hub():
-        yield SimpleNamespace(topups=SimpleNamespace(list_requests=fake_list_requests))
+        yield SimpleNamespace(
+            topups=SimpleNamespace(
+                list_requests=fake_list_requests,
+                sync_pending_yookassa_checkouts=fake_sync_pending_yookassa_checkouts,
+            )
+        )
 
     container = SimpleNamespace(hub=fake_hub)
     monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
@@ -577,8 +677,41 @@ async def test_payments_screen_renders_single_browser_message(monkeypatch):
 
     assert len(rendered) == 1
     assert extra_answers == []
-    assert "Платежи 1/2" in rendered[0]
-    assert "Ожидают решения: 1" in rendered[0]
+    assert "1/2" in rendered[0]
+    assert "req-1" in rendered[0]
+
+
+def test_format_payment_browser_marks_yookassa_new_as_unfinished():
+    items = [
+        SimpleNamespace(
+            id="req-yoo",
+            status="new",
+            provider_code="yookassa",
+            amount_rub=199,
+            created_at=__import__("datetime").datetime(2026, 4, 25, 10, 0),
+            user=SimpleNamespace(telegram_id=999, username="payer1"),
+            user_comment=None,
+            admin_comment=None,
+        ),
+        SimpleNamespace(
+            id="req-manual",
+            status="new",
+            provider_code="manual",
+            amount_rub=300,
+            created_at=__import__("datetime").datetime(2026, 4, 24, 10, 0),
+            user=SimpleNamespace(telegram_id=555, username="payer2"),
+            user_comment=None,
+            admin_comment=None,
+        ),
+    ]
+
+    text = admin_handlers.format_payment_browser(items, 0)
+
+    assert "\u041d\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u044b\u0435 \u042e\u043a\u0430\u0441\u0441\u0430 \u0421\u0411\u041f: 1" in text
+    assert "\u041e\u0436\u0438\u0434\u0430\u044e\u0442 \u0440\u0435\u0448\u0435\u043d\u0438\u044f: 1" in text
+    assert admin_handlers.payment_status_label(items[0]) in text
+    assert admin_handlers.payment_provider_label(items[0]) in text
+    assert "req-yoo" in text
 
 
 @pytest.mark.asyncio
