@@ -7,7 +7,7 @@
       {% for subscription in subscriptions %}
       <tr>
         <td>{{ subscription.user.username or subscription.user.telegram_id }}</td>
-        <td>{{ subscription.plan.name }}</td>
+        <td>{{ subscription.plan.name if subscription.plan else '—' }}</td>
         <td>{{ '%.2f'|format(subscription.traffic_used_bytes / 1024**3) }} ГБ</td>
         <td>{{ '%.2f'|format(subscription.whitelist_traffic_used_bytes / 1024**3) }} ГБ</td>
         <td>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes / 1024**3) * whitelist_price_per_gb) }} ₽</td>

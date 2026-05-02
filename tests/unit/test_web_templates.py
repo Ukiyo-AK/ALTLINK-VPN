@@ -69,6 +69,21 @@ def test_landing_support_handle_uses_dedicated_mobile_friendly_class():
     assert 'class="landing-support-handle"' in content
 
 
+def test_dashboard_template_reads_plan_mix_values_from_dict_keys():
+    content = (TEMPLATE_ROOT / "dashboard.html").read_text(encoding="utf-8")
+
+    assert "charts.plan_mix.values[0]" not in content
+    assert 'charts["plan_mix"]["values"][0]' in content
+    assert 'charts["plan_mix"]["values"][1]' in content
+
+
+def test_traffic_template_handles_rows_without_active_plan():
+    content = (TEMPLATE_ROOT / "traffic.html").read_text(encoding="utf-8")
+
+    assert "{{ subscription.plan.name }}" not in content
+    assert "{{ subscription.plan.name if subscription.plan else '—' }}" in content
+
+
 def test_legal_templates_mark_document_body_for_aggressive_wrapping():
     agreement = (TEMPLATE_ROOT / "legal_agreement.html").read_text(encoding="utf-8")
     privacy = (TEMPLATE_ROOT / "legal_privacy.html").read_text(encoding="utf-8")

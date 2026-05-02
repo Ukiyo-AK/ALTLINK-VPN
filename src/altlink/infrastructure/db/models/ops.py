@@ -24,8 +24,8 @@ class TrafficSnapshot(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     server_id: Mapped[str | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), nullable=True)
     snapshot_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    used_bytes: Mapped[int] = mapped_column(nullable=False)
-    lifetime_used_bytes: Mapped[int] = mapped_column(nullable=False)
+    used_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    lifetime_used_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="traffic_snapshots")

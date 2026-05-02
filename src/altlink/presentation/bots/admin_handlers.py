@@ -114,12 +114,13 @@ TOP_METRIC_LABELS = {
 }
 
 
-async def sync_dashboard_traffic_if_possible(hub) -> None:
-    billing = getattr(hub, "billing", None)
-    if billing is None:
-        return
+async def sync_dashboard_traffic_if_possible(container: AppContainer) -> None:
     try:
-        await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
+        async with container.hub() as sync_hub:
+            billing = getattr(sync_hub, "billing", None)
+            if billing is None:
+                return
+            await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
     except TimeoutError:
         logger.warning("Timed out while syncing traffic snapshots before admin dashboard render.")
     except Exception:
@@ -1768,8 +1769,8 @@ async def change_server_type(callback: CallbackQuery, container: AppContainer):
 async def statistics(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
+    await sync_dashboard_traffic_if_possible(container)
     async with container.hub() as hub:
-        await sync_dashboard_traffic_if_possible(hub)
         overview = await hub.dashboard.overview()
         panel = await hub.dashboard.panel_status()
     lines = [
@@ -1825,8 +1826,8 @@ async def online(message: Message, container: AppContainer):
 async def top_users_menu(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
+    await sync_dashboard_traffic_if_possible(container)
     async with container.hub() as hub:
-        await sync_dashboard_traffic_if_possible(hub)
         rows = await hub.dashboard.top_users("traffic")
     await render_admin(message, format_top_users("traffic", rows), reply_markup=top_users_actions("traffic").as_markup())
 
@@ -1839,8 +1840,8 @@ async def top_users(callback: CallbackQuery, container: AppContainer):
     if metric not in TOP_METRIC_LABELS:
         await callback.answer("Неизвестный рейтинг.", show_alert=True)
         return
+    await sync_dashboard_traffic_if_possible(container)
     async with container.hub() as hub:
-        await sync_dashboard_traffic_if_possible(hub)
         rows = await hub.dashboard.top_users(metric)
     await render_admin(callback, format_top_users(metric, rows), reply_markup=top_users_actions(metric).as_markup())
 

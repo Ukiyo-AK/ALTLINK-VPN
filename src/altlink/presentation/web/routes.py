@@ -48,12 +48,13 @@ TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
 
 
-async def sync_dashboard_traffic_if_possible(hub) -> None:
-    billing = getattr(hub, "billing", None)
-    if billing is None:
-        return
+async def sync_dashboard_traffic_if_possible(container) -> None:
     try:
-        await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
+        async with container.hub() as sync_hub:
+            billing = getattr(sync_hub, "billing", None)
+            if billing is None:
+                return
+            await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
     except TimeoutError:
         logger.warning("Timed out while syncing traffic snapshots before web admin render.")
     except Exception:
@@ -583,11 +584,13 @@ async def logout(request: Request):
 
 @router.get("/admin/dashboard")
 async def dashboard(request: Request):
-    async with request.app.state.container.hub() as hub:
+    container = request.app.state.container
+    async with container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await sync_dashboard_traffic_if_possible(hub)
+    await sync_dashboard_traffic_if_possible(container)
+    async with container.hub() as hub:
         overview = await hub.dashboard.overview()
         return render(
             request,
@@ -849,11 +852,13 @@ async def transactions_page(request: Request):
 
 @router.get("/admin/traffic")
 async def traffic_page(request: Request):
-    async with request.app.state.container.hub() as hub:
+    container = request.app.state.container
+    async with container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await sync_dashboard_traffic_if_possible(hub)
+    await sync_dashboard_traffic_if_possible(container)
+    async with container.hub() as hub:
         subscriptions = await hub.dashboard.list_traffic_rows()
         return render(
             request,

@@ -5,19 +5,23 @@ import asyncio
 from fastapi import APIRouter, Depends
 
 from altlink.application.services.registry import ServiceHub
-from altlink.presentation.api.dependencies import get_hub, require_admin_api_key
+from altlink.presentation.api.dependencies import get_container, get_hub, require_admin_api_key
 
 router = APIRouter(prefix="/api/v1", tags=["admin-api"], dependencies=[Depends(require_admin_api_key)])
 
 
 @router.get("/dashboard")
-async def dashboard(hub: ServiceHub = Depends(get_hub)) -> dict:
-    billing = getattr(hub, "billing", None)
-    if billing is not None:
-        try:
-            await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
-        except TimeoutError:
-            pass
+async def dashboard(
+    hub: ServiceHub = Depends(get_hub),
+    container=Depends(get_container),
+) -> dict:
+    try:
+        async with container.hub() as sync_hub:
+            billing = getattr(sync_hub, "billing", None)
+            if billing is not None:
+                await asyncio.wait_for(billing.snapshot_traffic(), timeout=8)
+    except TimeoutError:
+        pass
     return await hub.dashboard.overview()
 
 

@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import BigInteger, inspect
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from altlink.db import ensure_runtime_schema
 from altlink.domain.enums import PlanCode
 from altlink.infrastructure.db.models.base import enum_values
+from altlink.infrastructure.db.models.ops import TrafficSnapshot
 
 
 @pytest.mark.asyncio
@@ -116,6 +117,11 @@ def test_enum_values_tracks_longest_enum_member_length():
     enum_type = enum_values(PlanCode)
 
     assert enum_type.length == max(len(member.value) for member in PlanCode)
+
+
+def test_traffic_snapshot_uses_bigint_for_large_usage_values():
+    assert isinstance(TrafficSnapshot.__table__.c.used_bytes.type, BigInteger)
+    assert isinstance(TrafficSnapshot.__table__.c.lifetime_used_bytes.type, BigInteger)
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import logging
 from pathlib import Path
 
-from sqlalchemy import DateTime, Integer, String, Text, inspect, text
+from sqlalchemy import BigInteger, DateTime, Integer, String, Text, inspect, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -125,24 +125,38 @@ def _ensure_runtime_schema_sync(connection) -> None:
                 required_plan_code_length,
             )
 
-    if "topup_requests" not in table_names:
-        return
+    if "topup_requests" in table_names:
+        topup_columns = {column["name"] for column in inspector.get_columns("topup_requests")}
+        expected_topup_columns = {
+            "provider_code": String(32),
+            "external_payment_id": String(128),
+            "external_payment_url": Text(),
+        }
+        for column_name, column_type in expected_topup_columns.items():
+            if column_name in topup_columns:
+                continue
+            compiled_type = column_type.compile(dialect=connection.dialect)
+            connection.execute(text(f"ALTER TABLE topup_requests ADD COLUMN {column_name} {compiled_type}"))
+            logger.warning(
+                "Added missing column %s to topup_requests table during runtime schema preparation.",
+                column_name,
+            )
 
-    topup_columns = {column["name"] for column in inspector.get_columns("topup_requests")}
-    expected_topup_columns = {
-        "provider_code": String(32),
-        "external_payment_id": String(128),
-        "external_payment_url": Text(),
-    }
-    for column_name, column_type in expected_topup_columns.items():
-        if column_name in topup_columns:
-            continue
-        compiled_type = column_type.compile(dialect=connection.dialect)
-        connection.execute(text(f"ALTER TABLE topup_requests ADD COLUMN {column_name} {compiled_type}"))
-        logger.warning(
-            "Added missing column %s to topup_requests table during runtime schema preparation.",
-            column_name,
-        )
+    if "traffic_snapshots" in table_names and connection.dialect.name != "sqlite":
+        traffic_columns = {column["name"]: column for column in inspector.get_columns("traffic_snapshots")}
+        for column_name in ("used_bytes", "lifetime_used_bytes"):
+            column = traffic_columns.get(column_name)
+            if column is None:
+                continue
+            compiled_type = column["type"].compile(dialect=connection.dialect).upper()
+            if compiled_type == BigInteger().compile(dialect=connection.dialect).upper():
+                continue
+            connection.execute(text(f"ALTER TABLE traffic_snapshots ALTER COLUMN {column_name} TYPE BIGINT"))
+            logger.warning(
+                "Expanded traffic_snapshots.%s from %s to BIGINT during runtime schema preparation.",
+                column_name,
+                compiled_type,
+            )
 
 
 async def ensure_runtime_schema(engine: AsyncEngine) -> None:
