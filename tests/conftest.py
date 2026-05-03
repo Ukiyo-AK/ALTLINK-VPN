@@ -41,6 +41,7 @@ from altlink.infrastructure.remnawave_schemas import (
     RemoteManagedInternalSquad,
     RemoteNode,
     RemoteNodeConfigProfile,
+    RemoteNodeUserUsageRow,
     RemoteSeriesPoint,
     RemoteSubscriptionInfo,
     RemoteSubscriptionInfoUser,
@@ -58,6 +59,7 @@ class FakeRemnawave:
         self.users: dict[str, RemoteUser] = {}
         self.internal_squads: dict[str, RemoteManagedInternalSquad] = {}
         self.nodes = self._seed_nodes()
+        self.node_user_usage_totals: dict[tuple[str, str], int] = {}
 
     async def list_nodes(self):
         return list(self.nodes.values())
@@ -230,12 +232,49 @@ class FakeRemnawave:
 
     async def get_user_usage(self, user_uuid: str, start: date, end: date):
         whitelist_node = next(node for node in self.nodes.values() if "Whitelist" in node.name)
+        whitelist_total = self.node_user_usage_totals.get((whitelist_node.uuid, user_uuid), 0)
         return RemoteUsageResponse(
             categories=[start.isoformat(), end.isoformat()],
             sparklineData=[0, 0],
-            topNodes=[RemoteUsageTopNode(uuid=whitelist_node.uuid, color="#f0b35a", name=whitelist_node.name, countryCode=whitelist_node.countryCode, total=0)],
-            series=[RemoteSeriesPoint(uuid=whitelist_node.uuid, name=whitelist_node.name, color="#f0b35a", countryCode=whitelist_node.countryCode, total=0, data=[0, 0])],
+            topNodes=[
+                RemoteUsageTopNode(
+                    uuid=whitelist_node.uuid,
+                    color="#f0b35a",
+                    name=whitelist_node.name,
+                    countryCode=whitelist_node.countryCode,
+                    total=whitelist_total,
+                )
+            ],
+            series=[
+                RemoteSeriesPoint(
+                    uuid=whitelist_node.uuid,
+                    name=whitelist_node.name,
+                    color="#f0b35a",
+                    countryCode=whitelist_node.countryCode,
+                    total=whitelist_total,
+                    data=[whitelist_total, 0],
+                )
+            ],
         )
+
+    async def get_node_user_usage(self, node_uuid: str, start: datetime, end: datetime):
+        rows: list[RemoteNodeUserUsageRow] = []
+        for (stored_node_uuid, user_uuid), total in self.node_user_usage_totals.items():
+            if stored_node_uuid != node_uuid:
+                continue
+            user = self.users.get(user_uuid)
+            if user is None:
+                continue
+            rows.append(
+                RemoteNodeUserUsageRow(
+                    userUuid=user_uuid,
+                    username=user.username,
+                    nodeUuid=node_uuid,
+                    total=total,
+                    date=start.date().isoformat(),
+                )
+            )
+        return rows
 
     async def get_subscription_request_history(self, user_uuid: str):
         return [
@@ -287,6 +326,9 @@ class FakeRemnawave:
             lifetime_used_bytes=lifetime_used_bytes or used_bytes,
             active_squads=[item.uuid for item in user.activeInternalSquads],
         )
+
+    def set_node_usage(self, node_uuid: str, user_uuid: str, total_bytes: int) -> None:
+        self.node_user_usage_totals[(node_uuid, user_uuid)] = total_bytes
 
     def _seed_nodes(self) -> dict[str, RemoteNode]:
         ten_uuid = str(uuid4())

@@ -190,6 +190,14 @@ class RemoteUsageResponse(BaseSchema):
     series: list[RemoteSeriesPoint]
 
 
+class RemoteNodeUserUsageRow(BaseSchema):
+    userUuid: str
+    username: str
+    nodeUuid: str
+    total: float
+    date: str
+
+
 class RemoteTrafficSnapshot(BaseSchema):
     snapshotDate: date
     total: int

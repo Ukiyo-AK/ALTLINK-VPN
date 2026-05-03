@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 import httpx
@@ -401,17 +401,32 @@ class BillingService(BaseService):
         if self.remnawave is None:
             return
 
-        now = utc_now()
         users = list((await self.session.scalars(select(User))).all())
         user_map = {user.remnawave_user_uuid: user for user in users if user.remnawave_user_uuid}
         remote_users = await self.remnawave.list_users()
+        remote_pairs: list[tuple[User, Subscription | None, object]] = []
 
         for remote_user in remote_users:
             user = user_map.get(remote_user.uuid)
             if user is None:
                 continue
-
             subscription = await self.accounts.get_current_subscription(user.id)
+            remote_pairs.append((user, subscription, remote_user))
+
+        whitelist_usage_by_remote_uuid = await self._load_whitelist_usage_by_user(
+            {
+                user.remnawave_user_uuid: ensure_utc(subscription.started_at).date()
+                for user, subscription, _ in remote_pairs
+                if (
+                    user.remnawave_user_uuid
+                    and subscription is not None
+                    and subscription.plan is not None
+                    and is_metered_plan_code(subscription.plan.code)
+                )
+            }
+        )
+
+        for user, subscription, remote_user in remote_pairs:
             self.session.add(
                 TrafficSnapshot(
                     user_id=user.id,
@@ -426,7 +441,12 @@ class BillingService(BaseService):
             if subscription is None:
                 continue
 
-            await self._apply_remote_usage(user, subscription, remote_user)
+            await self._apply_remote_usage(
+                user,
+                subscription,
+                remote_user,
+                whitelist_usage_by_remote_uuid=whitelist_usage_by_remote_uuid,
+            )
 
         await self.catalog.rebuild_user_access_matrix()
 
@@ -494,33 +514,125 @@ class BillingService(BaseService):
         if self.remnawave and subscription.user and subscription.user.remnawave_user_uuid:
             await self.remnawave.reset_user_traffic(subscription.user.remnawave_user_uuid)
 
-    async def _refresh_whitelist_usage(self, user: User, subscription: Subscription) -> None:
+    async def _refresh_whitelist_usage(
+        self,
+        user: User,
+        subscription: Subscription,
+        *,
+        preloaded_usage_by_remote_uuid: dict[str, int] | None = None,
+    ) -> None:
         if self.remnawave is None or not user.remnawave_user_uuid:
             return
-        whitelist_node_ids = {
-            server.remnawave_node_uuid
-            for server in (
-                await self.session.scalars(select(Server).where(Server.server_type == ServerType.WHITELIST))
-            ).all()
-        }
+        if preloaded_usage_by_remote_uuid is not None and user.remnawave_user_uuid in preloaded_usage_by_remote_uuid:
+            subscription.whitelist_traffic_used_bytes = max(preloaded_usage_by_remote_uuid[user.remnawave_user_uuid], 0)
+            return
+
+        whitelist_node_ids = await self._get_whitelist_node_ids()
         if not whitelist_node_ids:
             subscription.whitelist_traffic_used_bytes = 0
+            return
+        totals_by_user = await self._load_whitelist_usage_by_user(
+            {user.remnawave_user_uuid: ensure_utc(subscription.started_at).date()}
+        )
+        if user.remnawave_user_uuid in totals_by_user:
+            subscription.whitelist_traffic_used_bytes = max(totals_by_user[user.remnawave_user_uuid], 0)
             return
         usage = await self.remnawave.get_user_usage(
             user.remnawave_user_uuid,
             ensure_utc(subscription.started_at).date(),
             date.today(),
         )
-        total = sum(node.total for node in usage.topNodes if node.uuid in whitelist_node_ids)
+        total = self._sum_whitelist_usage_from_user_stats(usage, whitelist_node_ids)
         subscription.whitelist_traffic_used_bytes = max(total, 0)
 
-    async def _apply_remote_usage(self, user: User, subscription: Subscription, remote_user) -> None:
+    async def _apply_remote_usage(
+        self,
+        user: User,
+        subscription: Subscription,
+        remote_user,
+        *,
+        whitelist_usage_by_remote_uuid: dict[str, int] | None = None,
+    ) -> None:
         user.last_seen_at = remote_user.userTraffic.onlineAt or user.last_seen_at
         subscription.traffic_used_bytes = remote_user.userTraffic.usedTrafficBytes
         if remote_user.lastTrafficResetAt is not None:
             subscription.last_traffic_reset_at = remote_user.lastTrafficResetAt
         if subscription.plan and is_metered_plan_code(subscription.plan.code):
-            await self._refresh_whitelist_usage(user, subscription)
+            await self._refresh_whitelist_usage(
+                user,
+                subscription,
+                preloaded_usage_by_remote_uuid=whitelist_usage_by_remote_uuid,
+            )
+
+    async def _get_whitelist_node_ids(self) -> set[str]:
+        return {
+            server.remnawave_node_uuid
+            for server in (
+                await self.session.scalars(select(Server).where(Server.server_type == ServerType.WHITELIST))
+            ).all()
+            if server.remnawave_node_uuid
+        }
+
+    async def _load_whitelist_usage_by_user(self, start_dates_by_remote_uuid: dict[str, date]) -> dict[str, int]:
+        if self.remnawave is None or not start_dates_by_remote_uuid:
+            return {}
+
+        whitelist_node_ids = await self._get_whitelist_node_ids()
+        if not whitelist_node_ids:
+            return {}
+
+        window_start = datetime.combine(min(start_dates_by_remote_uuid.values()), time.min)
+        window_end = utc_now()
+        totals_by_user: dict[str, int] = {user_uuid: 0 for user_uuid in start_dates_by_remote_uuid}
+        node_usage_supported = False
+
+        for node_uuid in whitelist_node_ids:
+            rows = await self.remnawave.get_node_user_usage(node_uuid, ensure_utc(window_start), window_end)
+            if rows is None:
+                continue
+            node_usage_supported = True
+            for row in rows:
+                row_user_uuid = str(row.userUuid)
+                row_start_date = start_dates_by_remote_uuid.get(row_user_uuid)
+                if row_start_date is None:
+                    continue
+                row_date = self._parse_usage_row_date(row.date)
+                if row_date is None or row_date < row_start_date:
+                    continue
+                totals_by_user[row_user_uuid] += max(int(round(float(row.total))), 0)
+
+        if node_usage_supported:
+            return totals_by_user
+        return {}
+
+    @staticmethod
+    def _sum_whitelist_usage_from_user_stats(usage, whitelist_node_ids: set[str]) -> int:
+        total = 0
+        for node in getattr(usage, "series", []) or []:
+            if node.uuid not in whitelist_node_ids:
+                continue
+            total += max(int(round(float(node.total))), 0)
+        if total > 0:
+            return total
+
+        for node in getattr(usage, "topNodes", []) or []:
+            if node.uuid not in whitelist_node_ids:
+                continue
+            total += max(int(round(float(node.total))), 0)
+        return total
+
+    @staticmethod
+    def _parse_usage_row_date(raw_value: str | None) -> date | None:
+        if not raw_value:
+            return None
+        normalized = str(raw_value).strip()
+        if not normalized:
+            return None
+        candidate = normalized.split("T", 1)[0]
+        try:
+            return date.fromisoformat(candidate)
+        except ValueError:
+            return None
 
     def _compute_renewal_charge(self, subscription: Subscription, plan: Plan) -> Decimal:
         whitelist_charge = Decimal("0.00")

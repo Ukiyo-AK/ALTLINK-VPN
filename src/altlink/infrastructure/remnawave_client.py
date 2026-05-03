@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol
 
 import httpx
@@ -14,6 +14,7 @@ from altlink.infrastructure.remnawave_schemas import (
     RemoteConnectionKeys,
     RemoteManagedInternalSquad,
     RemoteNode,
+    RemoteNodeUserUsageRow,
     RemoteSubscriptionInfo,
     RemoteSubscriptionRequestRecord,
     RemoteUsageResponse,
@@ -39,6 +40,7 @@ class RemnawaveGateway(Protocol):
     async def get_subscription_info(self, short_uuid: str) -> RemoteSubscriptionInfo: ...
     async def get_connection_keys(self, user_uuid: str) -> RemoteConnectionKeys: ...
     async def get_user_usage(self, user_uuid: str, start: date, end: date) -> RemoteUsageResponse: ...
+    async def get_node_user_usage(self, node_uuid: str, start: datetime, end: datetime) -> list[RemoteNodeUserUsageRow] | None: ...
     async def get_subscription_request_history(self, user_uuid: str) -> list[RemoteSubscriptionRequestRecord]: ...
     async def list_internal_squads(self) -> list[RemoteManagedInternalSquad]: ...
     async def create_internal_squad(self, *, name: str, inbounds: list[str]) -> RemoteManagedInternalSquad: ...
@@ -176,6 +178,17 @@ class RemnawaveClient:
             params={"start": start.isoformat(), "end": end.isoformat(), "topNodesLimit": 20},
         )
         return RemoteUsageResponse.model_validate(payload)
+
+    async def get_node_user_usage(self, node_uuid: str, start: datetime, end: datetime) -> list[RemoteNodeUserUsageRow] | None:
+        payload = await self._request(
+            "GET",
+            f"/api/bandwidth-stats/nodes/{node_uuid}/users/legacy",
+            params={"start": start.isoformat(), "end": end.isoformat()},
+            allow_404=True,
+        )
+        if payload is None:
+            return None
+        return [RemoteNodeUserUsageRow.model_validate(item) for item in (payload or [])]
 
     async def get_subscription_request_history(self, user_uuid: str) -> list[RemoteSubscriptionRequestRecord]:
         payload = await self._request("GET", f"/api/users/{user_uuid}/subscription-request-history")
