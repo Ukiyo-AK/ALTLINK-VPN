@@ -17,14 +17,32 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("users"):
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
     with op.batch_alter_table("users") as batch_op:
-        batch_op.add_column(sa.Column("registration_completed_at", sa.DateTime(timezone=True), nullable=True))
-        batch_op.add_column(sa.Column("consent_accepted_at", sa.DateTime(timezone=True), nullable=True))
-        batch_op.add_column(sa.Column("consent_version", sa.String(length=64), nullable=True))
+        if "registration_completed_at" not in existing_columns:
+            batch_op.add_column(sa.Column("registration_completed_at", sa.DateTime(timezone=True), nullable=True))
+        if "consent_accepted_at" not in existing_columns:
+            batch_op.add_column(sa.Column("consent_accepted_at", sa.DateTime(timezone=True), nullable=True))
+        if "consent_version" not in existing_columns:
+            batch_op.add_column(sa.Column("consent_version", sa.String(length=64), nullable=True))
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("users"):
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
     with op.batch_alter_table("users") as batch_op:
-        batch_op.drop_column("consent_version")
-        batch_op.drop_column("consent_accepted_at")
-        batch_op.drop_column("registration_completed_at")
+        if "consent_version" in existing_columns:
+            batch_op.drop_column("consent_version")
+        if "consent_accepted_at" in existing_columns:
+            batch_op.drop_column("consent_accepted_at")
+        if "registration_completed_at" in existing_columns:
+            batch_op.drop_column("registration_completed_at")

@@ -17,10 +17,28 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("users"):
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "channel_verified_at" in existing_columns:
+        return
+
     with op.batch_alter_table("users") as batch_op:
         batch_op.add_column(sa.Column("channel_verified_at", sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("users"):
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "channel_verified_at" not in existing_columns:
+        return
+
     with op.batch_alter_table("users") as batch_op:
         batch_op.drop_column("channel_verified_at")
