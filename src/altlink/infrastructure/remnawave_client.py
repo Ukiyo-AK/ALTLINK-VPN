@@ -187,6 +187,13 @@ class RemnawaveClient:
             allow_404=True,
         )
         if payload is None:
+            payload = await self._request(
+                "GET",
+                f"/api/nodes/usage/{node_uuid}/users/range",
+                params={"start": start.isoformat(), "end": end.isoformat()},
+                allow_404=True,
+            )
+        if payload is None:
             return None
         return [RemoteNodeUserUsageRow.model_validate(item) for item in (payload or [])]
 

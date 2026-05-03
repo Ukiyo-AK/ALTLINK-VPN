@@ -17,27 +17,50 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "support_requests",
-        sa.Column("user_id", sa.String(), nullable=False),
-        sa.Column("resolved_by_admin_id", sa.String(), nullable=True),
-        sa.Column("status", sa.Enum("new", "resolved", name="supportrequeststatus"), nullable=False),
-        sa.Column("topic", sa.String(length=64), nullable=False),
-        sa.Column("message", sa.Text(), nullable=False),
-        sa.Column("resolution_comment", sa.Text(), nullable=True),
-        sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("id", sa.String(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(["resolved_by_admin_id"], ["admin_users.id"], ondelete="SET NULL"),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_support_requests_resolved_by_admin_id"), "support_requests", ["resolved_by_admin_id"])
-    op.create_index(op.f("ix_support_requests_user_id"), "support_requests", ["user_id"])
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    if not inspector.has_table("support_requests"):
+        op.create_table(
+            "support_requests",
+            sa.Column("user_id", sa.String(), nullable=False),
+            sa.Column("resolved_by_admin_id", sa.String(), nullable=True),
+            sa.Column("status", sa.Enum("new", "resolved", name="supportrequeststatus"), nullable=False),
+            sa.Column("topic", sa.String(length=64), nullable=False),
+            sa.Column("message", sa.Text(), nullable=False),
+            sa.Column("resolution_comment", sa.Text(), nullable=True),
+            sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("id", sa.String(), nullable=False),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+            sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+            sa.ForeignKeyConstraint(["resolved_by_admin_id"], ["admin_users.id"], ondelete="SET NULL"),
+            sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+            sa.PrimaryKeyConstraint("id"),
+        )
+        inspector = sa.inspect(bind)
+
+    existing_indexes = {index["name"] for index in inspector.get_indexes("support_requests")}
+    resolved_by_index = op.f("ix_support_requests_resolved_by_admin_id")
+    user_index = op.f("ix_support_requests_user_id")
+
+    if resolved_by_index not in existing_indexes:
+        op.create_index(resolved_by_index, "support_requests", ["resolved_by_admin_id"])
+    if user_index not in existing_indexes:
+        op.create_index(user_index, "support_requests", ["user_id"])
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_support_requests_user_id"), table_name="support_requests")
-    op.drop_index(op.f("ix_support_requests_resolved_by_admin_id"), table_name="support_requests")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if not inspector.has_table("support_requests"):
+        return
+
+    existing_indexes = {index["name"] for index in inspector.get_indexes("support_requests")}
+    user_index = op.f("ix_support_requests_user_id")
+    resolved_by_index = op.f("ix_support_requests_resolved_by_admin_id")
+
+    if user_index in existing_indexes:
+        op.drop_index(user_index, table_name="support_requests")
+    if resolved_by_index in existing_indexes:
+        op.drop_index(resolved_by_index, table_name="support_requests")
     op.drop_table("support_requests")
