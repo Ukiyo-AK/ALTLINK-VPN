@@ -4,12 +4,16 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from altlink.application.services.billing import BillingService
+from altlink.application.services.base import ConflictError
 from altlink.domain.billing import compute_period_end, compute_prorated_daily_charge, quantize_money
-from altlink.domain.enums import PlanCode
+from altlink.domain.enums import BalanceTransactionType, PlanCode, SubscriptionStatus
 from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
+from altlink.infrastructure.db.models import BalanceTransaction
 from altlink.infrastructure.remnawave_schemas import RemoteSeriesPoint, RemoteUsageResponse, RemoteUsageTopNode
+from altlink.utils.time import utc_now
 
 
 def test_compute_period_end_uses_fixed_day_window():
@@ -166,3 +170,45 @@ async def test_start_renewal_charge_does_not_repeat_whitelist_usage_that_was_alr
     assert refreshed_subscription is not None
     assert Decimal(refreshed_user.balance_rub) == Decimal("23.00")
     assert renewal_charge == SINGLE_10GBIT_MONTHLY_PRICE_RUB
+
+
+@pytest.mark.asyncio
+async def test_failed_plan_switch_does_not_credit_balance_or_cancel_current_subscription(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13023,
+            username="failed_switch_credit",
+            first_name="Failed",
+            last_name="Switch",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        current = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        current.ends_at = utc_now() + timedelta(days=15)
+        current.next_billing_at = current.ends_at
+        current.started_at = utc_now() - timedelta(days=15)
+        user.balance_rub = Decimal("-10.00")
+        balance_before = Decimal(user.balance_rub)
+
+        with pytest.raises(ConflictError) as exc_info:
+            await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=True)
+
+        refreshed_user = await hub.accounts.get_user(user.id)
+        refreshed_current = await hub.accounts.get_current_subscription(user.id)
+        refunds = list(
+            (
+                await hub.session.scalars(
+                    select(BalanceTransaction).where(
+                        BalanceTransaction.user_id == user.id,
+                        BalanceTransaction.type == BalanceTransactionType.REFUND,
+                    )
+                )
+            ).all()
+        )
+
+    assert "Недостаточно средств" in str(exc_info.value)
+    assert Decimal(refreshed_user.balance_rub) == balance_before
+    assert refreshed_current is not None
+    assert refreshed_current.id == current.id
+    assert refreshed_current.status == SubscriptionStatus.ACTIVE
+    assert refunds == []

@@ -169,21 +169,23 @@ def test_subscription_actions_render_cancel_and_hide_traffic():
     metered_flat = [
         text
         for row in inline_rows(
-            subscription_actions(show_traffic=True, can_cancel=True, auto_renew_disabled=False).as_markup()
+            subscription_actions(show_link=True, show_traffic=True, can_cancel=True, auto_renew_disabled=False).as_markup()
         )
         for text in row
     ]
     assert "Трафик и списания" in metered_flat
     assert "Отказаться от подписки" in metered_flat
+    assert "Моя ссылка" in metered_flat
 
     unlimited_flat = [
         text
         for row in inline_rows(
-            subscription_actions(show_traffic=False, can_cancel=False, auto_renew_disabled=False).as_markup()
+            subscription_actions(show_link=False, show_traffic=False, can_cancel=False, auto_renew_disabled=False).as_markup()
         )
         for text in row
     ]
     assert "Трафик и списания" not in unlimited_flat
+    assert "Моя ссылка" not in unlimited_flat
 
 
 def test_subscription_link_actions_keep_only_help_and_navigation():

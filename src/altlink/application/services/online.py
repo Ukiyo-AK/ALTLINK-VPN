@@ -109,7 +109,7 @@ class OnlineService(BaseService):
             subscription = subscription_map.get(user.id)
             previous_session = previous_session_map.get(user.id)
             if self._should_notify_whitelist_connection(session, previous_session, subscription):
-                await self._queue_whitelist_connection_notice(user, subscription)
+                await self._queue_whitelist_connection_notice(user, session, subscription)
 
         return created
 
@@ -182,11 +182,17 @@ class OnlineService(BaseService):
             return False
         return True
 
-    async def _queue_whitelist_connection_notice(self, user: User, subscription: Subscription) -> None:
+    async def _queue_whitelist_connection_notice(
+        self,
+        user: User,
+        session: OnlineSessionCache,
+        subscription: Subscription,
+    ) -> None:
         if subscription.plan is None:
             return
-        last_activity = getattr(user, "last_seen_at", None) or utc_now()
-        dedupe_key = f"whitelist-online:{user.id}:{last_activity.date().isoformat()}"
+        last_activity = session.last_activity_at or getattr(user, "last_seen_at", None) or utc_now()
+        server_marker = session.server_id or "unknown"
+        dedupe_key = f"whitelist-online:{user.id}:{server_marker}:{last_activity.isoformat()}"
         existing = await self.session.scalar(select(Notification).where(Notification.dedupe_key == dedupe_key))
         if existing is not None:
             return

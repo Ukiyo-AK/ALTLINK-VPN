@@ -142,6 +142,16 @@ class BillingService(BaseService):
             )
         discounted_price = quantize_money(Decimal(plan.price_rub) - discount_rub)
         carryover_credit_rub = self._calculate_residual_credit_rub(existing)
+        upfront_charge = discounted_price
+        effective_available_balance_rub = quantize_money(
+            Decimal(user.balance_rub) + (carryover_credit_rub if charge_user else Decimal("0.00"))
+        )
+        if charge_user and effective_available_balance_rub < upfront_charge:
+            raise ConflictError(f"Недостаточно средств. Для старта тарифа нужно минимум {upfront_charge:.2f} ₽.")
+
+        if existing:
+            existing.status = SubscriptionStatus.CANCELED
+            existing.canceled_at = utc_now()
 
         if charge_user and carryover_credit_rub > 0:
             await self.accounts.adjust_balance(
@@ -151,14 +161,6 @@ class BillingService(BaseService):
                 description="Компенсация остатка прошлого тарифа при смене плана",
                 admin_id=admin_id,
             )
-
-        upfront_charge = discounted_price
-        if charge_user and Decimal(user.balance_rub) < upfront_charge:
-            raise ConflictError(f"Недостаточно средств. Для старта тарифа нужно минимум {upfront_charge:.2f} ₽.")
-
-        if existing:
-            existing.status = SubscriptionStatus.CANCELED
-            existing.canceled_at = utc_now()
 
         if charge_user and upfront_charge > 0:
             await self.accounts.adjust_balance(

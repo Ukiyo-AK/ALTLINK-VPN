@@ -304,7 +304,7 @@ def test_subscription_text_hides_billing_cycle_line():
     assert "Формат списания" not in text
 
 
-def test_subscription_text_for_start_on_whitelist_server_shows_instant_charge_warning():
+def test_subscription_text_for_start_on_whitelist_server_keeps_billing_details_without_push_warning():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("42.50"), status="active")
     subscription = SimpleNamespace(
@@ -335,8 +335,8 @@ def test_subscription_text_for_start_on_whitelist_server_shows_instant_charge_wa
     )
 
     assert "Уже списано за белые списки: 8.00 ₽" in text
-    assert "Текущий баланс: 42.50 ₽" in text
-    assert "ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ" in text
+    assert "Текущий баланс: 42.50 ₽" not in text
+    assert "ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ" not in text
 
 
 def test_subscription_link_caption_uses_telegram_code_formatting():

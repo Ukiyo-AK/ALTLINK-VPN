@@ -554,6 +554,7 @@ def resolve_subscription_payload(bundle: dict) -> str | None:
 
 def subscription_markup(subscription):
     return subscription_actions(
+        show_link=bool(subscription),
         show_traffic=show_metered_usage(subscription),
         can_cancel=can_manage_auto_renew(subscription),
         auto_renew_disabled=bool(subscription and not subscription.auto_renew),
@@ -1039,42 +1040,6 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         )
         if pending_whitelist_cost > Decimal("0.00"):
             lines.append(f"Осталось удержать после пополнения: {pending_whitelist_cost:.2f} ₽")
-    if whitelist_servers:
-        lines.extend(
-            [
-                "",
-                "⚠️ Важно по серверам белых списков:",
-                "Используйте их только когда белые списки действительно нужны, потому что скорость на них ниже стандартных серверов.",
-            ]
-        )
-        current_is_whitelist = bool(activity_summary and activity_summary.get("current_server_type") == "whitelist")
-        if current_is_whitelist:
-            if show_metered_usage(subscription):
-                lines.extend(
-                    [
-                        "Сейчас у вас активен сервер белых списков.",
-                        "Такие серверы медленнее обычных и нужны в основном тогда, когда мобильный интернет работает только по белым спискам.",
-                        f"Текущий баланс: {Decimal(user.balance_rub):.2f} ₽",
-                        f"Трафик белых списков в этом периоде: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ",
-                        "❗ ВАЖНО: ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ ПО 4 ₽ ЗА 1 ГБ.",
-                        "Баланс может уйти в минус максимум до -50 ₽.",
-                    ]
-                )
-            else:
-                lines.extend(
-                    [
-                        "Сейчас у вас активен сервер белых списков.",
-                        "Такие серверы медленнее обычных. Настоятельно рекомендуем использовать их только когда мобильный интернет работает по белым спискам.",
-                    ]
-                )
-        only_whitelist_recently = bool(
-            activity_summary
-            and activity_summary.get("recent_server_types")
-            and set(activity_summary["recent_server_types"]) == {"whitelist"}
-            and standard_servers > 0
-        )
-        if only_whitelist_recently:
-            lines.append("Похоже, вы долго используете только сервер белых списков. По возможности вернитесь на стандартные серверы.")
     lines.extend(
         [
             "",
@@ -2390,6 +2355,7 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
         text,
         reply_markup=reply_markup
         or subscription_actions(
+            show_link=False,
             show_traffic=False,
             can_cancel=False,
             auto_renew_disabled=False,

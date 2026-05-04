@@ -150,13 +150,15 @@ def profile_actions(
 
 def subscription_actions(
     *,
+    show_link: bool,
     show_traffic: bool,
     can_cancel: bool,
     auto_renew_disabled: bool,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Выбрать тариф", callback_data="client:plan_menu", style="primary")
-    builder.button(text="Моя ссылка", callback_data="client:subscription_link", style="primary")
+    if show_link:
+        builder.button(text="Моя ссылка", callback_data="client:subscription_link", style="primary")
     if show_traffic:
         builder.button(text="Трафик и списания", callback_data="client:traffic")
     if can_cancel and not auto_renew_disabled:
@@ -164,7 +166,8 @@ def subscription_actions(
     if can_cancel and auto_renew_disabled:
         builder.button(text="Включить продление", callback_data="client:subscription_resume", style="success")
     builder.button(text="Меню", callback_data="client:home")
-    rows = [2]
+    first_row = 1 + int(show_link)
+    rows = [first_row]
     second_row = int(show_traffic) + int(can_cancel)
     if second_row:
         rows.append(second_row)
