@@ -560,12 +560,51 @@ def subscription_markup(subscription):
     ).as_markup()
 
 
+def billed_whitelist_cost(subscription) -> Decimal:
+    used_bytes = max(int(getattr(subscription, "whitelist_traffic_used_bytes", 0) or 0), 0)
+    billed_bytes = max(int(getattr(subscription, "whitelist_traffic_billed_bytes", 0) or 0), 0)
+    return bytes_to_gb_cost(min(used_bytes, billed_bytes), WHITELIST_GB_PRICE_RUB)
+
+
+def outstanding_whitelist_cost(subscription) -> Decimal:
+    total_cost = bytes_to_gb_cost(max(int(getattr(subscription, "whitelist_traffic_used_bytes", 0) or 0), 0), WHITELIST_GB_PRICE_RUB)
+    charged_cost = billed_whitelist_cost(subscription)
+    remaining = total_cost - charged_cost
+    return remaining if remaining > Decimal("0.00") else Decimal("0.00")
+
+
 def subscription_link_caption(payload: str) -> str:
     escaped_payload = html.escape(payload)
     return (
         "🔗 Ваша персональная ссылка VPN\n\n"
         f"<code>{escaped_payload}</code>\n\n"
         "Откройте её в VPN-клиенте или отсканируйте QR-код."
+    )
+
+
+def activation_success_caption(subscription, payload: str) -> str:
+    escaped_payload = html.escape(payload)
+    plan_name = html.escape(subscription.plan.name if subscription and subscription.plan else "VPN")
+    return (
+        f"✅ Тариф «{plan_name}» активирован.\n\n"
+        f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}\n"
+        f"Формат списания: {billing_cycle_label(subscription.plan)}\n"
+        f"Лимит устройств: {device_limit_label(subscription.plan)}\n\n"
+        "🔗 Ваша персональная ссылка VPN\n"
+        f"<code>{escaped_payload}</code>\n\n"
+        "Откройте ссылку в VPN-клиенте или импортируйте её в приложение. Можно также отсканировать QR-код."
+    )
+
+
+def trial_activation_caption(subscription, payload: str) -> str:
+    escaped_payload = html.escape(payload)
+    return (
+        "🎁 Тестовый период Pro активирован.\n\n"
+        f"Доступ ко всем активным серверам открыт до {subscription.ends_at:%d.%m.%Y %H:%M}.\n"
+        f"Лимит устройств: {device_limit_label(subscription.plan)}\n\n"
+        "🔗 Ваша персональная ссылка VPN\n"
+        f"<code>{escaped_payload}</code>\n\n"
+        "Откройте ссылку в VPN-клиенте или импортируйте её в приложение. Можно также отсканировать QR-код."
     )
 
 
@@ -913,7 +952,7 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
         "🏠 Главное меню",
         "",
         f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
-        "Тариф пока не выбран. Можно запустить тест на 2 дня или сразу оформить Start / Pro.",
+        "Тариф пока не выбран. Нажмите «Подписка», затем «Выбрать тариф», чтобы активировать Start / Pro или запустить тест на 2 дня.",
         "",
         "🚀 Личный кабинет открывается отдельной кнопкой ниже.",
     ]
@@ -989,14 +1028,17 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
     if subscription.notes:
         lines.extend(["", subscription.notes])
     if show_metered_usage(subscription):
-        whitelist_cost = bytes_to_gb_cost(subscription.whitelist_traffic_used_bytes, WHITELIST_GB_PRICE_RUB)
+        charged_whitelist_cost = billed_whitelist_cost(subscription)
+        pending_whitelist_cost = outstanding_whitelist_cost(subscription)
         lines.extend(
             [
                 f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ",
                 f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ",
-                f"Начисление за белые списки к продлению: {whitelist_cost:.2f} ₽",
+                f"Уже списано за белые списки: {charged_whitelist_cost:.2f} ₽",
             ]
         )
+        if pending_whitelist_cost > Decimal("0.00"):
+            lines.append(f"Осталось удержать после пополнения: {pending_whitelist_cost:.2f} ₽")
     if whitelist_servers:
         lines.extend(
             [
@@ -1007,7 +1049,24 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         )
         current_is_whitelist = bool(activity_summary and activity_summary.get("current_server_type") == "whitelist")
         if current_is_whitelist:
-            lines.append("Сейчас у вас активен сервер белых списков. Если белые списки уже не нужны, переключитесь на обычный сервер.")
+            if show_metered_usage(subscription):
+                lines.extend(
+                    [
+                        "Сейчас у вас активен сервер белых списков.",
+                        "Такие серверы медленнее обычных и нужны в основном тогда, когда мобильный интернет работает только по белым спискам.",
+                        f"Текущий баланс: {Decimal(user.balance_rub):.2f} ₽",
+                        f"Трафик белых списков в этом периоде: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ",
+                        "❗ ВАЖНО: ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ ПО 4 ₽ ЗА 1 ГБ.",
+                        "Баланс может уйти в минус максимум до -50 ₽.",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        "Сейчас у вас активен сервер белых списков.",
+                        "Такие серверы медленнее обычных. Настоятельно рекомендуем использовать их только когда мобильный интернет работает по белым спискам.",
+                    ]
+                )
         only_whitelist_recently = bool(
             activity_summary
             and activity_summary.get("recent_server_types")
@@ -2293,25 +2352,44 @@ async def plan_menu(callback: CallbackQuery, container: AppContainer):
 
 @router.callback_query(F.data == "client:trial_activate")
 async def trial_activate(callback: CallbackQuery, container: AppContainer):
+    subscription = None
+    activation_payload = None
+    reply_markup = None
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
         try:
             subscription = await hub.billing.activate_trial(user.id)
+            bundle = await hub.accounts.get_subscription_bundle(user.id)
+            activation_payload = resolve_subscription_payload(bundle)
             text = (
                 "Тестовый период Pro активирован.\n\n"
                 f"Доступ ко всем активным серверам будет работать до {subscription.ends_at:%d.%m.%Y %H:%M}.\n"
                 f"Лимит устройств: {device_limit_label(subscription.plan)}"
             )
+            reply_markup = subscription_link_markup(container.settings, subscription)
         except ConflictError as exc:
             text = str(exc)
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
+            subscription = None
+    if subscription is not None and activation_payload:
+        image = render_qr_png(activation_payload)
+        await edit_or_send_dynamic_media_card(
+            callback,
+            image_bytes=image,
+            filename="altlink-vpn-activation.png",
+            caption=trial_activation_caption(subscription, activation_payload),
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+        return
     await answer_or_edit(
         callback,
         text,
-        reply_markup=subscription_actions(
+        reply_markup=reply_markup
+        or subscription_actions(
             show_traffic=False,
             can_cancel=False,
             auto_renew_disabled=False,
@@ -2330,6 +2408,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
         )
         return
     current_subscription = None
+    activation_payload = None
     reply_markup = None
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
@@ -2344,6 +2423,8 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
                 f"Лимит устройств: {device_limit_label(subscription.plan)}"
             )
             current_subscription = subscription
+            bundle = await hub.accounts.get_subscription_bundle(user.id)
+            activation_payload = resolve_subscription_payload(bundle)
         except ConflictError as exc:
             reply_markup = insufficient_balance_actions().as_markup()
             text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
@@ -2352,28 +2433,23 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
         if current_subscription is None:
             current_subscription = await hub.accounts.get_current_subscription(user.id)
     if reply_markup is None:
-        reply_markup = subscription_markup(current_subscription)
+        reply_markup = (
+            subscription_link_markup(container.settings, current_subscription)
+            if activation_payload
+            else subscription_markup(current_subscription)
+        )
+    if current_subscription is not None and activation_payload:
+        image = render_qr_png(activation_payload)
+        await edit_or_send_dynamic_media_card(
+            callback,
+            image_bytes=image,
+            filename="altlink-vpn-activation.png",
+            caption=activation_success_caption(current_subscription, activation_payload),
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+        )
+        return
     await answer_or_edit(callback, text, reply_markup=reply_markup)
-    return
-    current_subscription = None
-    async with container.hub() as hub:
-        user = await ensure_client_access(callback, container, hub)
-        if user is None:
-            return
-        try:
-            subscription = await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
-            text = (
-                f"Тариф «{subscription.plan.name}» активирован.\n\n"
-                f"Следующее ежедневное списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}"
-            )
-            current_subscription = subscription
-        except ConflictError as exc:
-            text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
-        except (NotFoundError, ServiceError) as exc:
-            text = str(exc)
-        if current_subscription is None:
-            current_subscription = await hub.accounts.get_current_subscription(user.id)
-    await answer_or_edit(callback, text, reply_markup=subscription_markup(current_subscription))
 
 
 @router.callback_query(F.data == "client:subscription_cancel")

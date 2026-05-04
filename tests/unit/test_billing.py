@@ -8,6 +8,7 @@ import pytest
 from altlink.application.services.billing import BillingService
 from altlink.domain.billing import compute_period_end, compute_prorated_daily_charge, quantize_money
 from altlink.domain.enums import PlanCode
+from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
 from altlink.infrastructure.remnawave_schemas import RemoteSeriesPoint, RemoteUsageResponse, RemoteUsageTopNode
 
 
@@ -93,3 +94,75 @@ async def test_snapshot_traffic_uses_node_usage_for_whitelist_tracking_when_user
     assert refreshed is not None
     assert refreshed.traffic_used_bytes == 12 * 1024**3
     assert refreshed.whitelist_traffic_used_bytes == 3 * 1024**3
+
+
+@pytest.mark.asyncio
+async def test_start_whitelist_traffic_is_charged_immediately_and_caps_balance_at_minus_fifty(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13021,
+            username="start_instant_whitelist",
+            first_name="Start",
+            last_name="Instant",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("150"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        whitelist_node = next(node for node in test_services.remnawave.nodes.values() if "Whitelist" in node.name)
+
+        test_services.remnawave.set_usage(
+            user.remnawave_user_uuid,
+            used_bytes=40 * 1024**3,
+            lifetime_used_bytes=40 * 1024**3,
+        )
+        test_services.remnawave.set_node_usage(
+            whitelist_node.uuid,
+            user.remnawave_user_uuid,
+            40 * 1024**3,
+        )
+
+        await hub.billing.snapshot_traffic()
+
+        refreshed_user = await hub.accounts.get_user(user.id)
+        refreshed_subscription = await hub.accounts.get_current_subscription(user.id)
+
+    assert refreshed_subscription is not None
+    assert Decimal(refreshed_user.balance_rub) == Decimal("-50.00")
+    assert refreshed_subscription.whitelist_traffic_used_bytes == 40 * 1024**3
+    assert 0 < refreshed_subscription.whitelist_traffic_billed_bytes < refreshed_subscription.whitelist_traffic_used_bytes
+
+
+@pytest.mark.asyncio
+async def test_start_renewal_charge_does_not_repeat_whitelist_usage_that_was_already_charged(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13022,
+            username="start_renewal_charge",
+            first_name="Start",
+            last_name="Renewal",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        whitelist_node = next(node for node in test_services.remnawave.nodes.values() if "Whitelist" in node.name)
+
+        test_services.remnawave.set_usage(
+            user.remnawave_user_uuid,
+            used_bytes=2 * 1024**3,
+            lifetime_used_bytes=2 * 1024**3,
+        )
+        test_services.remnawave.set_node_usage(
+            whitelist_node.uuid,
+            user.remnawave_user_uuid,
+            2 * 1024**3,
+        )
+
+        await hub.billing.snapshot_traffic()
+        refreshed_user = await hub.accounts.get_user(user.id)
+        refreshed_subscription = await hub.accounts.get_current_subscription(user.id)
+
+        renewal_charge = hub.billing._compute_renewal_charge(refreshed_subscription, refreshed_subscription.plan)
+
+    assert refreshed_subscription is not None
+    assert Decimal(refreshed_user.balance_rub) == Decimal("23.00")
+    assert renewal_charge == SINGLE_10GBIT_MONTHLY_PRICE_RUB

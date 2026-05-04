@@ -271,6 +271,17 @@ def test_profile_text_keeps_only_key_details_and_links():
     assert "Лимит устройств" not in text
 
 
+def test_home_text_without_subscription_points_user_to_subscription_button():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+    user = SimpleNamespace(balance_rub=Decimal("15.00"), status="new")
+
+    text = client_handlers.home_text(user, None, settings)
+
+    assert "Тариф пока не выбран" in text
+    assert "«Подписка»" in text
+    assert "«Выбрать тариф»" in text
+
+
 def test_subscription_text_hides_billing_cycle_line():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("99.00"), status="active")
@@ -293,11 +304,59 @@ def test_subscription_text_hides_billing_cycle_line():
     assert "Формат списания" not in text
 
 
+def test_subscription_text_for_start_on_whitelist_server_shows_instant_charge_warning():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+    user = SimpleNamespace(balance_rub=Decimal("42.50"), status="active")
+    subscription = SimpleNamespace(
+        plan=SimpleNamespace(name="Start", code=PlanCode.SINGLE_10GBIT, device_limit=2),
+        auto_renew=True,
+        next_billing_at=datetime(2026, 1, 1, 12, 0, 0),
+        notes=None,
+        traffic_used_bytes=5 * 1024**3,
+        whitelist_traffic_used_bytes=2 * 1024**3,
+        whitelist_traffic_billed_bytes=2 * 1024**3,
+    )
+    user_servers = [
+        SimpleNamespace(
+            status="active",
+            server=SimpleNamespace(name="Whitelist EU", server_type=SimpleNamespace(value="whitelist")),
+        ),
+        SimpleNamespace(
+            status="active",
+            server=SimpleNamespace(name="Regular PL", server_type=SimpleNamespace(value="regular")),
+        ),
+    ]
+
+    text = client_handlers.subscription_text(
+        {"user": user, "subscription": subscription},
+        user_servers=user_servers,
+        settings=settings,
+        activity_summary={"current_server_type": "whitelist", "recent_server_types": ["whitelist"]},
+    )
+
+    assert "Уже списано за белые списки: 8.00 ₽" in text
+    assert "Текущий баланс: 42.50 ₽" in text
+    assert "ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ" in text
+
+
 def test_subscription_link_caption_uses_telegram_code_formatting():
     caption = client_handlers.subscription_link_caption("https://sub.example/demo?x=1&y=2")
 
     assert "<code>https://sub.example/demo?x=1&amp;y=2</code>" in caption
     assert "удобно копировать через меню Telegram" not in caption
+
+
+def test_activation_success_caption_includes_copyable_link():
+    subscription = SimpleNamespace(
+        plan=SimpleNamespace(name="Pro", period_days=30, device_limit=8),
+        next_billing_at=datetime(2026, 1, 1, 12, 0, 0),
+    )
+
+    caption = client_handlers.activation_success_caption(subscription, "https://sub.example/demo?x=1&y=2")
+
+    assert "Тариф «Pro» активирован" in caption
+    assert "<code>https://sub.example/demo?x=1&amp;y=2</code>" in caption
+    assert "Ваша персональная ссылка VPN" in caption
 
 
 @pytest.mark.asyncio

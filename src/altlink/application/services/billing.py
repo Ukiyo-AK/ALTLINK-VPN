@@ -38,6 +38,7 @@ LOW_BALANCE_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] 
     ("1d", timedelta(days=1), timedelta(hours=1), "меньше 1 дня"),
     ("1h", timedelta(hours=1), timedelta(0), "меньше 1 часа"),
 )
+START_WHITELIST_BALANCE_FLOOR_RUB = Decimal("-50.00")
 
 
 class BillingService(BaseService):
@@ -186,7 +187,7 @@ class BillingService(BaseService):
             traffic_limit_bytes=plan.traffic_limit_bytes,
             traffic_used_bytes=existing.traffic_used_bytes if existing else 0,
             whitelist_traffic_used_bytes=existing.whitelist_traffic_used_bytes if existing else 0,
-            whitelist_traffic_billed_bytes=0,
+            whitelist_traffic_billed_bytes=existing.whitelist_traffic_billed_bytes if existing else 0,
             last_traffic_reset_at=existing.last_traffic_reset_at if existing else now,
             auto_renew=True,
             notes=" ".join(notes) or None,
@@ -344,6 +345,7 @@ class BillingService(BaseService):
 
             if is_metered_plan_code(plan.code):
                 await self._refresh_whitelist_usage(user, subscription)
+                await self._apply_instant_whitelist_charges(user, subscription)
 
             renewal_charge = self._compute_renewal_charge(subscription, plan)
             due_at = ensure_utc(subscription.next_billing_at)
@@ -563,6 +565,7 @@ class BillingService(BaseService):
                 subscription,
                 preloaded_usage_by_remote_uuid=whitelist_usage_by_remote_uuid,
             )
+            await self._apply_instant_whitelist_charges(user, subscription)
 
     async def _get_whitelist_node_ids(self) -> set[str]:
         return {
@@ -637,8 +640,82 @@ class BillingService(BaseService):
     def _compute_renewal_charge(self, subscription: Subscription, plan: Plan) -> Decimal:
         whitelist_charge = Decimal("0.00")
         if is_metered_plan_code(plan.code):
-            whitelist_charge = bytes_to_gb_cost(subscription.whitelist_traffic_used_bytes, WHITELIST_GB_PRICE_RUB)
+            whitelist_charge = self._compute_unbilled_whitelist_charge(subscription)
         return quantize_money(Decimal(plan.price_rub) + whitelist_charge)
+
+    async def _apply_instant_whitelist_charges(self, user: User, subscription: Subscription) -> None:
+        if subscription.plan is None or not is_metered_plan_code(subscription.plan.code):
+            return
+
+        used_bytes = max(int(subscription.whitelist_traffic_used_bytes or 0), 0)
+        billed_bytes = max(int(subscription.whitelist_traffic_billed_bytes or 0), 0)
+        if billed_bytes > used_bytes:
+            billed_bytes = used_bytes
+            subscription.whitelist_traffic_billed_bytes = billed_bytes
+
+        outstanding_charge = self._compute_unbilled_whitelist_charge(subscription)
+        if outstanding_charge <= Decimal("0.00"):
+            return
+
+        current_balance = Decimal(user.balance_rub)
+        available_charge_room = quantize_money(current_balance - START_WHITELIST_BALANCE_FLOOR_RUB)
+        if available_charge_room <= Decimal("0.00"):
+            return
+
+        requested_charge = min(outstanding_charge, available_charge_room)
+        next_billed_bytes = self._advance_billed_whitelist_bytes(
+            billed_bytes=billed_bytes,
+            used_bytes=used_bytes,
+            charge_cap_rub=requested_charge,
+        )
+        if next_billed_bytes <= billed_bytes:
+            return
+
+        applied_charge = quantize_money(
+            self._whitelist_charge_for_bytes(next_billed_bytes) - self._whitelist_charge_for_bytes(billed_bytes)
+        )
+        if applied_charge <= Decimal("0.00"):
+            return
+
+        subscription.whitelist_traffic_billed_bytes = next_billed_bytes
+        await self.accounts.adjust_balance(
+            user_id=user.id,
+            amount_rub=-applied_charge,
+            transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
+            description="Моментальное списание за трафик белых списков по тарифу Start",
+        )
+
+    def _compute_unbilled_whitelist_charge(self, subscription: Subscription) -> Decimal:
+        used_bytes = max(int(subscription.whitelist_traffic_used_bytes or 0), 0)
+        billed_bytes = min(max(int(subscription.whitelist_traffic_billed_bytes or 0), 0), used_bytes)
+        return quantize_money(
+            self._whitelist_charge_for_bytes(used_bytes) - self._whitelist_charge_for_bytes(billed_bytes)
+        )
+
+    @staticmethod
+    def _whitelist_charge_for_bytes(used_bytes: int) -> Decimal:
+        return bytes_to_gb_cost(max(int(used_bytes or 0), 0), WHITELIST_GB_PRICE_RUB)
+
+    def _advance_billed_whitelist_bytes(self, *, billed_bytes: int, used_bytes: int, charge_cap_rub: Decimal) -> int:
+        if charge_cap_rub <= Decimal("0.00") or used_bytes <= billed_bytes:
+            return billed_bytes
+
+        starting_charge = self._whitelist_charge_for_bytes(billed_bytes)
+        target_charge = quantize_money(starting_charge + Decimal(charge_cap_rub))
+        low = billed_bytes
+        high = used_bytes
+        best = billed_bytes
+
+        while low <= high:
+            mid = (low + high) // 2
+            mid_charge = self._whitelist_charge_for_bytes(mid)
+            if mid_charge <= target_charge:
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+
+        return min(best, used_bytes)
 
     def _charge_description(self, plan: Plan, *, initial: bool = False) -> str:
         period_label = "еженедельное" if plan.period_days <= 7 else "ежемесячное"
