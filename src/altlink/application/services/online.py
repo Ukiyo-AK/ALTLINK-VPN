@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import joinedload
 
 from altlink.application.services.base import BaseService
-from altlink.domain.enums import NotificationType, ServerType, SubscriptionStatus
+from altlink.domain.enums import NotificationStatus, NotificationType, ServerType, SubscriptionStatus
 from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code
 from altlink.domain.billing import bytes_to_gb_cost
 from altlink.infrastructure.db.models import Notification, OnlineSessionCache, Server, Subscription, User
+from altlink.presentation.bots.common import send_telegram_messages
 from altlink.utils.time import utc_now
 
 
@@ -198,14 +199,24 @@ class OnlineService(BaseService):
             return
 
         message = self._whitelist_connection_notice_text(user, subscription)
-        self.session.add(
-            Notification(
-                user_id=user.id,
-                type=NotificationType.BROADCAST,
-                message=message,
-                dedupe_key=dedupe_key,
-            )
+        notification = Notification(
+            user_id=user.id,
+            type=NotificationType.BROADCAST,
+            message=message,
+            dedupe_key=dedupe_key,
         )
+        if self.settings.client_bot_token and user.telegram_id:
+            delivered = await send_telegram_messages(
+                bot_token=self.settings.client_bot_token,
+                chat_ids=[user.telegram_id],
+                text=message,
+            )
+            if delivered > 0:
+                notification.status = NotificationStatus.SENT
+                notification.sent_at = datetime.now().astimezone()
+            else:
+                notification.failure_reason = "Immediate whitelist delivery failed; queued for retry."
+        self.session.add(notification)
 
     def _whitelist_connection_notice_text(self, user: User, subscription: Subscription) -> str:
         if subscription.plan and is_metered_plan_code(subscription.plan.code):

@@ -5,9 +5,11 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
+from unittest.mock import AsyncMock
 
-from altlink.domain.enums import NotificationType, PlanCode
+from altlink.domain.enums import NotificationStatus, NotificationType, PlanCode
 from altlink.infrastructure.db.models import Notification
+from altlink.presentation.bots import common as bot_common
 
 
 @pytest.mark.asyncio
@@ -41,34 +43,46 @@ async def test_online_refresh_links_remote_user_by_telegram_id(test_services):
 
 @pytest.mark.asyncio
 async def test_online_refresh_queues_whitelist_notice_for_start_plan_once(test_services):
+    sent = AsyncMock(return_value=1)
+    original_sender = bot_common.send_telegram_messages
+    from altlink.application.services import online as online_module
+    original_online_sender = online_module.send_telegram_messages
+    bot_common.send_telegram_messages = sent
+    online_module.send_telegram_messages = sent
     async with test_services.hub() as hub:
-        user = await hub.accounts.get_or_create_user(
-            telegram_id=13002,
-            username="whitelist_notice",
-            first_name="White",
-            last_name="Notice",
-            language_code="ru",
-        )
-        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
-        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
-        subscription.whitelist_traffic_used_bytes = 2 * 1024**3
-        subscription.whitelist_traffic_billed_bytes = 2 * 1024**3
+        try:
+            user = await hub.accounts.get_or_create_user(
+                telegram_id=13002,
+                username="whitelist_notice",
+                first_name="White",
+                last_name="Notice",
+                language_code="ru",
+            )
+            await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+            subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+            subscription.whitelist_traffic_used_bytes = 2 * 1024**3
+            subscription.whitelist_traffic_billed_bytes = 2 * 1024**3
 
-        remote = await hub.remnawave.get_user(user.remnawave_user_uuid)
-        whitelist_node = next(node for node in hub.remnawave.nodes.values() if "Whitelist" in node.name)
-        remote.userTraffic.lastConnectedNodeUuid = whitelist_node.uuid
+            remote = await hub.remnawave.get_user(user.remnawave_user_uuid)
+            whitelist_node = next(node for node in hub.remnawave.nodes.values() if "Whitelist" in node.name)
+            remote.userTraffic.lastConnectedNodeUuid = whitelist_node.uuid
 
-        await hub.online.refresh_online_cache(detailed=False)
-        await hub.online.refresh_online_cache(detailed=False)
+            await hub.online.refresh_online_cache(detailed=False)
+            await hub.online.refresh_online_cache(detailed=False)
 
-        notifications = list(
-            (
-                await hub.session.scalars(
-                    select(Notification).where(Notification.type == NotificationType.BROADCAST)
-                )
-            ).all()
-        )
+            notifications = list(
+                (
+                    await hub.session.scalars(
+                        select(Notification).where(Notification.type == NotificationType.BROADCAST)
+                    )
+                ).all()
+            )
+        finally:
+            bot_common.send_telegram_messages = original_sender
+            online_module.send_telegram_messages = original_online_sender
 
+    sent.assert_awaited_once()
     assert len(notifications) == 1
     assert notifications[0].type == NotificationType.BROADCAST
+    assert notifications[0].status == NotificationStatus.SENT
     assert "ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ" in notifications[0].message

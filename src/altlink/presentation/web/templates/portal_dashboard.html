@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ title }} | ALTLINK VPN</title>
+  <title>{{ title }} | ALTLINK</title>
   <link rel="icon" type="image/png" href="/media/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -14,9 +14,9 @@
   <div class="portal-shell">
     <header class="portal-topbar">
       <div class="brand" style="margin: 0;">
-        <img class="brand-logo" src="/media/logo.png" alt="ALTLINK VPN">
+        <img class="brand-logo" src="/media/logo.png" alt="ALTLINK">
         <div>
-          <strong>ALTLINK VPN</strong>
+          <strong>ALTLINK</strong>
           <div class="muted">Личный кабинет</div>
         </div>
       </div>
@@ -35,7 +35,7 @@
 
     <section class="hero">
       <article class="hero-panel">
-        <span class="badge">ALTLINK VPN</span>
+        <span class="badge">ALTLINK</span>
         <h1>{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}</h1>
         <p class="muted">
           Сайт и бот работают с одним Telegram-аккаунтом, поэтому изменения по тарифу, балансу,
@@ -186,7 +186,7 @@
     <section class="grid-two">
       <article class="panel stack">
         <div class="split">
-          <h2>Ваша персональная ссылка VPN</h2>
+          <h2>Ваша персональная ссылка</h2>
           <span class="badge">Синхронизировано с ботом</span>
         </div>
         {% if portal_subscription_payload %}
@@ -196,7 +196,7 @@
             data-copy-target
             role="button"
             tabindex="0"
-            aria-label="Скопировать ссылку VPN"
+            aria-label="Скопировать ссылку"
             title="Нажмите, чтобы скопировать"
           >{{ portal_subscription_payload }}</div>
           <div class="toolbar copy-link-toolbar">

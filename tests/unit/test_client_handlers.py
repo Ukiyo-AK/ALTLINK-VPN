@@ -627,7 +627,7 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
 
     text = str(captured["text"])
     assert captured["kwargs"]["parse_mode"] == "HTML"
-    assert "<b>🌍 Тарифы ALTLINK VPN</b>" in text
+    assert "<b>🌍 Тарифы ALTLINK</b>" in text
     assert "<b>Start</b>" in text
     assert "<b>Pro</b>" in text
     assert "🟢" not in text
@@ -637,11 +637,11 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "серверы со скоростью до 10 Гбит/с" in text
     assert "🛡️ Белые списки доступны отдельно: 4 ₽ за 1 ГБ" in text
-    assert "🛡️ Обход белых списков без ограничений" in text
+    assert "🛡️ Поддержка режима белых списков" in text
     assert "⚡ — высокоскоростной сервер" in text
-    assert "«Обход БС» — сервер белых списков" in text
+    assert "«БС» — сервер белых списков" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
-    assert "ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!" in text
+    assert "ALTLINK помогает вернуть доступ к привычным сервисам!" in text
 
 
 @pytest.mark.asyncio
@@ -675,9 +675,9 @@ async def test_plan_family_menu_uses_updated_copy(monkeypatch):
     assert "До 8 устройств" in text
     assert "Безлимитный трафик на всех серверах" in text
     assert "Разные локации для выбора под ваш маршрут" in text
-    assert "🛡️ Обход белых списков без ограничений" in text
+    assert "🛡️ Поддержка режима белых списков" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
-    assert "ALTLINK VPN обходит эти ограничения и возвращает доступ к привычным сервисам!" in text
+    assert "ALTLINK помогает вернуть доступ к привычным сервисам!" in text
 
 
 @pytest.mark.asyncio
@@ -712,7 +712,7 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     assert "Безлимитный трафик на основном сервере" in text
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "В интерфейсе он отмечен ⚡" in text
-    assert "Что такое обход белых списков" in text
+    assert "Что такое режим белых списков" in text
     assert "4 ₽ за 1 ГБ" in text
 
 

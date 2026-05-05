@@ -446,7 +446,7 @@ async def landing_page(request: Request):
     return render(
         request,
         "landing.html",
-        title="ALTLINK VPN",
+        title="ALTLINK",
         portal_plan_groups=group_portal_plans(plans),
         portal_login_url="/portal/login?autostart=1",
         connection_help_url=f"{settings.backend_public_url.rstrip('/')}/help/connect",
@@ -529,7 +529,7 @@ async def connect_help_page(request: Request):
     return render(
         request,
         "portal_help.html",
-        title="Подключение VPN",
+        title="Быстрое подключение",
         support_username=request.app.state.settings.support_username,
     )
 

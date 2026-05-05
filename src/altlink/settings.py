@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     billing_interval_minutes: int = 60
     traffic_snapshot_interval_minutes: int = 10
     notification_dispatch_interval_minutes: int = 2
-    online_refresh_interval_minutes: int = 30
+    online_refresh_interval_minutes: int = 2
     remnawave_healthcheck_interval_minutes: int = 5
     server_latency_monitor_interval_minutes: int = 360
     latency_probe_scheme: str = "https"

@@ -72,6 +72,7 @@ async def run_scheduler() -> None:
         await run_startup_job(server_latency_job, container, "server_latency")
         await run_startup_job(billing_job, container, "billing")
         await run_startup_job(traffic_job, container, "traffic")
+        await run_startup_job(online_job, container, "online")
         await run_startup_job(topups_job, container, "topups")
         await run_startup_job(notifications_job, container, "notifications")
         while True:
