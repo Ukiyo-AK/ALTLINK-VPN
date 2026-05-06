@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta
-from decimal import Decimal
+from datetime import timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import joinedload
 
 from altlink.application.services.base import BaseService
-from altlink.domain.enums import NotificationStatus, NotificationType, ServerType, SubscriptionStatus
-from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code
-from altlink.domain.billing import bytes_to_gb_cost
-from altlink.infrastructure.db.models import Notification, OnlineSessionCache, Server, Subscription, User
-from altlink.presentation.bots.common import send_telegram_messages
+from altlink.domain.enums import SubscriptionStatus
+from altlink.infrastructure.db.models import OnlineSessionCache, Server, User
 from altlink.utils.time import utc_now
 
 
@@ -29,37 +25,6 @@ class OnlineService(BaseService):
         telegram_map = {user.telegram_id: user for user in users}
         servers = list((await self.session.scalars(select(Server))).all())
         server_map = {server.remnawave_node_uuid: server for server in servers}
-        subscriptions = list(
-            (
-                await self.session.scalars(
-                    select(Subscription)
-                    .where(
-                        Subscription.status.in_(
-                            [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL, SubscriptionStatus.GRACE]
-                        )
-                    )
-                    .options(joinedload(Subscription.plan))
-                    .order_by(Subscription.created_at.desc())
-                )
-            ).all()
-        )
-        subscription_map: dict[str, Subscription] = {}
-        for subscription in subscriptions:
-            subscription_map.setdefault(subscription.user_id, subscription)
-        previous_sessions = list(
-            (
-                await self.session.scalars(
-                    select(OnlineSessionCache)
-                    .options(joinedload(OnlineSessionCache.server))
-                    .order_by(OnlineSessionCache.created_at.desc())
-                )
-            ).all()
-        )
-        previous_session_map: dict[str, OnlineSessionCache] = {}
-        for session in previous_sessions:
-            if session.user_id:
-                previous_session_map.setdefault(session.user_id, session)
-
         await self.session.execute(delete(OnlineSessionCache))
         created: list[OnlineSessionCache] = []
 
@@ -107,11 +72,6 @@ class OnlineService(BaseService):
             )
             self.session.add(session)
             created.append(session)
-            subscription = subscription_map.get(user.id)
-            previous_session = previous_session_map.get(user.id)
-            if self._should_notify_whitelist_connection(session, previous_session, subscription):
-                await self._queue_whitelist_connection_notice(user, session, subscription)
-
         return created
 
     def _link_remote_user(self, user: User, remote_user) -> None:
@@ -159,80 +119,6 @@ class OnlineService(BaseService):
             "recent_devices": recent_devices[:4],
             "recent_ips": recent_ips[:4],
         }
-
-    def _should_notify_whitelist_connection(
-        self,
-        session: OnlineSessionCache,
-        previous_session: OnlineSessionCache | None,
-        subscription: Subscription | None,
-    ) -> bool:
-        if (
-            not session.is_online
-            or session.server is None
-            or session.server.server_type != ServerType.WHITELIST
-            or subscription is None
-            or subscription.plan is None
-        ):
-            return False
-        if (
-            previous_session is not None
-            and previous_session.is_online
-            and previous_session.server is not None
-            and previous_session.server.server_type == ServerType.WHITELIST
-        ):
-            return False
-        return True
-
-    async def _queue_whitelist_connection_notice(
-        self,
-        user: User,
-        session: OnlineSessionCache,
-        subscription: Subscription,
-    ) -> None:
-        if subscription.plan is None:
-            return
-        last_activity = session.last_activity_at or getattr(user, "last_seen_at", None) or utc_now()
-        server_marker = session.server_id or "unknown"
-        dedupe_key = f"whitelist-online:{user.id}:{server_marker}:{last_activity.isoformat()}"
-        existing = await self.session.scalar(select(Notification).where(Notification.dedupe_key == dedupe_key))
-        if existing is not None:
-            return
-
-        message = self._whitelist_connection_notice_text(user, subscription)
-        notification = Notification(
-            user_id=user.id,
-            type=NotificationType.BROADCAST,
-            message=message,
-            dedupe_key=dedupe_key,
-        )
-        if self.settings.client_bot_token and user.telegram_id:
-            delivered = await send_telegram_messages(
-                bot_token=self.settings.client_bot_token,
-                chat_ids=[user.telegram_id],
-                text=message,
-            )
-            if delivered > 0:
-                notification.status = NotificationStatus.SENT
-                notification.sent_at = datetime.now().astimezone()
-            else:
-                notification.failure_reason = "Immediate whitelist delivery failed; queued for retry."
-        self.session.add(notification)
-
-    def _whitelist_connection_notice_text(self, user: User, subscription: Subscription) -> str:
-        if subscription.plan and is_metered_plan_code(subscription.plan.code):
-            return (
-                "⚠️ Вы подключились к серверу белых списков.\n\n"
-                "Такие серверы медленнее обычных и рекомендуются только в ситуациях, когда мобильный интернет работает по белым спискам.\n\n"
-                f"Текущий баланс: {Decimal(user.balance_rub):.2f} ₽\n"
-                f"Трафик белых списков: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
-                f"Уже списано за белые списки: {bytes_to_gb_cost(subscription.whitelist_traffic_billed_bytes, WHITELIST_GB_PRICE_RUB):.2f} ₽\n\n"
-                "❗ ВАЖНО: ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ ПО 4 ₽ ЗА 1 ГБ.\n"
-                "Баланс может уйти в минус максимум до -50 ₽."
-            )
-        return (
-            "⚠️ Вы подключились к серверу белых списков.\n\n"
-            "Такие серверы работают медленнее обычных. Настоятельно рекомендуем использовать их только в ситуациях, когда мобильный интернет работает по белым спискам."
-        )
 
     @staticmethod
     def describe_device(user_agent: str | None) -> str:

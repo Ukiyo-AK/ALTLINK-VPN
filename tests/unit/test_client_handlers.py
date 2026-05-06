@@ -269,6 +269,24 @@ def test_profile_text_keeps_only_key_details_and_links():
     assert "Telegram ID" not in text
     assert "Формат списания" not in text
     assert "Лимит устройств" not in text
+    assert "Белые списки:" not in text
+
+
+def test_profile_text_for_start_shows_whitelist_tariff_warning_and_totals():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+    user = SimpleNamespace(balance_rub=Decimal("42.50"))
+    subscription = SimpleNamespace(
+        plan=SimpleNamespace(name="Start", is_trial=False, code=PlanCode.SINGLE_10GBIT),
+        auto_renew=True,
+        next_billing_at=datetime(2026, 1, 1, 12, 0, 0),
+        whitelist_traffic_used_bytes=2 * 1024**3,
+        whitelist_traffic_billed_bytes=2 * 1024**3,
+    )
+
+    text = client_handlers.profile_text(user, subscription, settings)
+
+    assert "⚠️ Start: белые списки тарифицируются отдельно — 4 ₽/ГБ." in text
+    assert "БС: 2.00 ГБ • списано 8.00 ₽" in text
 
 
 def test_home_text_without_subscription_points_user_to_subscription_button():
