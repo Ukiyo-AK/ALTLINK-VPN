@@ -234,7 +234,7 @@ def test_home_text_keeps_menu_compact_and_mentions_cabinet_button():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("199.00"), status="active")
     subscription = SimpleNamespace(
-        plan=SimpleNamespace(name="Pro", period_days=30),
+        plan=SimpleNamespace(name="Pro", period_days=30, code=PlanCode.UNLIMITED),
         notes=None,
     )
 
@@ -243,6 +243,23 @@ def test_home_text_keeps_menu_compact_and_mentions_cabinet_button():
     assert "Сайт: https://altlink.online" not in text
     assert "Кабинет: https://altlink.online/portal" not in text
     assert "✨ Всё управление VPN доступно кнопками ниже." in text
+    assert "БС:" not in text
+
+
+def test_home_text_for_start_shows_whitelist_tariff_warning_and_totals():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+    user = SimpleNamespace(balance_rub=Decimal("42.50"), status="active")
+    subscription = SimpleNamespace(
+        plan=SimpleNamespace(name="Start", period_days=30, code=PlanCode.SINGLE_10GBIT),
+        notes=None,
+        whitelist_traffic_used_bytes=2 * 1024**3,
+        whitelist_traffic_billed_bytes=2 * 1024**3,
+    )
+
+    text = client_handlers.home_text(user, subscription, settings)
+
+    assert "⚠️ Start: белые списки тарифицируются отдельно — 4 ₽/ГБ." in text
+    assert "БС: 2.00 ГБ • списано 8.00 ₽" in text
 
 
 def test_profile_text_keeps_only_key_details_and_links():

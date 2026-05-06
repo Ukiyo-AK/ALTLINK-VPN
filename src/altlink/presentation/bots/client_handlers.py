@@ -922,6 +922,21 @@ async def create_portal_autologin_url(hub, settings, user_id: str) -> str | None
     return portal_login_resume_url(settings, attempt.token)
 
 
+def start_whitelist_notice_lines(subscription) -> list[str]:
+    plan_code = getattr(subscription.plan, "code", None) if subscription and subscription.plan else None
+    if not (plan_code and is_metered_plan_code(plan_code)):
+        return []
+    whitelist_used_gb = max(int(getattr(subscription, "whitelist_traffic_used_bytes", 0) or 0), 0) / 1024**3
+    whitelist_charged_rub = bytes_to_gb_cost(
+        max(int(getattr(subscription, "whitelist_traffic_billed_bytes", 0) or 0), 0),
+        WHITELIST_GB_PRICE_RUB,
+    )
+    return [
+        "⚠️ Start: белые списки тарифицируются отдельно — 4 ₽/ГБ.",
+        f"БС: {whitelist_used_gb:.2f} ГБ • списано {whitelist_charged_rub:.2f} ₽",
+    ]
+
+
 def home_text(user, subscription, settings, latest_subscription=None) -> str:
     if subscription:
         lines = [
@@ -930,6 +945,7 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
             f"Текущий тариф: {subscription.plan.name}",
             f"Формат списания: {billing_cycle_label(subscription.plan)}",
             f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+            *start_whitelist_notice_lines(subscription),
             "✨ Всё управление VPN доступно кнопками ниже.",
         ]
         if subscription.notes:
@@ -969,15 +985,7 @@ def profile_text(user, subscription, settings) -> str:
         f"Тариф: {plan_name}",
     ]
     if subscription:
-        plan_code = getattr(subscription.plan, "code", None) if subscription.plan else None
-        if plan_code and is_metered_plan_code(plan_code):
-            whitelist_used_gb = max(int(getattr(subscription, "whitelist_traffic_used_bytes", 0) or 0), 0) / 1024**3
-            whitelist_charged_rub = bytes_to_gb_cost(
-                max(int(getattr(subscription, "whitelist_traffic_billed_bytes", 0) or 0), 0),
-                WHITELIST_GB_PRICE_RUB,
-            )
-            lines.append("⚠️ Start: белые списки тарифицируются отдельно — 4 ₽/ГБ.")
-            lines.append(f"БС: {whitelist_used_gb:.2f} ГБ • списано {whitelist_charged_rub:.2f} ₽")
+        lines.extend(start_whitelist_notice_lines(subscription))
         if subscription.plan and not subscription.plan.is_trial:
             auto_renew = "включено" if subscription.auto_renew else "отключено"
             lines.append(f"Автопродление: {auto_renew}")
