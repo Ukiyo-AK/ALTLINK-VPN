@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from altlink.domain.enums import PlanCode, ServerType
+from altlink.domain.enums import AccessStatus, PlanCode, ServerType
 
 
 @pytest.mark.asyncio
@@ -69,3 +69,41 @@ async def test_server_type_change_does_not_require_internal_squad_api(test_servi
 
         assert updated.server_type == target_type
         assert refreshed.server_type == target_type
+
+
+@pytest.mark.asyncio
+async def test_sync_does_not_recreate_squad_for_missing_node(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3003,
+            username="missingnode",
+            first_name="Missing",
+            last_name="Node",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        user = await hub.accounts.get_user_by_telegram_id(3003)
+
+        removed = next(server for server in await hub.catalog.list_servers() if "Regular" in server.name)
+        removed_squad_uuid = removed.remnawave_internal_squad_uuid
+        assert removed_squad_uuid
+        assert removed_squad_uuid in test_services.remnawave.internal_squads
+
+        test_services.remnawave.nodes.pop(removed.remnawave_node_uuid)
+        test_services.remnawave.internal_squads.pop(removed_squad_uuid)
+
+        await hub.catalog.sync_servers()
+
+        refreshed = await hub.catalog.get_server(removed.id)
+        active_accesses = await hub.catalog.get_user_servers(user.id)
+        all_accesses = await hub.catalog.get_user_servers(user.id, active_only=False)
+        remote_user = test_services.remnawave.users[user.remnawave_user_uuid]
+        remote_squad_ids = {item.uuid for item in remote_user.activeInternalSquads}
+
+        assert not refreshed.is_connected
+        assert refreshed.users_online == 0
+        assert all(not inbound.is_active for inbound in refreshed.inbounds)
+        assert removed_squad_uuid not in test_services.remnawave.internal_squads
+        assert refreshed.id not in {access.server_id for access in active_accesses}
+        assert next(access for access in all_accesses if access.server_id == refreshed.id).status == AccessStatus.BLOCKED
+        assert removed_squad_uuid not in remote_squad_ids

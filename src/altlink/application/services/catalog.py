@@ -95,7 +95,13 @@ class CatalogService(BaseService):
         for key, server in current_servers.items():
             if key not in seen_node_ids:
                 server.is_connected = False
+                server.users_online = 0
+                server.last_status_message = "Node is absent in Remnawave sync."
+                server.last_status_change = now
                 server.last_sync_at = now
+                for inbound in server.inbounds:
+                    inbound.is_active = False
+                    inbound.client_count = 0
 
         await self._sync_internal_squads()
         await self.rebuild_user_access_matrix()
@@ -143,15 +149,18 @@ class CatalogService(BaseService):
         await self.session.flush()
         return server
 
-    async def get_user_servers(self, user_id: str) -> list[UserServerAccess]:
+    async def get_user_servers(self, user_id: str, *, active_only: bool = True) -> list[UserServerAccess]:
+        query = (
+            select(UserServerAccess)
+            .where(UserServerAccess.user_id == user_id)
+            .options(selectinload(UserServerAccess.server))
+            .order_by(UserServerAccess.created_at.asc())
+        )
+        if active_only:
+            query = query.where(UserServerAccess.status.in_([AccessStatus.ACTIVE, AccessStatus.GRACE]))
         return list(
             (
-                await self.session.scalars(
-                    select(UserServerAccess)
-                    .where(UserServerAccess.user_id == user_id)
-                    .options(selectinload(UserServerAccess.server))
-                    .order_by(UserServerAccess.created_at.asc())
-                )
+                await self.session.scalars(query)
             ).all()
         )
 
@@ -184,7 +193,7 @@ class CatalogService(BaseService):
 
             for server in servers:
                 desired_status = None
-                if server.id in desired_server_ids and server.is_available:
+                if server.id in desired_server_ids and self._server_is_usable(server):
                     desired_status = AccessStatus.GRACE if user.status == UserStatus.GRACE else AccessStatus.ACTIVE
                 access = access_map.get((user.id, server.id))
                 if desired_status is None:
@@ -240,7 +249,7 @@ class CatalogService(BaseService):
         subscription: Subscription,
         servers: Sequence[Server],
     ) -> set[str]:
-        available_servers = [server for server in servers if server.is_available and self._server_has_active_inbounds(server)]
+        available_servers = [server for server in servers if self._server_is_usable(server)]
         if subscription.plan.code == PlanCode.TRIAL or is_unlimited_plan_code(subscription.plan.code):
             return {server.id for server in available_servers}
 
@@ -264,9 +273,8 @@ class CatalogService(BaseService):
         candidates = [
             server
             for server in servers
-            if server.is_available
-            and server.server_type == ServerType.TEN_GBIT
-            and self._server_has_active_inbounds(server)
+            if server.server_type == ServerType.TEN_GBIT
+            and self._server_is_usable(server)
         ]
         if not candidates:
             raise NotFoundError("Нет доступного 10 Гбит сервера для назначения.")
@@ -282,7 +290,7 @@ class CatalogService(BaseService):
             servers = list((await self.session.scalars(select(Server).options(selectinload(Server.inbounds)))).all())
 
         if plan_code == PlanCode.TRIAL or is_unlimited_plan_code(plan_code):
-            candidates = [server for server in servers if server.is_available and self._server_has_active_inbounds(server)]
+            candidates = [server for server in servers if self._server_is_usable(server)]
             if not candidates:
                 raise NotFoundError("Нет доступных серверов для активации Pro доступа.")
             candidates.sort(key=self._server_assignment_sort_key)
@@ -299,6 +307,8 @@ class CatalogService(BaseService):
         remote_by_name = {squad.name: squad for squad in remote_squads.values()}
 
         for server in target_servers:
+            if not self._server_is_usable(server):
+                continue
             inbound_ids = [
                 inbound.remnawave_inbound_uuid
                 for inbound in server.inbounds
@@ -365,6 +375,9 @@ class CatalogService(BaseService):
         candidates = [item for item in subscriptions if item.status in active_states and item.plan is not None]
         candidates.sort(key=lambda item: item.created_at, reverse=True)
         return candidates[0] if candidates else None
+
+    def _server_is_usable(self, server: Server) -> bool:
+        return bool(server.is_available and server.is_connected and self._server_has_active_inbounds(server))
 
     def _server_has_active_inbounds(self, server: Server) -> bool:
         return any(inbound.is_active and inbound.remnawave_inbound_uuid for inbound in server.inbounds)
