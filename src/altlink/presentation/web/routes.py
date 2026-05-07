@@ -797,6 +797,18 @@ async def server_type(request: Request, server_id: str):
         return RedirectResponse("/admin/servers", status_code=303)
 
 
+@router.post("/admin/servers/{server_id}/force-delete")
+async def server_force_delete(request: Request, server_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        await hub.catalog.force_delete_server(server_id)
+        return RedirectResponse("/admin/servers", status_code=303)
+
+
 @router.get("/admin/topups")
 async def topups_page(request: Request, status_filter: str | None = None):
     async with request.app.state.container.hub() as hub:

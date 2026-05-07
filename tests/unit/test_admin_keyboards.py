@@ -3,9 +3,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from altlink.presentation.bots.admin_keyboards import (
+    SERVER_DELETE_CONFIRM_PREFIX,
+    SERVER_DELETE_PREFIX,
+    SERVER_OPEN_PREFIX,
     payment_browser_actions,
     payment_request_actions,
     server_actions,
+    server_delete_confirmation_actions,
     system_logs_actions,
     user_actions,
     user_delete_confirmation_actions,
@@ -76,10 +80,20 @@ def test_server_actions_styles_toggle_and_types():
     remove_button = next(button for button in active_buttons if button["text"] == "Убрать из локальной системы")
     wl_button = next(button for button in active_buttons if button["text"] == "WL")
     ten_gbit_button = next(button for button in active_buttons if button["text"] == "⚡ Start")
+    delete_button = next(button for button in active_buttons if button["callback_data"] == f"{SERVER_DELETE_PREFIX}:server-1")
 
     assert remove_button["style"] == "danger"
     assert wl_button["style"] == "success"
     assert ten_gbit_button["style"] == "primary"
+    assert delete_button["style"] == "danger"
+
+
+def test_server_delete_confirmation_actions_are_safe_and_destructive():
+    buttons = inline_buttons(server_delete_confirmation_actions("server-1").as_markup())
+
+    assert buttons[0]["style"] == "danger"
+    assert buttons[0]["callback_data"] == f"{SERVER_DELETE_CONFIRM_PREFIX}:server-1"
+    assert buttons[1]["callback_data"] == f"{SERVER_OPEN_PREFIX}:server-1"
 
 
 def test_user_lookup_actions_builds_open_buttons():

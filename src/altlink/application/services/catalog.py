@@ -3,13 +3,21 @@ from __future__ import annotations
 from collections.abc import Sequence
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.base import BaseService, NotFoundError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType, SubscriptionStatus, SystemEventLevel, UserStatus
 from altlink.domain.plans import is_metered_plan_code, is_unlimited_plan_code
-from altlink.infrastructure.db.models import Server, ServerInbound, Subscription, User, UserServerAccess
+from altlink.infrastructure.db.models import (
+    OnlineSessionCache,
+    Server,
+    ServerInbound,
+    Subscription,
+    TrafficSnapshot,
+    User,
+    UserServerAccess,
+)
 from altlink.utils.time import utc_now
 
 
@@ -140,6 +148,47 @@ class CatalogService(BaseService):
         await self.rebuild_user_access_matrix()
         return server
 
+    async def force_delete_server(self, server_id: str) -> dict:
+        server = await self.session.get(Server, server_id, options=[selectinload(Server.inbounds)])
+        if server is None:
+            raise NotFoundError("Сервер не найден.")
+
+        summary = {
+            "server_id": server.id,
+            "name": server.name,
+            "address": server.address,
+            "remnawave_node_uuid": server.remnawave_node_uuid,
+            "remnawave_internal_squad_uuid": server.remnawave_internal_squad_uuid,
+            "assigned_users": await self._count_where(User, User.assigned_server_id == server_id),
+            "accesses": await self._count_where(UserServerAccess, UserServerAccess.server_id == server_id),
+            "inbounds": await self._count_where(ServerInbound, ServerInbound.server_id == server_id),
+            "traffic_snapshots": await self._count_where(TrafficSnapshot, TrafficSnapshot.server_id == server_id),
+            "online_sessions": await self._count_where(OnlineSessionCache, OnlineSessionCache.server_id == server_id),
+        }
+
+        await self.session.execute(
+            update(User).where(User.assigned_server_id == server_id).values(assigned_server_id=None)
+        )
+        await self.session.execute(
+            update(TrafficSnapshot).where(TrafficSnapshot.server_id == server_id).values(server_id=None)
+        )
+        await self.session.execute(
+            update(OnlineSessionCache).where(OnlineSessionCache.server_id == server_id).values(server_id=None)
+        )
+        await self.session.execute(delete(UserServerAccess).where(UserServerAccess.server_id == server_id))
+        await self.session.execute(delete(ServerInbound).where(ServerInbound.server_id == server_id))
+        await self.session.execute(delete(Server).where(Server.id == server_id))
+        await self.session.flush()
+
+        await self.rebuild_user_access_matrix()
+        await self.log_event(
+            level=SystemEventLevel.WARNING,
+            event_type="server_force_deleted",
+            message="Сервер принудительно удалён из локальной базы.",
+            payload=summary,
+        )
+        return summary
+
     async def assign_preferred_server(self, user_id: str, plan_code: PlanCode | None = None) -> Server:
         user = await self.session.get(User, user_id, options=[joinedload(User.assigned_server)])
         if user is None:
@@ -254,15 +303,17 @@ class CatalogService(BaseService):
             return {server.id for server in available_servers}
 
         if is_metered_plan_code(subscription.plan.code):
+            desired_server_ids = {
+                server.id for server in available_servers if server.server_type == ServerType.WHITELIST
+            }
             assigned_server = next((server for server in available_servers if server.id == user.assigned_server_id), None)
             if assigned_server is None or assigned_server.server_type != ServerType.TEN_GBIT:
-                assigned_server = await self._pick_least_loaded_ten_gbit_server(servers)
+                try:
+                    assigned_server = await self._pick_least_loaded_ten_gbit_server(servers)
+                except NotFoundError:
+                    return desired_server_ids
                 user.assigned_server_id = assigned_server.id
-            desired_server_ids = {assigned_server.id}
-            if is_metered_plan_code(subscription.plan.code):
-                desired_server_ids.update(
-                    server.id for server in available_servers if server.server_type == ServerType.WHITELIST
-                )
+            desired_server_ids.add(assigned_server.id)
             return desired_server_ids
 
         return set()
@@ -375,6 +426,9 @@ class CatalogService(BaseService):
         candidates = [item for item in subscriptions if item.status in active_states and item.plan is not None]
         candidates.sort(key=lambda item: item.created_at, reverse=True)
         return candidates[0] if candidates else None
+
+    async def _count_where(self, model, condition) -> int:
+        return int(await self.session.scalar(select(func.count()).select_from(model).where(condition)) or 0)
 
     def _server_is_usable(self, server: Server) -> bool:
         return bool(server.is_available and server.is_connected and self._server_has_active_inbounds(server))

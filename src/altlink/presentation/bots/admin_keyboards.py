@@ -39,6 +39,9 @@ MAINTENANCE_ADD_EXCEPTION = "adm:ma"
 MAINTENANCE_REMOVE_PREFIX = "adm:mr"
 MAINTENANCE_PICK_ADD_PREFIX = "adm:mpa"
 MAINTENANCE_CANCEL = "adm:mc"
+SERVER_OPEN_PREFIX = "adm:so"
+SERVER_DELETE_PREFIX = "adm:sd"
+SERVER_DELETE_CONFIRM_PREFIX = "adm:sc"
 
 
 def admin_menu() -> ReplyKeyboardMarkup:
@@ -142,7 +145,20 @@ def server_actions(server_id: str, is_available: bool) -> InlineKeyboardBuilder:
         style="success",
     )
     builder.button(text="Обычный", callback_data=f"admin:server_type:{server_id}:{ServerType.REGULAR.value}")
-    builder.adjust(1, 3)
+    builder.button(text="Удалить из БД", callback_data=f"{SERVER_DELETE_PREFIX}:{server_id}", style="danger")
+    builder.adjust(1, 3, 1)
+    return builder
+
+
+def server_delete_confirmation_actions(server_id: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="Да, удалить из базы",
+        callback_data=f"{SERVER_DELETE_CONFIRM_PREFIX}:{server_id}",
+        style="danger",
+    )
+    builder.button(text="Отмена", callback_data=f"{SERVER_OPEN_PREFIX}:{server_id}")
+    builder.adjust(1, 1)
     return builder
 
 

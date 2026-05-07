@@ -198,6 +198,92 @@ async def test_change_server_type_callback_parses_callback_data(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_confirm_force_delete_server_shows_warning(monkeypatch):
+    rendered: list[tuple[str, object]] = []
+    calls: list[tuple[str, object]] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_render(target, text: str, reply_markup=None, **kwargs):
+        rendered.append((text, reply_markup))
+
+    async def fake_get_server(server_id: str):
+        calls.append(("get", server_id))
+        return SimpleNamespace(
+            id=server_id,
+            name="Demo",
+            address="demo.example.com",
+            server_type=admin_handlers.ServerType.REGULAR,
+            is_available=False,
+            is_connected=False,
+            current_clients=0,
+            users_online=0,
+            max_clients=0,
+            load_percent=0,
+        )
+
+    class DummyCallback:
+        data = f"{admin_handlers.SERVER_DELETE_PREFIX}:server-3"
+        from_user = SimpleNamespace(id=42)
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(catalog=SimpleNamespace(get_server=fake_get_server))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render)
+
+    await admin_handlers.confirm_force_delete_server(DummyCallback(), container)
+
+    assert ("get", "server-3") in calls
+    assert rendered
+    assert "Remnawave" in rendered[0][0]
+    assert rendered[0][1] is not None
+
+
+@pytest.mark.asyncio
+async def test_force_delete_server_callback_calls_catalog(monkeypatch):
+    rendered: list[str] = []
+    calls: list[tuple[str, object]] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_render(target, text: str, reply_markup=None, **kwargs):
+        rendered.append(text)
+
+    async def fake_force_delete_server(server_id: str):
+        calls.append(("delete", server_id))
+        return {
+            "name": "Demo",
+            "address": "demo.example.com",
+            "assigned_users": 2,
+            "accesses": 3,
+            "inbounds": 1,
+        }
+
+    class DummyCallback:
+        data = f"{admin_handlers.SERVER_DELETE_CONFIRM_PREFIX}:server-3"
+        from_user = SimpleNamespace(id=42)
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(catalog=SimpleNamespace(force_delete_server=fake_force_delete_server))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render)
+
+    await admin_handlers.force_delete_server(DummyCallback(), container)
+
+    assert ("delete", "server-3") in calls
+    assert rendered
+    assert "Demo" in rendered[0]
+
+
+@pytest.mark.asyncio
 async def test_show_user_card_formats_without_missing_attributes_exception():
     answers: list[str] = []
 

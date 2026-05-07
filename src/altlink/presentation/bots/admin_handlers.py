@@ -48,6 +48,9 @@ from altlink.presentation.bots.admin_keyboards import (
     PAYMENT_PAGE_PREFIX,
     PAYMENT_REFRESH_PREFIX,
     PAYMENT_REJECT_PREFIX,
+    SERVER_DELETE_CONFIRM_PREFIX,
+    SERVER_DELETE_PREFIX,
+    SERVER_OPEN_PREFIX,
     USER_ACTIVATE_PREFIX,
     USER_BALANCE_PREFIX,
     USER_MESSAGE_CANCEL_PREFIX,
@@ -71,6 +74,7 @@ from altlink.presentation.bots.admin_keyboards import (
     payment_browser_actions,
     promo_list_actions,
     server_actions,
+    server_delete_confirmation_actions,
     support_request_actions,
     system_logs_actions,
     top_users_actions,
@@ -1762,6 +1766,68 @@ async def change_server_type(callback: CallbackQuery, container: AppContainer):
             getattr(server, "id", server_id),
             getattr(server, "is_available", True),
         ).as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith(f"{SERVER_OPEN_PREFIX}:"))
+async def open_server_card(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    server_id = callback.data.split(":", 2)[2]
+    async with container.hub() as hub:
+        try:
+            server = await hub.catalog.get_server(server_id)
+        except NotFoundError:
+            await render_admin(callback, "Сервер уже отсутствует в локальной базе.")
+            return
+    await render_admin(
+        callback,
+        format_server_card(server),
+        reply_markup=server_actions(server.id, server.is_available).as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith(f"{SERVER_DELETE_PREFIX}:"))
+async def confirm_force_delete_server(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    server_id = callback.data.split(":", 2)[2]
+    async with container.hub() as hub:
+        try:
+            server = await hub.catalog.get_server(server_id)
+        except NotFoundError:
+            await render_admin(callback, "Сервер уже отсутствует в локальной базе.")
+            return
+    await render_admin(
+        callback,
+        "Удалить сервер из локальной базы?\n\n"
+        f"{format_server_card(server)}\n\n"
+        "Это не удаляет ноду или squad в Remnawave. Если нода всё ещё есть в Remnawave, "
+        "следующая синхронизация добавит её в базу снова.",
+        reply_markup=server_delete_confirmation_actions(server_id).as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith(f"{SERVER_DELETE_CONFIRM_PREFIX}:"))
+async def force_delete_server(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    server_id = callback.data.split(":", 2)[2]
+    async with container.hub() as hub:
+        try:
+            summary = await hub.catalog.force_delete_server(server_id)
+        except NotFoundError:
+            await render_admin(callback, "Сервер уже отсутствует в локальной базе.")
+            return
+    await render_admin(
+        callback,
+        "Сервер удалён из локальной базы.\n\n"
+        f"Название: {summary['name']}\n"
+        f"Адрес: {summary['address']}\n"
+        f"Сброшено назначений: {summary['assigned_users']}\n"
+        f"Удалено доступов: {summary['accesses']}\n"
+        f"Удалено inbound'ов: {summary['inbounds']}\n\n"
+        "Если нода осталась в Remnawave, при следующей синхронизации она появится снова.",
     )
 
 

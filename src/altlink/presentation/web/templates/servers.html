@@ -47,6 +47,16 @@
             <input type="hidden" name="is_available" value="{{ 0 if server.is_available else 1 }}">
             <button type="submit" class="button ghost">{{ 'Убрать' if server.is_available else 'Вернуть' }}</button>
           </form>
+          <form
+            method="post"
+            action="/admin/servers/{{ server.id }}/force-delete"
+            class="inline-form"
+            style="margin-top: 0.5rem;"
+            onsubmit="return confirm('Удалить сервер из локальной базы? Если нода есть в Remnawave, следующая синхронизация добавит ее снова.');"
+          >
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button danger">Удалить из БД</button>
+          </form>
         </td>
         <td>{{ server.current_clients }}</td>
         <td>{{ server.users_online }}</td>

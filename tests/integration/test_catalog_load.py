@@ -107,3 +107,68 @@ async def test_sync_does_not_recreate_squad_for_missing_node(test_services):
         assert refreshed.id not in {access.server_id for access in active_accesses}
         assert next(access for access in all_accesses if access.server_id == refreshed.id).status == AccessStatus.BLOCKED
         assert removed_squad_uuid not in remote_squad_ids
+
+
+@pytest.mark.asyncio
+async def test_sync_survives_missing_ten_gbit_server_for_existing_start_user(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3004,
+            username="startmissingnode",
+            first_name="Start",
+            last_name="Missing",
+            language_code="ru",
+        )
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=False)
+        user = await hub.accounts.get_user_by_telegram_id(3004)
+        assigned_server_id = user.assigned_server_id
+        assigned = await hub.catalog.get_server(assigned_server_id)
+
+        assert assigned.server_type == ServerType.TEN_GBIT
+
+        test_services.remnawave.nodes.pop(assigned.remnawave_node_uuid)
+
+        await hub.catalog.sync_servers()
+
+        active_accesses = await hub.catalog.get_user_servers(user.id)
+        all_accesses = await hub.catalog.get_user_servers(user.id, active_only=False)
+        blocked_assigned = next(access for access in all_accesses if access.server_id == assigned_server_id)
+
+        assert blocked_assigned.status == AccessStatus.BLOCKED
+        assert all(access.server.server_type != ServerType.TEN_GBIT for access in active_accesses if access.server)
+        assert any(access.server.server_type == ServerType.WHITELIST for access in active_accesses if access.server)
+
+
+@pytest.mark.asyncio
+async def test_force_delete_server_removes_local_server_and_accesses(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3005,
+            username="forcedeleteserver",
+            first_name="Force",
+            last_name="Delete",
+            language_code="ru",
+        )
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=False)
+        user = await hub.accounts.get_user_by_telegram_id(3005)
+        server = await hub.catalog.get_server(user.assigned_server_id)
+        squad_uuid = server.remnawave_internal_squad_uuid
+
+        summary = await hub.catalog.force_delete_server(server.id)
+
+        servers = await hub.catalog.list_servers()
+        active_accesses = await hub.catalog.get_user_servers(user.id)
+        all_accesses = await hub.catalog.get_user_servers(user.id, active_only=False)
+        user = await hub.accounts.get_user_by_telegram_id(3005)
+        remote_user = test_services.remnawave.users[user.remnawave_user_uuid]
+
+        assert summary["server_id"] == server.id
+        assert summary["assigned_users"] == 1
+        assert summary["accesses"] >= 1
+        assert summary["inbounds"] >= 1
+        assert server.id not in {item.id for item in servers}
+        assert user.assigned_server_id != server.id
+        assert server.id not in {access.server_id for access in active_accesses}
+        assert server.id not in {access.server_id for access in all_accesses}
+        assert squad_uuid not in {item.uuid for item in remote_user.activeInternalSquads}
+        assert squad_uuid in test_services.remnawave.internal_squads
