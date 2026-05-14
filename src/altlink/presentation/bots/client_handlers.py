@@ -855,7 +855,7 @@ def agreement_text(*, consent_accepted: bool = False, agreement_link_available: 
         else "\n\nЕсли ссылка пока недоступна, напишите в поддержку."
     )
     return (
-        "Шаг 1 из 3. Пользовательское соглашение\n\n"
+        "Пользовательское соглашение\n\n"
         f"{intro}\n\n"
         "Подтверждая соглашение, вы соглашаетесь с тем, что:\n"
         "1. Используете сервис на свой аккаунт.\n"
@@ -866,25 +866,31 @@ def agreement_text(*, consent_accepted: bool = False, agreement_link_available: 
     )
 
 
-def channel_subscription_text(*, consent_ok: bool, channel_ok: bool, settings) -> str:
+def channel_subscription_text(*, consent_ok: bool, channel_ok: bool, settings, legal_url: str | None = None) -> str:
     status = (
         "Подписка подтверждена. Можно продолжать работу в боте."
         if channel_ok
         else "Подпишитесь на канал и нажмите кнопку проверки подписки."
     )
-    note = "" if consent_ok else "\n\nСначала подтвердите согласие в первом сообщении."
+    agreement_link = legal_url or agreement_url(settings)
+    agreement_note = (
+        "Продолжая пользоваться ботом, вы автоматически соглашаетесь с пользовательским соглашением"
+        f": {agreement_link}"
+        if agreement_link
+        else "Продолжая пользоваться ботом, вы автоматически соглашаетесь с пользовательским соглашением."
+    )
     return (
-        "Шаг 2 из 3. Подписка на канал\n\n"
+        "Шаг 1 из 2. Подписка на канал\n\n"
         f"{status}\n"
         "Без подписки бот не откроет меню и действия с VPN.\n"
-        f"Канал проекта: {settings.required_subscription_channel_url or settings.required_subscription_channel or 'ссылка будет добавлена позже'}"
-        f"{note}"
+        f"Канал проекта: {settings.required_subscription_channel_url or settings.required_subscription_channel or 'ссылка будет добавлена позже'}\n\n"
+        f"{agreement_note}"
     )
 
 
 def promo_onboarding_text() -> str:
     return (
-        "Шаг 3 из 3. Промокод\n\n"
+        "Шаг 2 из 2. Промокод\n\n"
         "Если у вас есть промокод, можно ввести его сейчас и сразу получить бонус или скидку.\n"
         "Если промокода нет, просто нажмите кнопку «Пропустить». Потом промокод всё равно можно будет ввести в разделе «Баланс»."
     )
@@ -1287,6 +1293,9 @@ async def get_access_state(message: Message | CallbackQuery, container: AppConta
         channel_ok = await is_channel_member(user.telegram_id, container)
         if channel_ok and hub is not None:
             user = await hub.accounts.mark_channel_verified(user.id)
+    if channel_ok and not consent_ok and hub is not None:
+        user = await hub.accounts.complete_registration(user.id)
+        consent_ok = True
     return user, consent_ok, channel_ok
 
 
@@ -1318,25 +1327,19 @@ async def show_pending_access_steps(
     channel_ok: bool,
 ) -> None:
     anchor = target.message if isinstance(target, CallbackQuery) else target
-    if not consent_ok:
+    if not (consent_ok and channel_ok):
         legal_url = agreement_url(container.settings)
-        await send_card_with_optional_media(
-            anchor,
-            agreement_text(consent_accepted=False, agreement_link_available=bool(legal_url)),
-            primary_markup=agreement_actions(consent_accepted=False, agreement_url=legal_url).as_markup(),
-            media_section="onboarding",
-            force_new_message=True,
-        )
-    if not channel_ok:
         await send_card_with_optional_media(
             anchor,
             channel_subscription_text(
                 consent_ok=consent_ok,
-                channel_ok=False,
+                channel_ok=channel_ok,
                 settings=container.settings,
+                legal_url=legal_url,
             ),
             primary_markup=channel_actions(
                 container.settings.required_subscription_channel_url or None,
+                agreement_url=legal_url,
             ).as_markup(),
             media_section="onboarding",
             force_new_message=True,
@@ -1796,9 +1799,11 @@ async def check_channel(callback: CallbackQuery, container: AppContainer):
                 consent_ok=consent_ok,
                 channel_ok=channel_ok,
                 settings=container.settings,
+                legal_url=agreement_url(container.settings),
             ),
             reply_markup=channel_actions(
                 container.settings.required_subscription_channel_url or None,
+                agreement_url=agreement_url(container.settings),
             ).as_markup(),
         )
         return
@@ -1842,9 +1847,11 @@ async def complete_registration(callback: CallbackQuery, container: AppContainer
                 consent_ok=consent_ok,
                 channel_ok=False,
                 settings=container.settings,
+                legal_url=agreement_url(container.settings),
             ),
             primary_markup=channel_actions(
                 container.settings.required_subscription_channel_url or None,
+                agreement_url=agreement_url(container.settings),
             ).as_markup(),
             media_section="onboarding",
         )

@@ -131,6 +131,18 @@ def test_channel_actions_include_subscription_check():
     assert check_button["style"] == "success"
 
 
+def test_channel_actions_can_include_agreement_link():
+    markup = channel_actions(
+        "https://t.me/altlink_channel",
+        agreement_url="https://altlink.online/legal/agreement",
+    ).as_markup()
+    buttons = inline_buttons(markup)
+
+    agreement_button = next(button for button in buttons if button["text"] == "📘 Пользовательское соглашение")
+    assert agreement_button["url"] == "https://altlink.online/legal/agreement"
+    assert agreement_button["style"] == "primary"
+
+
 def test_promo_onboarding_actions_offer_enter_and_skip():
     markup = promo_onboarding_actions().as_markup()
     flat = [text for row in inline_rows(markup) for text in row]

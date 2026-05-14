@@ -56,16 +56,17 @@ class DummyState:
 
 
 @pytest.mark.asyncio
-async def test_ensure_client_access_sends_agreement_and_channel_messages_separately(test_services):
+async def test_ensure_client_access_sends_combined_channel_and_agreement_step(test_services):
     message = DummyMessage(text="/start", user_id=21001)
 
     async with test_services.hub() as hub:
         user = await client_handlers.ensure_client_access(message, test_services, hub)
 
     assert user is None
-    assert len(message.answers) == 2
-    assert "Шаг 1 из 3" in str(message.answers[0]["text"])
-    assert "Шаг 2 из 3" in str(message.answers[1]["text"])
+    assert len(message.answers) == 1
+    assert "Шаг 1 из 2" in str(message.answers[0]["text"])
+    assert "Продолжая пользоваться ботом" in str(message.answers[0]["text"])
+    assert "пользовательским соглашением" in str(message.answers[0]["text"])
 
 
 @pytest.mark.asyncio
@@ -77,10 +78,10 @@ async def test_ensure_client_access_includes_real_agreement_link(test_services):
         user = await client_handlers.ensure_client_access(message, test_services, hub)
 
     assert user is None
-    agreement_markup = message.answers[0]["reply_markup"]
-    buttons = [button for row in agreement_markup.inline_keyboard for button in row]
-    open_button = next(button for button in buttons if button.url)
-    assert open_button.url == "https://altlink.online/legal/agreement"
+    channel_markup = message.answers[0]["reply_markup"]
+    buttons = [button for row in channel_markup.inline_keyboard for button in row]
+    agreement_button = next(button for button in buttons if button.url == "https://altlink.online/legal/agreement")
+    assert agreement_button.text == "📘 Пользовательское соглашение"
 
 
 @pytest.mark.asyncio
@@ -115,7 +116,7 @@ async def test_ensure_client_access_shows_promo_step_after_registration_and_chan
 
     assert user is None
     assert len(message.answers) == 1
-    assert "Шаг 3 из 3" in str(message.answers[0]["text"])
+    assert "Шаг 2 из 2" in str(message.answers[0]["text"])
 
 
 @pytest.mark.asyncio
@@ -544,8 +545,7 @@ async def test_get_access_state_auto_verifies_subscribed_user(test_services, mon
     message = DummyMessage(text="Меню", user_id=21003)
 
     async with test_services.hub() as hub:
-        created = await client_handlers.ensure_user(message.from_user, test_services, hub)
-        await hub.accounts.complete_registration(created.id)
+        await client_handlers.ensure_user(message.from_user, test_services, hub)
 
     async def fake_is_channel_member(telegram_id: int, container) -> bool:
         return telegram_id == 21003
@@ -558,6 +558,8 @@ async def test_get_access_state_auto_verifies_subscribed_user(test_services, mon
 
     assert consent_ok is True
     assert channel_ok is True
+    assert refreshed.registration_completed_at is not None
+    assert refreshed.consent_accepted_at is not None
     assert refreshed.channel_verified_at is not None
 
 

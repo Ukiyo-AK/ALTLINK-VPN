@@ -21,12 +21,17 @@ def main_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def channel_actions(channel_url: str | None = None) -> InlineKeyboardBuilder:
+def channel_actions(channel_url: str | None = None, agreement_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if channel_url:
         builder.button(text="Подписаться на канал", url=channel_url, style="primary")
     builder.button(text="Проверить подписку", callback_data="client:check_channel", style="success")
-    builder.adjust(2)
+    if agreement_url:
+        builder.button(text="📘 Пользовательское соглашение", url=agreement_url, style="primary")
+    row_sizes = [1 + int(bool(channel_url))]
+    if agreement_url:
+        row_sizes.append(1)
+    builder.adjust(*row_sizes)
     return builder
 
 
