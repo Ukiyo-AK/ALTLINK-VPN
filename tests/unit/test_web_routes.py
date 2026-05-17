@@ -26,7 +26,10 @@ from altlink.presentation.web.routes import (
     server_probe_port,
     LATENCY_RECHECK_THRESHOLD_MS,
 )
-from altlink.utils.latency import WHITELIST_LATENCY_TARGET_SETTING_KEY
+from altlink.utils.latency import (
+    LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY,
+    WHITELIST_SERVER_DOMAIN_SETTING_KEY,
+)
 
 
 def plan(
@@ -162,7 +165,7 @@ async def test_single_probe_server_latency_uses_normalized_host(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_single_probe_server_latency_can_use_manual_whitelist_target(monkeypatch):
+async def test_single_probe_server_latency_can_use_manual_whitelist_server_domain(monkeypatch):
     captured: dict[str, object] = {}
     server = SimpleNamespace(
         name="Whitelist Node",
@@ -187,14 +190,13 @@ async def test_single_probe_server_latency_can_use_manual_whitelist_target(monke
 
     result = await single_probe_server_latency(
         server,
-        override_host="youtube.com",
-        override_port=443,
+        override_host="wl.altlink.online",
     )
 
     assert result["reachable"] is True
-    assert result["probe_target_host"] == "youtube.com"
-    assert result["probe_target_port"] == 443
-    assert captured == {"host": "youtube.com", "port": 443}
+    assert result["probe_target_host"] == "wl.altlink.online"
+    assert result["probe_target_port"] == 2053
+    assert captured == {"host": "wl.altlink.online", "port": 2053}
 
 
 @pytest.mark.asyncio
@@ -450,7 +452,7 @@ async def test_admin_traffic_route_uses_dashboard_rows(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_settings_page_includes_whitelist_latency_domain(monkeypatch):
+async def test_settings_page_includes_whitelist_server_domain(monkeypatch):
     rendered: dict[str, object] = {}
 
     async def fake_resolve_admin(request, hub):
@@ -468,8 +470,8 @@ async def test_settings_page_includes_whitelist_latency_domain(monkeypatch):
                 list_settings=AsyncMock(
                     return_value=[
                         SimpleNamespace(
-                            key=WHITELIST_LATENCY_TARGET_SETTING_KEY,
-                            value="https://youtube.com/watch?v=demo",
+                            key=WHITELIST_SERVER_DOMAIN_SETTING_KEY,
+                            value="https://wl.altlink.online/status",
                             description="demo",
                         )
                     ]
@@ -489,8 +491,50 @@ async def test_settings_page_includes_whitelist_latency_domain(monkeypatch):
 
     assert response is rendered["context"]
     assert rendered["template_name"] == "settings.html"
-    assert rendered["context"]["whitelist_latency_target_key"] == WHITELIST_LATENCY_TARGET_SETTING_KEY
-    assert rendered["context"]["whitelist_latency_target_domain"] == "youtube.com"
+    assert rendered["context"]["whitelist_server_domain_key"] == WHITELIST_SERVER_DOMAIN_SETTING_KEY
+    assert rendered["context"]["whitelist_server_domain_value"] == "wl.altlink.online"
+
+
+@pytest.mark.asyncio
+async def test_settings_page_uses_legacy_whitelist_latency_key_as_fallback(monkeypatch):
+    rendered: dict[str, object] = {}
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            dashboard=SimpleNamespace(
+                list_settings=AsyncMock(
+                    return_value=[
+                        SimpleNamespace(
+                            key=LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY,
+                            value="legacy-wl.altlink.online",
+                            description="legacy",
+                        )
+                    ]
+                )
+            )
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.settings_page(request)
+
+    assert response is rendered["context"]
+    assert rendered["context"]["whitelist_server_domain_value"] == "legacy-wl.altlink.online"
 
 
 @pytest.mark.asyncio

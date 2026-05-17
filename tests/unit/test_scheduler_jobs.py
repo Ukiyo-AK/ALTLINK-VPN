@@ -51,7 +51,11 @@ async def test_server_latency_job_uses_manual_domain_for_whitelist_servers(monke
         yield SimpleNamespace(
             catalog=SimpleNamespace(list_servers=AsyncMock(return_value=[whitelist_server, regular_server])),
             session=SimpleNamespace(
-                scalar=AsyncMock(return_value=SimpleNamespace(value="https://youtube.com/watch?v=test"))
+                scalars=AsyncMock(
+                    return_value=SimpleNamespace(
+                        all=lambda: [SimpleNamespace(key="monitoring.whitelist_server_domain", value="https://wl.altlink.online/path")]
+                    )
+                )
             ),
             monitoring=SimpleNamespace(record_server_latency_state=AsyncMock(return_value=[])),
         )
@@ -65,5 +69,5 @@ async def test_server_latency_job_uses_manual_domain_for_whitelist_servers(monke
 
     await scheduler_jobs.server_latency_job(container)
 
-    assert ("Whitelist NL", "youtube.com", 443) in calls
+    assert ("Whitelist NL", "wl.altlink.online", None) in calls
     assert ("Regular FI", None, None) in calls

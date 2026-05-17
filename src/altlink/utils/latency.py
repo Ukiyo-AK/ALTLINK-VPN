@@ -9,8 +9,8 @@ from urllib.parse import urlparse
 LATENCY_RECHECK_THRESHOLD_MS = 250
 BROWSER_PROBE_DEFAULT_PORT = 44443
 BROWSER_PROBE_DEFAULT_PATH = "/ping"
-WHITELIST_LATENCY_TARGET_SETTING_KEY = "monitoring.whitelist_latency_target_domain"
-WHITELIST_LATENCY_TARGET_DEFAULT_PORT = 443
+WHITELIST_SERVER_DOMAIN_SETTING_KEY = "monitoring.whitelist_server_domain"
+LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY = "monitoring.whitelist_latency_target_domain"
 
 
 def is_foreign_latency_target(server) -> bool:
@@ -116,7 +116,7 @@ async def probe_server_latency(
     override_port: int | None = None,
 ) -> dict:
     host_override = str(override_host or "").strip() or None
-    port_override = int(override_port or WHITELIST_LATENCY_TARGET_DEFAULT_PORT) if host_override else override_port
+    port_override = int(override_port) if override_port is not None else None
     first_probe = await single_probe_server_latency(
         server,
         timeout_seconds=timeout_seconds,

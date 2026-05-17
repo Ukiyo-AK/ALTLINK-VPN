@@ -6,8 +6,8 @@ from altlink.application.services.registry import AppContainer
 from altlink.infrastructure.db.models import SystemSetting
 from altlink.presentation.bots.common import send_telegram_messages
 from altlink.utils.latency import (
-    WHITELIST_LATENCY_TARGET_DEFAULT_PORT,
-    WHITELIST_LATENCY_TARGET_SETTING_KEY,
+    LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY,
+    WHITELIST_SERVER_DOMAIN_SETTING_KEY,
     is_whitelist_latency_target,
     normalize_latency_target_domain,
     probe_server_latency,
@@ -123,10 +123,25 @@ async def server_latency_job(container: AppContainer) -> None:
     alerts = []
     async with container.hub() as hub:
         servers = await hub.catalog.list_servers()
-        setting = await hub.session.scalar(
-            select(SystemSetting).where(SystemSetting.key == WHITELIST_LATENCY_TARGET_SETTING_KEY)
+        settings_items = list(
+            (
+                await hub.session.scalars(
+                    select(SystemSetting).where(
+                        SystemSetting.key.in_(
+                            [
+                                WHITELIST_SERVER_DOMAIN_SETTING_KEY,
+                                LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY,
+                            ]
+                        )
+                    )
+                )
+            ).all()
         )
-        whitelist_latency_target = normalize_latency_target_domain(getattr(setting, "value", None))
+        settings_by_key = {item.key: item for item in settings_items}
+        setting = settings_by_key.get(WHITELIST_SERVER_DOMAIN_SETTING_KEY) or settings_by_key.get(
+            LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY
+        )
+        whitelist_server_domain = normalize_latency_target_domain(getattr(setting, "value", None))
         targets = [
             server
             for server in servers
@@ -142,13 +157,8 @@ async def server_latency_job(container: AppContainer) -> None:
                 probe_server_latency(
                     server,
                     override_host=(
-                        whitelist_latency_target
-                        if whitelist_latency_target and is_whitelist_latency_target(server)
-                        else None
-                    ),
-                    override_port=(
-                        WHITELIST_LATENCY_TARGET_DEFAULT_PORT
-                        if whitelist_latency_target and is_whitelist_latency_target(server)
+                        whitelist_server_domain
+                        if whitelist_server_domain and is_whitelist_latency_target(server)
                         else None
                     ),
                 )
