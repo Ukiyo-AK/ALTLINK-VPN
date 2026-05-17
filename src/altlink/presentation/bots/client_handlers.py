@@ -17,7 +17,7 @@ from aiogram.utils.formatting import Bold, as_list, as_marked_list
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
 from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
-from altlink.domain.billing import bytes_to_gb_cost
+from altlink.domain.billing import bytes_to_gb_cost, quantize_money
 from altlink.domain.plans import (
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
@@ -1164,6 +1164,68 @@ def plan_family_text(family: str) -> str:
     ).as_html()
 
 
+def format_rub_compact(amount: Decimal) -> str:
+    normalized = quantize_money(Decimal(amount))
+    if normalized == normalized.to_integral():
+        return f"{int(normalized)} ₽"
+    return f"{normalized:.2f} ₽"
+
+
+def format_percent_compact(value: Decimal) -> str:
+    normalized = quantize_money(Decimal(value))
+    rendered = format(normalized.normalize(), "f")
+    if "." in rendered:
+        rendered = rendered.rstrip("0").rstrip(".")
+    return f"{rendered}%"
+
+
+def plan_family_base_prices(family: str) -> tuple[Decimal, Decimal]:
+    if family == "10gbit":
+        return SINGLE_10GBIT_MONTHLY_PRICE_RUB, SINGLE_10GBIT_WEEKLY_PRICE_RUB
+    return UNLIMITED_MONTHLY_PRICE_RUB, UNLIMITED_WEEKLY_PRICE_RUB
+
+
+def discounted_amount(amount: Decimal, percent: Decimal) -> Decimal:
+    safe_percent = min(max(Decimal(percent), Decimal("0")), Decimal("100"))
+    return quantize_money(Decimal(amount) - quantize_money((Decimal(amount) * safe_percent) / Decimal("100")))
+
+
+def plan_price_line(label: str, amount: Decimal, *, percent: Decimal | None = None) -> str:
+    if not percent or Decimal(percent) <= Decimal("0"):
+        return f"{label}: {format_rub_compact(amount)}"
+    discounted = discounted_amount(amount, Decimal(percent))
+    return f"{label}: {format_rub_compact(amount)} → {format_rub_compact(discounted)}"
+
+
+def plan_button_price_text(label: str, amount: Decimal, *, percent: Decimal | None = None) -> str:
+    if not percent or Decimal(percent) <= Decimal("0"):
+        return f"{label} • {format_rub_compact(amount)}"
+    safe_percent = min(max(Decimal(percent), Decimal("0")), Decimal("100"))
+    discount = quantize_money((Decimal(amount) * safe_percent) / Decimal("100"))
+    discounted = quantize_money(Decimal(amount) - discount)
+    return f"{label} • {format_rub_compact(discounted)} (-{format_rub_compact(discount)})"
+
+
+async def resolve_plan_discount_preview(hub, user_id: str, family: str) -> dict[str, object] | None:
+    monthly_price, weekly_price = plan_family_base_prices(family)
+    _, promo, _ = await hub.promos.calculate_discount(user_id, monthly_price)
+    if promo is None:
+        return None
+
+    percent = min(max(Decimal(promo.reward_value), Decimal("0")), Decimal("100"))
+    if percent <= Decimal("0"):
+        return None
+
+    return {
+        "code": promo.code,
+        "percent": percent,
+        "monthly_line": plan_price_line("На месяц", monthly_price, percent=percent),
+        "weekly_line": plan_price_line("На неделю", weekly_price, percent=percent),
+        "monthly_button": plan_button_price_text("На месяц", monthly_price, percent=percent),
+        "weekly_button": plan_button_price_text("На неделю", weekly_price, percent=percent),
+    }
+
+
 def plan_menu_text() -> str:
     return as_list(
         Bold("🌍 Тарифы ALTLINK"),
@@ -1203,7 +1265,24 @@ def plan_menu_text() -> str:
     ).as_html()
 
 
-def plan_family_text(family: str) -> str:
+def plan_family_text(family: str, *, discount_preview: dict[str, object] | None = None) -> str:
+    price_lines = (
+        [
+            str(discount_preview["monthly_line"]),
+            str(discount_preview["weekly_line"]),
+        ]
+        if discount_preview
+        else None
+    )
+    promo_block = (
+        as_list(
+            Bold(f"🎟 Промокод {discount_preview['code']} активен"),
+            f"Скидка {format_percent_compact(Decimal(discount_preview['percent']))} уже включена в цены ниже.",
+            sep="\n",
+        )
+        if discount_preview
+        else None
+    )
     if family == "10gbit":
         return as_list(
             Bold("Start"),
@@ -1223,10 +1302,13 @@ def plan_family_text(family: str) -> str:
             "🛡️ Для Start трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ.",
             as_list(
                 Bold("Стоимость"),
-                f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
-                f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽",
+                *(price_lines or [
+                    f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
+                    f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽",
+                ]),
                 sep="\n",
             ),
+            *([promo_block] if promo_block else []),
             sep="\n\n",
         ).as_html()
 
@@ -1249,10 +1331,13 @@ def plan_family_text(family: str) -> str:
         ),
         as_list(
             Bold("Стоимость"),
-            f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽",
-            f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽",
+            *(price_lines or [
+                f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽",
+                f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽",
+            ]),
             sep="\n",
         ),
+        *([promo_block] if promo_block else []),
         sep="\n\n",
     ).as_html()
 
@@ -1450,10 +1535,16 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
     user = await ensure_user(target.from_user, container, hub)
     requests = await hub.topups.list_requests(user_id=user.id)
     pending_requests = len([item for item in requests if str(item.status) == "new"])
-    pending_discount, _, _ = await hub.promos.calculate_discount(user.id, Decimal("100"))
+    _, pending_promo, _ = await hub.promos.calculate_discount(user.id, Decimal("100"))
     configured_provider = hub.topups.configured_provider()
     resolved_provider = hub.topups.resolved_provider()
     missing_settings = hub.topups.yookassa_missing_settings()
+    promo_line = ""
+    if pending_promo is not None:
+        promo_line = (
+            f"Активный промокод: {pending_promo.code} • "
+            f"скидка {format_percent_compact(Decimal(pending_promo.reward_value))} на следующий тариф\n"
+        )
     await send_card_with_optional_media(
         target,
         (
@@ -1462,7 +1553,7 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
             f"Платежей в истории: {len(requests)}\n"
             f"Ожидают подтверждения: {pending_requests}\n"
             f"Ваш реферальный код: {getattr(user, 'referral_code', 'будет создан позже')}\n"
-            f"Ожидающая скидка по промокоду: {pending_discount:.2f} ₽\n\n"
+            f"{promo_line}\n"
             f"{balance_topup_status_text(configured_provider=configured_provider, resolved_provider=resolved_provider, missing_settings=missing_settings)}\n"
             "Промокод можно ввести кнопкой ниже, а реферальную ссылку открыть отдельно."
         ),
@@ -2216,7 +2307,7 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
             if user is None:
                 return
         try:
-            _, _, result_text = await hub.promos.redeem_code(user.id, message.text or "")
+            promo, _, result_text = await hub.promos.redeem_code(user.id, message.text or "")
         except ConflictError as exc:
             if promo_source == "onboarding":
                 await answer_or_edit(
@@ -2227,6 +2318,11 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
             else:
                 await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
             return
+        if "следующей покупке тарифа" in result_text and promo is not None:
+            result_text = (
+                f"{result_text}\n\n"
+                f"🎟 В разделе «Подписка» цены уже будут показаны со скидкой по коду {promo.code}."
+            )
         if promo_source == "onboarding":
             await hub.accounts.mark_promo_onboarding_completed(user.id)
             refreshed = await hub.accounts.get_user(user.id)
@@ -2295,13 +2391,22 @@ async def plan_family_menu(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
+        discount_preview = await resolve_plan_discount_preview(hub, user.id, family)
 
-    text = plan_family_text(family)
+    text = plan_family_text(family, discount_preview=discount_preview)
 
     await answer_or_edit(
         callback,
         text,
-        reply_markup=plan_period_actions(family).as_markup(),
+        reply_markup=plan_period_actions(
+            family,
+            monthly_price_text=(
+                str(discount_preview["monthly_button"]) if discount_preview else None
+            ),
+            weekly_price_text=(
+                str(discount_preview["weekly_button"]) if discount_preview else None
+            ),
+        ).as_markup(),
         parse_mode="HTML",
     )
 

@@ -696,7 +696,11 @@ async def test_plan_family_menu_uses_updated_copy(monkeypatch):
 
     @asynccontextmanager
     async def fake_hub():
-        yield SimpleNamespace()
+        yield SimpleNamespace(
+            promos=SimpleNamespace(
+                calculate_discount=AsyncMock(return_value=(Decimal("0.00"), None, None))
+            )
+        )
 
     monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
     monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
@@ -732,7 +736,11 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
 
     @asynccontextmanager
     async def fake_hub():
-        yield SimpleNamespace()
+        yield SimpleNamespace(
+            promos=SimpleNamespace(
+                calculate_discount=AsyncMock(return_value=(Decimal("0.00"), None, None))
+            )
+        )
 
     monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
     monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
@@ -751,6 +759,53 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     assert "В интерфейсе он отмечен ⚡" in text
     assert "Что такое режим белых списков" in text
     assert "4 ₽ за 1 ГБ" in text
+
+
+@pytest.mark.asyncio
+async def test_plan_family_menu_shows_discounted_prices_when_promo_is_active(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            promos=SimpleNamespace(
+                calculate_discount=AsyncMock(
+                    return_value=(
+                        Decimal("19.90"),
+                        SimpleNamespace(code="ALT10", reward_value=Decimal("10")),
+                        None,
+                    )
+                )
+            )
+        )
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    callback = SimpleNamespace(data="client:plan_family:unlimited", answer=AsyncMock())
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.plan_family_menu(callback, container)
+
+    text = str(captured["text"])
+    assert "Промокод ALT10 активен" in text
+    assert "Скидка 10% уже включена в цены ниже." in text
+    assert "На месяц: 199 ₽ → 179.10 ₽" in text
+    assert "На неделю: 65 ₽ → 58.50 ₽" in text
+
+    markup = captured["reply_markup"]
+    flat = [button.text for row in markup.inline_keyboard for button in row]
+    assert "На месяц • 179.10 ₽ (-19.90 ₽)" in flat
+    assert "На неделю • 58.50 ₽ (-6.50 ₽)" in flat
 
 
 @pytest.mark.asyncio

@@ -247,27 +247,32 @@ def insufficient_balance_actions() -> InlineKeyboardBuilder:
     return builder
 
 
-def plan_period_actions(family: str) -> InlineKeyboardBuilder:
+def plan_period_actions(
+    family: str,
+    *,
+    monthly_price_text: str | None = None,
+    weekly_price_text: str | None = None,
+) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if family == "10gbit":
         builder.button(
-            text=f"На месяц • {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
+            text=monthly_price_text or f"На месяц • {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
             callback_data=f"client:activate_plan:{PlanCode.SINGLE_10GBIT.value}",
             style="primary",
         )
         builder.button(
-            text=f"На неделю • {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽",
+            text=weekly_price_text or f"На неделю • {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽",
             callback_data=f"client:activate_plan:{PlanCode.SINGLE_10GBIT_WEEKLY.value}",
             style="primary",
         )
     else:
         builder.button(
-            text=f"На месяц • {UNLIMITED_MONTHLY_PRICE_RUB} ₽",
+            text=monthly_price_text or f"На месяц • {UNLIMITED_MONTHLY_PRICE_RUB} ₽",
             callback_data=f"client:activate_plan:{PlanCode.UNLIMITED.value}",
             style="primary",
         )
         builder.button(
-            text=f"На неделю • {UNLIMITED_WEEKLY_PRICE_RUB} ₽",
+            text=weekly_price_text or f"На неделю • {UNLIMITED_WEEKLY_PRICE_RUB} ₽",
             callback_data=f"client:activate_plan:{PlanCode.UNLIMITED_WEEKLY.value}",
             style="primary",
         )

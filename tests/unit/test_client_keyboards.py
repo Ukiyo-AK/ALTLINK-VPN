@@ -234,6 +234,15 @@ def test_plan_period_actions_show_expected_prices():
     assert f"На месяц • {UNLIMITED_MONTHLY_PRICE_RUB} ₽" in unlimited_flat
     assert f"На неделю • {UNLIMITED_WEEKLY_PRICE_RUB} ₽" in unlimited_flat
 
+    discounted_markup = plan_period_actions(
+        "10gbit",
+        monthly_price_text="На месяц • 62.10 ₽ (-6.90 ₽)",
+        weekly_price_text="На неделю • 22.50 ₽ (-2.50 ₽)",
+    ).as_markup()
+    discounted_flat = [text for row in inline_rows(discounted_markup) for text in row]
+    assert "На месяц • 62.10 ₽ (-6.90 ₽)" in discounted_flat
+    assert "На неделю • 22.50 ₽ (-2.50 ₽)" in discounted_flat
+
 
 def test_topup_amount_confirm_actions_show_pay_path():
     markup = topup_amount_confirm_actions("350.00").as_markup()
