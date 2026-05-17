@@ -77,6 +77,25 @@ def trial_ended_message() -> str:
     )
 
 
+def trial_expiring_message(ends_at: datetime, reminder_window: str) -> str:
+    return (
+        "⏳ Пробный период скоро закончится.\n\n"
+        f"До окончания осталось {reminder_window}.\n"
+        f"Доступ завершится: {format_datetime(ends_at)}\n\n"
+        "Выберите платный тариф заранее, чтобы не потерять доступ."
+    )
+
+
+def inactive_subscription_promo_message(promo_code: str = "ALT10", discount_percent: int = 10) -> str:
+    return (
+        "🎁 Для вас есть скидка на первый платный тариф.\n\n"
+        f"Используйте промокод {promo_code} и получите {discount_percent}% скидки.\n"
+        "Откройте раздел «Подписка», выберите тариф и примените промокод при покупке.\n\n"
+        "✨ Start — для повседневного использования.\n"
+        "🚀 Pro — для максимальной скорости и всех доступных серверов."
+    )
+
+
 def traffic_threshold_message(percent: int, used_gb: float, limit_gb: float) -> str:
     return (
         f"📊 Использовано {percent}% лимита трафика.\n\n"

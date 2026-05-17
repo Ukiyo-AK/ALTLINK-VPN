@@ -9,7 +9,7 @@ from sqlalchemy import select
 from altlink.application.services.billing import BillingService
 from altlink.application.services.base import ConflictError
 from altlink.domain.billing import compute_period_end, compute_prorated_daily_charge, quantize_money
-from altlink.domain.enums import BalanceTransactionType, PlanCode, SubscriptionStatus
+from altlink.domain.enums import BalanceTransactionType, NotificationType, PlanCode, SubscriptionStatus
 from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
 from altlink.infrastructure.db.models import BalanceTransaction
 from altlink.infrastructure.remnawave_schemas import RemoteSeriesPoint, RemoteUsageResponse, RemoteUsageTopNode
@@ -33,6 +33,89 @@ def test_low_balance_reminder_window_matches_expected_checkpoints():
     assert BillingService._low_balance_reminder_window(timedelta(minutes=30)) == ("1h", "меньше 1 часа")
     assert BillingService._low_balance_reminder_window(timedelta(days=5)) is None
     assert BillingService._low_balance_reminder_window(timedelta(0)) is None
+
+
+def test_trial_reminder_window_matches_expected_checkpoints():
+    assert BillingService._trial_reminder_window(timedelta(hours=20)) == ("24h", "24 часа")
+    assert BillingService._trial_reminder_window(timedelta(hours=2)) == ("3h", "3 часа")
+    assert BillingService._trial_reminder_window(timedelta(minutes=30)) == ("1h", "1 час")
+    assert BillingService._trial_reminder_window(timedelta(days=2)) is None
+    assert BillingService._trial_reminder_window(timedelta(0)) is None
+
+
+@pytest.mark.asyncio
+async def test_process_due_subscriptions_queues_trial_expiring_reminder(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13000,
+            username="trial_reminder",
+            first_name="Trial",
+            last_name="Reminder",
+            language_code="ru",
+        )
+        subscription = await hub.billing.activate_trial(user.id)
+        subscription.ends_at = utc_now() + timedelta(hours=20)
+        subscription.next_billing_at = subscription.ends_at
+
+        await hub.billing.process_due_subscriptions()
+
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    reminder = next(item for item in pending if item.user_id == user.id and item.type == NotificationType.BROADCAST)
+    assert reminder.dedupe_key == f"trial-reminder:{subscription.id}:24h"
+    assert "24 часа" in reminder.message
+    assert "Пробный период" in reminder.message
+
+
+@pytest.mark.asyncio
+async def test_process_due_subscriptions_queues_monthly_promo_for_registered_users_without_paid_history(
+    test_services,
+):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13002,
+            username="promo_waiting",
+            first_name="Promo",
+            last_name="Waiting",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=3)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+        await hub.billing.process_due_subscriptions()
+        pending_again = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    promo = next(item for item in pending if item.user_id == user.id and item.type == NotificationType.PROMO_CODE)
+    assert promo.dedupe_key == f"inactive-promo:{user.id}:{utc_now().strftime('%Y-%m')}"
+    assert "ALT10" in promo.message
+    assert "10%" in promo.message
+    assert len([item for item in pending_again if item.user_id == user.id and item.type == NotificationType.PROMO_CODE]) == 1
+
+
+@pytest.mark.asyncio
+async def test_process_due_subscriptions_skips_promo_for_users_with_paid_subscription_history(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13003,
+            username="promo_paid",
+            first_name="Promo",
+            last_name="Paid",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=3)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    assert not any(item.user_id == user.id and item.type == NotificationType.PROMO_CODE for item in pending)
 
 
 @pytest.mark.asyncio

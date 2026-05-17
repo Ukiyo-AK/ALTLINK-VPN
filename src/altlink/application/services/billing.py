@@ -25,7 +25,9 @@ from altlink.domain.enums import (
 )
 from altlink.domain.notifications import (
     blocked_message,
+    inactive_subscription_promo_message,
     low_balance_message,
+    trial_expiring_message,
     trial_ended_message,
     upcoming_renewal_message,
 )
@@ -39,6 +41,11 @@ LOW_BALANCE_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] 
     ("1h", timedelta(hours=1), timedelta(0), "меньше 1 часа"),
 )
 START_WHITELIST_BALANCE_FLOOR_RUB = Decimal("-50.00")
+TRIAL_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] = (
+    ("24h", timedelta(days=1), timedelta(hours=3), "24 часа"),
+    ("3h", timedelta(hours=3), timedelta(hours=1), "3 часа"),
+    ("1h", timedelta(hours=1), timedelta(0), "1 час"),
+)
 
 
 class BillingService(BaseService):
@@ -317,25 +324,38 @@ class BillingService(BaseService):
             if user is None or plan is None:
                 continue
 
-            if subscription.status == SubscriptionStatus.TRIAL and ensure_utc(subscription.ends_at) <= now:
-                subscription.status = SubscriptionStatus.EXPIRED
-                user.status = UserStatus.BLOCKED
-                if self.remnawave and user.remnawave_user_uuid:
-                    await self.remnawave.disable_user(user.remnawave_user_uuid)
-                await self.notifications.queue(
-                    user_id=user.id,
-                    notification_type=NotificationType.TRIAL_ENDED,
-                    message=trial_ended_message(),
-                    dedupe_key=f"trial-ended:{subscription.id}",
-                )
-                await self.notifications.queue(
-                    user_id=user.id,
-                    notification_type=NotificationType.ACCESS_BLOCKED,
-                    message=blocked_message(),
-                    dedupe_key=f"trial-blocked:{subscription.id}",
-                )
-                state_changed = True
-                continue
+            if subscription.status == SubscriptionStatus.TRIAL:
+                trial_ends_at = ensure_utc(subscription.ends_at)
+                trial_reminder_window = self._trial_reminder_window(trial_ends_at - now)
+                if trial_reminder_window is not None:
+                    reminder_key, reminder_label = trial_reminder_window
+                    await self.notifications.queue(
+                        user_id=user.id,
+                        notification_type=NotificationType.BROADCAST,
+                        message=trial_expiring_message(trial_ends_at, reminder_label),
+                        payload={"kind": "trial_expiring", "window": reminder_key},
+                        dedupe_key=f"trial-reminder:{subscription.id}:{reminder_key}",
+                    )
+
+                if trial_ends_at <= now:
+                    subscription.status = SubscriptionStatus.EXPIRED
+                    user.status = UserStatus.BLOCKED
+                    if self.remnawave and user.remnawave_user_uuid:
+                        await self.remnawave.disable_user(user.remnawave_user_uuid)
+                    await self.notifications.queue(
+                        user_id=user.id,
+                        notification_type=NotificationType.TRIAL_ENDED,
+                        message=trial_ended_message(),
+                        dedupe_key=f"trial-ended:{subscription.id}",
+                    )
+                    await self.notifications.queue(
+                        user_id=user.id,
+                        notification_type=NotificationType.ACCESS_BLOCKED,
+                        message=blocked_message(),
+                        dedupe_key=f"trial-blocked:{subscription.id}",
+                    )
+                    state_changed = True
+                    continue
 
             if subscription.status == SubscriptionStatus.GRACE:
                 subscription.status = SubscriptionStatus.ACTIVE
@@ -397,6 +417,8 @@ class BillingService(BaseService):
                     ),
                     dedupe_key=f"low-balance:{subscription.id}:{due_at.isoformat()}:{reminder_key}",
                 )
+
+        await self._queue_inactive_user_promos(now)
 
         if state_changed:
             await self.catalog.rebuild_user_access_matrix()
@@ -732,6 +754,44 @@ class BillingService(BaseService):
             if lower_bound < remaining <= upper_bound:
                 return reminder_key, reminder_label
         return None
+
+    @staticmethod
+    def _trial_reminder_window(remaining: timedelta) -> tuple[str, str] | None:
+        if remaining <= timedelta(0):
+            return None
+        for reminder_key, upper_bound, lower_bound, reminder_label in TRIAL_REMINDER_WINDOWS:
+            if lower_bound < remaining <= upper_bound:
+                return reminder_key, reminder_label
+        return None
+
+    async def _queue_inactive_user_promos(self, now: datetime) -> None:
+        registered_before = now - timedelta(days=2)
+        paid_subscription_exists = (
+            select(Subscription.id)
+            .join(Plan, Subscription.plan_id == Plan.id)
+            .where(Subscription.user_id == User.id, Plan.is_trial.is_(False))
+            .exists()
+        )
+        users = list(
+            (
+                await self.session.scalars(
+                    select(User).where(
+                        User.registration_completed_at.is_not(None),
+                        User.registration_completed_at < registered_before,
+                        ~paid_subscription_exists,
+                    )
+                )
+            ).all()
+        )
+        month_key = now.strftime("%Y-%m")
+        for user in users:
+            await self.notifications.queue(
+                user_id=user.id,
+                notification_type=NotificationType.PROMO_CODE,
+                message=inactive_subscription_promo_message("ALT10", 10),
+                payload={"promo_code": "ALT10", "discount_percent": 10, "campaign": "inactive_monthly"},
+                dedupe_key=f"inactive-promo:{user.id}:{month_key}",
+            )
 
     def _calculate_residual_credit_rub(self, existing: Subscription | None) -> Decimal:
         if existing is None or existing.plan is None or existing.plan.is_trial:
