@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from aiogram import Bot
@@ -8,6 +9,8 @@ from sqlalchemy import Select, select
 from altlink.application.services.base import BaseService
 from altlink.domain.enums import NotificationStatus, NotificationType, SystemEventLevel
 from altlink.infrastructure.db.models import Notification, User
+
+logger = logging.getLogger(__name__)
 
 
 class NotificationService(BaseService):
@@ -50,37 +53,118 @@ class NotificationService(BaseService):
 
     async def dispatch_pending(self, bot_token: str) -> int:
         if not bot_token:
+            logger.warning("Notification dispatch skipped: client bot token is not configured")
             return 0
 
-        query = await self.pending_query()
-        notifications = list((await self.session.scalars(query)).all())
-        if not notifications:
+        rows = list(
+            (
+                await self.session.execute(
+                    select(
+                        Notification.id,
+                        Notification.user_id,
+                        Notification.type,
+                        Notification.message,
+                        Notification.dedupe_key,
+                        User.telegram_id,
+                    )
+                    .select_from(Notification)
+                    .join(User, User.id == Notification.user_id, isouter=True)
+                    .where(Notification.status == NotificationStatus.PENDING)
+                    .order_by(Notification.created_at.asc())
+                    .limit(100)
+                )
+            ).all()
+        )
+        if not rows:
             return 0
+
+        logger.info("Notification dispatch started: %s pending item(s)", len(rows))
+
+        # Release the DB transaction before any network I/O to Telegram.
+        await self.session.commit()
 
         delivered = 0
+        failed = 0
+        outcomes: dict[str, dict[str, object | None]] = {}
         bot = Bot(token=bot_token)
         try:
-            for item in notifications:
-                user = await self.session.get(User, item.user_id)
-                if user is None:
-                    item.status = NotificationStatus.FAILED
-                    item.failure_reason = "User not found"
+            for notification_id, user_id, notification_type, message, dedupe_key, telegram_id in rows:
+                if telegram_id is None:
+                    failed += 1
+                    outcomes[notification_id] = {
+                        "status": NotificationStatus.FAILED,
+                        "failure_reason": "User not found",
+                        "sent_at": None,
+                    }
+                    logger.warning(
+                        "Notification failed before send: id=%s type=%s user_id=%s reason=%s",
+                        notification_id,
+                        notification_type,
+                        user_id,
+                        "User not found",
+                    )
                     continue
+
                 try:
-                    await bot.send_message(chat_id=user.telegram_id, text=item.message)
-                    item.status = NotificationStatus.SENT
-                    item.sent_at = datetime.now().astimezone()
+                    await bot.send_message(chat_id=telegram_id, text=message)
+                    outcomes[notification_id] = {
+                        "status": NotificationStatus.SENT,
+                        "failure_reason": None,
+                        "sent_at": datetime.now().astimezone(),
+                    }
                     delivered += 1
+                    logger.info(
+                        "Notification sent: id=%s type=%s user_id=%s telegram_id=%s dedupe_key=%s",
+                        notification_id,
+                        notification_type,
+                        user_id,
+                        telegram_id,
+                        dedupe_key,
+                    )
                 except Exception as exc:  # pragma: no cover - network side effect
-                    item.status = NotificationStatus.FAILED
-                    item.failure_reason = str(exc)
-                    await self.log_event(
-                        level=SystemEventLevel.ERROR,
-                        event_type="notification_failed",
-                        message="Не удалось доставить уведомление в Telegram.",
-                        payload={"notification_id": item.id, "error": str(exc)},
+                    failed += 1
+                    outcomes[notification_id] = {
+                        "status": NotificationStatus.FAILED,
+                        "failure_reason": str(exc),
+                        "sent_at": None,
+                    }
+                    logger.exception(
+                        "Notification send failed: id=%s type=%s user_id=%s telegram_id=%s",
+                        notification_id,
+                        notification_type,
+                        user_id,
+                        telegram_id,
                     )
         finally:
             await bot.session.close()
-        return delivered
 
+        notifications = list(
+            (
+                await self.session.scalars(
+                    select(Notification).where(Notification.id.in_(list(outcomes.keys())))
+                )
+            ).all()
+        )
+        for item in notifications:
+            outcome = outcomes.get(item.id)
+            if outcome is None:
+                continue
+            item.status = outcome["status"]  # type: ignore[assignment]
+            item.failure_reason = outcome["failure_reason"]  # type: ignore[assignment]
+            item.sent_at = outcome["sent_at"]  # type: ignore[assignment]
+            if outcome["status"] == NotificationStatus.FAILED:
+                await self.log_event(
+                    level=SystemEventLevel.ERROR,
+                    event_type="notification_failed",
+                    message="Не удалось доставить уведомление в Telegram.",
+                    payload={"notification_id": item.id, "error": outcome["failure_reason"]},
+                )
+
+        await self.session.flush()
+        logger.info(
+            "Notification dispatch finished: sent=%s failed=%s total=%s",
+            delivered,
+            failed,
+            len(rows),
+        )
+        return delivered
