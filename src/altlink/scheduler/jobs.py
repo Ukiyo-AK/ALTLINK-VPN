@@ -3,8 +3,16 @@ from __future__ import annotations
 import asyncio
 
 from altlink.application.services.registry import AppContainer
+from altlink.infrastructure.db.models import SystemSetting
 from altlink.presentation.bots.common import send_telegram_messages
-from altlink.utils.latency import probe_server_latency
+from altlink.utils.latency import (
+    WHITELIST_LATENCY_TARGET_DEFAULT_PORT,
+    WHITELIST_LATENCY_TARGET_SETTING_KEY,
+    is_whitelist_latency_target,
+    normalize_latency_target_domain,
+    probe_server_latency,
+)
+from sqlalchemy import select
 
 
 def format_remnawave_alert(state: dict) -> str:
@@ -42,6 +50,10 @@ def format_server_latency_alert(alerts) -> str:
         error = details.get("error") or "нет ответа"
         lines.append(f"• {item.subject} [{country}] — {error}")
         lines.append(f"  Адрес: {details.get('address') or '—'}")
+        target_host = details.get("probe_target_host")
+        target_port = details.get("probe_target_port")
+        if target_host:
+            lines.append(f"  Цель проверки: {target_host}:{target_port or '—'}")
     return "\n".join(lines)
 
 
@@ -111,6 +123,10 @@ async def server_latency_job(container: AppContainer) -> None:
     alerts = []
     async with container.hub() as hub:
         servers = await hub.catalog.list_servers()
+        setting = await hub.session.scalar(
+            select(SystemSetting).where(SystemSetting.key == WHITELIST_LATENCY_TARGET_SETTING_KEY)
+        )
+        whitelist_latency_target = normalize_latency_target_domain(getattr(setting, "value", None))
         targets = [
             server
             for server in servers
@@ -121,7 +137,24 @@ async def server_latency_job(container: AppContainer) -> None:
                 for inbound in getattr(server, "inbounds", None) or []
             )
         ]
-        raw_probes = await asyncio.gather(*(probe_server_latency(server) for server in targets))
+        raw_probes = await asyncio.gather(
+            *(
+                probe_server_latency(
+                    server,
+                    override_host=(
+                        whitelist_latency_target
+                        if whitelist_latency_target and is_whitelist_latency_target(server)
+                        else None
+                    ),
+                    override_port=(
+                        WHITELIST_LATENCY_TARGET_DEFAULT_PORT
+                        if whitelist_latency_target and is_whitelist_latency_target(server)
+                        else None
+                    ),
+                )
+                for server in targets
+            )
+        )
         probes = [
             {
                 **probe,

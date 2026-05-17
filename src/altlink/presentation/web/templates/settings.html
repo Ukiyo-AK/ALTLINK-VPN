@@ -2,6 +2,33 @@
 {% block content %}
 <section class="grid-two">
   <article class="panel">
+    <h2>Домен для белых списков</h2>
+    <form method="post" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="key" value="{{ whitelist_latency_target_key }}">
+      <input
+        type="hidden"
+        name="description"
+        value="Домен для latency-проверки серверов белых списков с сервера панели."
+      >
+      <label>
+        <span>Домен или URL</span>
+        <input
+          type="text"
+          name="value"
+          value="{{ whitelist_latency_target_domain }}"
+          placeholder="youtube.com"
+        >
+      </label>
+      <p class="muted">
+        Если поле заполнено, для серверов типа «Белые списки» фоновая проверка задержки пойдёт до этого домена
+        по 443 порту. Можно вставить и полный URL — сохраним только hostname.
+      </p>
+      <button type="submit" class="button">Сохранить домен</button>
+    </form>
+  </article>
+
+  <article class="panel">
     <h2>Новая настройка</h2>
     <form method="post" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

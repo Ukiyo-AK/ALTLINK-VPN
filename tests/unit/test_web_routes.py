@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -25,6 +26,7 @@ from altlink.presentation.web.routes import (
     server_probe_port,
     LATENCY_RECHECK_THRESHOLD_MS,
 )
+from altlink.utils.latency import WHITELIST_LATENCY_TARGET_SETTING_KEY
 
 
 def plan(
@@ -157,6 +159,42 @@ async def test_single_probe_server_latency_uses_normalized_host(monkeypatch):
 
     assert result["reachable"] is True
     assert captured == {"host": "nl.example.com", "port": 2053}
+
+
+@pytest.mark.asyncio
+async def test_single_probe_server_latency_can_use_manual_whitelist_target(monkeypatch):
+    captured: dict[str, object] = {}
+    server = SimpleNamespace(
+        name="Whitelist Node",
+        country_code="NL",
+        address="https://node.example.com:9443/node",
+        inbounds=[SimpleNamespace(port=2053, is_active=True)],
+    )
+
+    class DummyWriter:
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            return None
+
+    async def fake_open_connection(host, port):
+        captured["host"] = host
+        captured["port"] = port
+        return object(), DummyWriter()
+
+    monkeypatch.setattr("asyncio.open_connection", fake_open_connection)
+
+    result = await single_probe_server_latency(
+        server,
+        override_host="youtube.com",
+        override_port=443,
+    )
+
+    assert result["reachable"] is True
+    assert result["probe_target_host"] == "youtube.com"
+    assert result["probe_target_port"] == 443
+    assert captured == {"host": "youtube.com", "port": 443}
 
 
 @pytest.mark.asyncio
@@ -409,6 +447,50 @@ async def test_admin_traffic_route_uses_dashboard_rows(monkeypatch):
     assert response is rendered["context"]
     assert rendered["template_name"] == "traffic.html"
     assert rendered["context"]["subscriptions"] == rows
+
+
+@pytest.mark.asyncio
+async def test_settings_page_includes_whitelist_latency_domain(monkeypatch):
+    rendered: dict[str, object] = {}
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            dashboard=SimpleNamespace(
+                list_settings=AsyncMock(
+                    return_value=[
+                        SimpleNamespace(
+                            key=WHITELIST_LATENCY_TARGET_SETTING_KEY,
+                            value="https://youtube.com/watch?v=demo",
+                            description="demo",
+                        )
+                    ]
+                )
+            )
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.settings_page(request)
+
+    assert response is rendered["context"]
+    assert rendered["template_name"] == "settings.html"
+    assert rendered["context"]["whitelist_latency_target_key"] == WHITELIST_LATENCY_TARGET_SETTING_KEY
+    assert rendered["context"]["whitelist_latency_target_domain"] == "youtube.com"
 
 
 @pytest.mark.asyncio

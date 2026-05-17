@@ -24,8 +24,10 @@ from altlink.infrastructure.db.models import Subscription, SystemSetting, User
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.utils.latency import (
     LATENCY_RECHECK_THRESHOLD_MS,
+    WHITELIST_LATENCY_TARGET_SETTING_KEY,
     browser_probe_url,
     is_foreign_latency_target,
+    normalize_latency_target_domain,
     single_probe_server_latency,
     server_probe_port,
 )
@@ -909,12 +911,21 @@ async def settings_page(request: Request):
         if admin is None:
             return login_redirect()
         settings_list = await hub.dashboard.list_settings()
+        whitelist_latency_setting = next(
+            (item for item in settings_list if item.key == WHITELIST_LATENCY_TARGET_SETTING_KEY),
+            None,
+        )
         return render(
             request,
             "settings.html",
             title="Настройки",
             admin=admin,
             settings_list=settings_list,
+            whitelist_latency_target_key=WHITELIST_LATENCY_TARGET_SETTING_KEY,
+            whitelist_latency_target_domain=normalize_latency_target_domain(
+                getattr(whitelist_latency_setting, "value", None)
+            )
+            or "",
             active_nav="settings",
         )
 
@@ -930,10 +941,23 @@ async def settings_save(request: Request):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        try:
-            parsed_value = json.loads(value_raw)
-        except json.JSONDecodeError:
-            parsed_value = value_raw
+        if key == WHITELIST_LATENCY_TARGET_SETTING_KEY:
+            normalized_domain = normalize_latency_target_domain(value_raw)
+            if value_raw and normalized_domain is None:
+                set_flash(
+                    request,
+                    "Укажите корректный домен или URL для проверки задержки серверов белых списков.",
+                    "danger",
+                )
+                return RedirectResponse("/admin/settings", status_code=303)
+            parsed_value = normalized_domain
+            if not description:
+                description = "Домен для latency-проверки серверов белых списков с сервера панели."
+        else:
+            try:
+                parsed_value = json.loads(value_raw)
+            except json.JSONDecodeError:
+                parsed_value = value_raw
         setting = await hub.session.scalar(select(SystemSetting).where(SystemSetting.key == key))
         if setting is None:
             setting = SystemSetting(key=key)
@@ -941,6 +965,7 @@ async def settings_save(request: Request):
         setting.value = parsed_value
         setting.description = description
         setting.updated_by_admin_id = admin.id
+        set_flash(request, "Настройка сохранена.", "success")
         return RedirectResponse("/admin/settings", status_code=303)
 
 
