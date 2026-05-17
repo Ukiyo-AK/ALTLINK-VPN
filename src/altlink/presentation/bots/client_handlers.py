@@ -12,7 +12,7 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, InputMediaPhoto, Message
-from aiogram.utils.formatting import Bold, as_list, as_marked_list
+from aiogram.utils.formatting import Bold, Strikethrough, Text, as_list, as_marked_list
 
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
@@ -1194,16 +1194,19 @@ def plan_price_line(label: str, amount: Decimal, *, percent: Decimal | None = No
     if not percent or Decimal(percent) <= Decimal("0"):
         return f"{label}: {format_rub_compact(amount)}"
     discounted = discounted_amount(amount, Decimal(percent))
-    return f"{label}: {format_rub_compact(amount)} → {format_rub_compact(discounted)}"
+    return Text(
+        f"{label}: ",
+        Strikethrough(format_rub_compact(amount)),
+        f" {format_rub_compact(discounted)}",
+    )
 
 
 def plan_button_price_text(label: str, amount: Decimal, *, percent: Decimal | None = None) -> str:
     if not percent or Decimal(percent) <= Decimal("0"):
         return f"{label} • {format_rub_compact(amount)}"
     safe_percent = min(max(Decimal(percent), Decimal("0")), Decimal("100"))
-    discount = quantize_money((Decimal(amount) * safe_percent) / Decimal("100"))
-    discounted = quantize_money(Decimal(amount) - discount)
-    return f"{label} • {format_rub_compact(discounted)} (-{format_rub_compact(discount)})"
+    discounted = discounted_amount(amount, safe_percent)
+    return f"{label} • {format_rub_compact(discounted)} (-{format_percent_compact(safe_percent)})"
 
 
 async def resolve_plan_discount_preview(hub, user_id: str, family: str) -> dict[str, object] | None:
@@ -1268,8 +1271,8 @@ def plan_menu_text() -> str:
 def plan_family_text(family: str, *, discount_preview: dict[str, object] | None = None) -> str:
     price_lines = (
         [
-            str(discount_preview["monthly_line"]),
-            str(discount_preview["weekly_line"]),
+            discount_preview["monthly_line"],
+            discount_preview["weekly_line"],
         ]
         if discount_preview
         else None

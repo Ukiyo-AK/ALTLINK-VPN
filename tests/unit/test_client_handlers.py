@@ -799,13 +799,13 @@ async def test_plan_family_menu_shows_discounted_prices_when_promo_is_active(mon
     text = str(captured["text"])
     assert "Промокод ALT10 активен" in text
     assert "Скидка 10% уже включена в цены ниже." in text
-    assert "На месяц: 199 ₽ → 179.10 ₽" in text
-    assert "На неделю: 65 ₽ → 58.50 ₽" in text
+    assert "На месяц: <s>199 ₽</s> 179.10 ₽" in text
+    assert "На неделю: <s>65 ₽</s> 58.50 ₽" in text
 
     markup = captured["reply_markup"]
     flat = [button.text for row in markup.inline_keyboard for button in row]
-    assert "На месяц • 179.10 ₽ (-19.90 ₽)" in flat
-    assert "На неделю • 58.50 ₽ (-6.50 ₽)" in flat
+    assert "На месяц • 179.10 ₽ (-10%)" in flat
+    assert "На неделю • 58.50 ₽ (-10%)" in flat
 
 
 @pytest.mark.asyncio
