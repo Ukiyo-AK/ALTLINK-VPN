@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from aiogram import Bot, Dispatcher
@@ -195,6 +196,46 @@ async def test_change_server_type_callback_parses_callback_data(monkeypatch):
     await admin_handlers.change_server_type(DummyCallback(), container)
 
     assert ("type", ("server-2", "whitelist")) in calls
+
+
+@pytest.mark.asyncio
+async def test_servers_screen_syncs_catalog_before_render(monkeypatch):
+    sync_servers = AsyncMock()
+    rendered: list[str] = []
+    sent_cards: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_render(target, text: str, reply_markup=None, **kwargs):
+        rendered.append(text)
+
+    class DummyMessage:
+        from_user = SimpleNamespace(id=42)
+
+        async def answer(self, text: str, reply_markup=None, **kwargs):
+            sent_cards.append(text)
+            return SimpleNamespace(message_id=1, chat=SimpleNamespace(id=42))
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            catalog=SimpleNamespace(
+                sync_servers=sync_servers,
+                list_servers=AsyncMock(return_value=[SimpleNamespace(id="server-1", is_available=True)]),
+            )
+        )
+
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render)
+    monkeypatch.setattr(admin_handlers, "format_server_card", lambda server: f"Server {server.id}")
+    monkeypatch.setattr(admin_handlers, "remember_admin_card", lambda message: None)
+
+    await admin_handlers.servers_screen(DummyMessage(), SimpleNamespace(hub=fake_hub))
+
+    sync_servers.assert_awaited_once()
+    assert rendered
+    assert sent_cards == ["Server server-1"]
 
 
 @pytest.mark.asyncio

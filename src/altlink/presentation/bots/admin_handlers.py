@@ -129,6 +129,18 @@ async def sync_dashboard_traffic_if_possible(container: AppContainer) -> None:
         logger.warning("Timed out while syncing traffic snapshots before admin dashboard render.")
     except Exception:
         logger.warning("Failed to sync traffic snapshots before admin dashboard render.", exc_info=True)
+
+
+async def sync_server_catalog_if_possible(hub) -> None:
+    sync_method = getattr(getattr(hub, "catalog", None), "sync_servers", None)
+    if sync_method is None:
+        return
+    try:
+        await sync_method()
+    except Exception:
+        logger.warning("Failed to sync server catalog before admin server render.", exc_info=True)
+
+
 SYSTEM_EVENT_LEVEL_LABELS = {
     "info": "Инфо",
     "warning": "Внимание",
@@ -1710,6 +1722,7 @@ async def servers_screen(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
     async with container.hub() as hub:
+        await sync_server_catalog_if_possible(hub)
         items = await hub.catalog.list_servers()
     await render_admin(
         message,

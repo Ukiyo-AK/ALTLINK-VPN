@@ -455,6 +455,7 @@ async def test_admin_traffic_route_uses_dashboard_rows(monkeypatch):
 async def test_admin_servers_route_passes_latency_state(monkeypatch):
     rendered: dict[str, object] = {}
     servers = [SimpleNamespace(id="server-1", name="Whitelist NL")]
+    sync_servers = AsyncMock()
 
     async def fake_resolve_admin(request, hub):
         return SimpleNamespace(id="admin-1", username="admin")
@@ -483,7 +484,7 @@ async def test_admin_servers_route_passes_latency_state(monkeypatch):
     @asynccontextmanager
     async def fake_hub():
         yield SimpleNamespace(
-            catalog=SimpleNamespace(list_servers=AsyncMock(return_value=servers)),
+            catalog=SimpleNamespace(sync_servers=sync_servers, list_servers=AsyncMock(return_value=servers)),
             session=SimpleNamespace(scalar=fake_scalar),
         )
 
@@ -502,6 +503,7 @@ async def test_admin_servers_route_passes_latency_state(monkeypatch):
     assert rendered["context"]["server_latency_checked_at"] == "2026-05-17T12:00:00+00:00"
     assert rendered["context"]["server_latency_state"]["server-1"]["latency_ms"] == 87
     assert rendered["context"]["server_latency_state"]["server-1"]["probe_target_host"] == "wl.altlink.online"
+    sync_servers.assert_awaited_once()
 
 
 @pytest.mark.asyncio

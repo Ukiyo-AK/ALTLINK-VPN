@@ -65,6 +65,16 @@ async def sync_dashboard_traffic_if_possible(container) -> None:
         logger.warning("Failed to sync traffic snapshots before web admin render.", exc_info=True)
 
 
+async def sync_server_catalog_if_possible(hub) -> None:
+    sync_method = getattr(getattr(hub, "catalog", None), "sync_servers", None)
+    if sync_method is None:
+        return
+    try:
+        await sync_method()
+    except Exception:
+        logger.warning("Failed to sync server catalog before web admin render.", exc_info=True)
+
+
 def latency_target_label() -> str:
     return "вашего устройства до нод ALTLINK"
 
@@ -748,6 +758,7 @@ async def servers_page(request: Request):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
+        await sync_server_catalog_if_possible(hub)
         servers = await hub.catalog.list_servers()
         server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
         return render(
