@@ -1228,7 +1228,11 @@ def plan_button_price_text(label: str, amount: Decimal, *, percent: Decimal | No
 
 async def resolve_plan_discount_preview(hub, user_id: str, family: str) -> dict[str, object] | None:
     monthly_price, weekly_price = plan_family_base_prices(family)
-    _, promo, _ = await hub.promos.calculate_discount(user_id, monthly_price)
+    try:
+        _, promo, _ = await hub.promos.calculate_discount(user_id, monthly_price)
+    except Exception:
+        logger.warning("Failed to calculate plan discount preview for user %s and family %s", user_id, family, exc_info=True)
+        return None
     if promo is None:
         return None
 

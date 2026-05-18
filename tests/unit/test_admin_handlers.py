@@ -239,6 +239,40 @@ async def test_servers_screen_syncs_catalog_before_render(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sync_servers_callback_handles_runtime_error(monkeypatch):
+    rendered: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_render(target, text: str, reply_markup=None, **kwargs):
+        rendered.append(text)
+
+    class DummyCallback:
+        data = "admin:server_toggle:sync:0"
+        from_user = SimpleNamespace(id=42)
+        message = SimpleNamespace()
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    async def broken_sync():
+        raise RuntimeError("panel offline")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(catalog=SimpleNamespace(sync_servers=broken_sync))
+
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render)
+
+    await admin_handlers.sync_servers(DummyCallback(), SimpleNamespace(hub=fake_hub))
+
+    assert rendered
+    assert "Не удалось синхронизировать серверы" in rendered[0]
+
+
+@pytest.mark.asyncio
 async def test_toggle_server_handles_missing_local_server(monkeypatch):
     rendered: list[str] = []
 

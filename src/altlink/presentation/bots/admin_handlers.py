@@ -1740,8 +1740,13 @@ async def servers_screen(message: Message, container: AppContainer):
 async def sync_servers(callback: CallbackQuery, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
         return
-    async with container.hub() as hub:
-        servers = await hub.catalog.sync_servers()
+    try:
+        async with container.hub() as hub:
+            servers = await hub.catalog.sync_servers()
+    except Exception:
+        logger.warning("Manual server sync failed from admin bot.", exc_info=True)
+        await render_admin(callback, "Не удалось синхронизировать серверы. Проверьте подключение к панели и попробуйте ещё раз.")
+        return
     await render_admin(callback, f"Синхронизация завершена. Серверов: {len(servers)}")
 
 

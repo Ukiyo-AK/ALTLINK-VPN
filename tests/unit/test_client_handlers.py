@@ -950,6 +950,40 @@ async def test_plan_family_menu_shows_discounted_prices_when_promo_is_active(mon
 
 
 @pytest.mark.asyncio
+async def test_plan_family_menu_falls_back_when_discount_preview_fails(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            promos=SimpleNamespace(
+                calculate_discount=AsyncMock(side_effect=RuntimeError("promo broken"))
+            )
+        )
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    callback = SimpleNamespace(data="client:plan_family:unlimited", answer=AsyncMock())
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.plan_family_menu(callback, container)
+
+    text = str(captured["text"])
+    assert "<b>Pro</b>" in text
+    assert "Промокод" not in text
+
+
+@pytest.mark.asyncio
 async def test_send_reply_menu_uses_hidden_helper_message():
     message = DummyMessage(text="/start", user_id=21004)
 

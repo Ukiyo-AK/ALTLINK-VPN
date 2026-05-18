@@ -782,7 +782,10 @@ async def servers_sync(request: Request):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await hub.catalog.sync_servers()
+        try:
+            await hub.catalog.sync_servers()
+        except Exception:
+            logger.warning("Manual server sync failed from web admin.", exc_info=True)
         return RedirectResponse("/admin/servers", status_code=303)
 
 
