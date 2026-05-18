@@ -1741,7 +1741,11 @@ async def toggle_server(callback: CallbackQuery, container: AppContainer):
         await sync_servers(callback, container)
         return
     async with container.hub() as hub:
-        server = await hub.catalog.set_server_availability(server_id, flag == "1")
+        try:
+            server = await hub.catalog.set_server_availability(server_id, flag == "1")
+        except NotFoundError:
+            await render_admin(callback, "Сервер уже удалён из локальной базы. Синхронизируйте список заново.")
+            return
     if server is None:
         await render_admin(callback, "Локальный статус сервера обновлён.")
         return
@@ -1758,7 +1762,11 @@ async def change_server_type(callback: CallbackQuery, container: AppContainer):
         return
     _, _, server_id, raw_type = callback.data.split(":", 3)
     async with container.hub() as hub:
-        server = await hub.catalog.set_server_type(server_id, ServerType(raw_type))
+        try:
+            server = await hub.catalog.set_server_type(server_id, ServerType(raw_type))
+        except NotFoundError:
+            await render_admin(callback, "Сервер уже удалён из локальной базы. Синхронизируйте список заново.")
+            return
     await render_admin(
         callback,
         format_server_card(server),

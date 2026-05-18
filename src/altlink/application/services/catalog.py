@@ -100,19 +100,20 @@ class CatalogService(BaseService):
                 if inbound.tag not in active_tags:
                     inbound.is_active = False
 
+        removed_servers: list[dict] = []
         for key, server in current_servers.items():
             if key not in seen_node_ids:
-                server.is_connected = False
-                server.users_online = 0
-                server.last_status_message = "Node is absent in Remnawave sync."
-                server.last_status_change = now
-                server.last_sync_at = now
-                for inbound in server.inbounds:
-                    inbound.is_active = False
-                    inbound.client_count = 0
+                removed_servers.append(await self._purge_server(server))
 
         await self._sync_internal_squads()
         await self.rebuild_user_access_matrix()
+        if removed_servers:
+            await self.log_event(
+                level=SystemEventLevel.WARNING,
+                event_type="servers_removed_from_sync",
+                message="Пропавшие в Remnawave серверы удалены из локальной базы.",
+                payload={"count": len(removed_servers), "servers": removed_servers},
+            )
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="servers_synced",
@@ -152,7 +153,19 @@ class CatalogService(BaseService):
         server = await self.session.get(Server, server_id, options=[selectinload(Server.inbounds)])
         if server is None:
             raise NotFoundError("Сервер не найден.")
+        summary = await self._purge_server(server)
 
+        await self.rebuild_user_access_matrix()
+        await self.log_event(
+            level=SystemEventLevel.WARNING,
+            event_type="server_force_deleted",
+            message="Сервер принудительно удалён из локальной базы.",
+            payload=summary,
+        )
+        return summary
+
+    async def _purge_server(self, server: Server) -> dict:
+        server_id = server.id
         summary = {
             "server_id": server.id,
             "name": server.name,
@@ -179,14 +192,6 @@ class CatalogService(BaseService):
         await self.session.execute(delete(ServerInbound).where(ServerInbound.server_id == server_id))
         await self.session.execute(delete(Server).where(Server.id == server_id))
         await self.session.flush()
-
-        await self.rebuild_user_access_matrix()
-        await self.log_event(
-            level=SystemEventLevel.WARNING,
-            event_type="server_force_deleted",
-            message="Сервер принудительно удалён из локальной базы.",
-            payload=summary,
-        )
         return summary
 
     async def assign_preferred_server(self, user_id: str, plan_code: PlanCode | None = None) -> Server:

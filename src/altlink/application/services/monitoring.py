@@ -245,6 +245,8 @@ class MonitoringService(BaseService):
                 "reachable": bool(probe.get("reachable")),
                 "latency_ms": probe.get("latency_ms"),
                 "error": probe.get("error") or probe.get("recheck_error"),
+                "probe_target_host": probe.get("probe_target_host"),
+                "probe_target_port": probe.get("probe_target_port"),
                 "checked_at": checked_at,
             }
             previous_state = previous_servers.get(server_id)

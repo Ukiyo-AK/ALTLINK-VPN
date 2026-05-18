@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import pytest
 
+from altlink.application.services.base import NotFoundError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType
 
 
@@ -94,19 +95,19 @@ async def test_sync_does_not_recreate_squad_for_missing_node(test_services):
 
         await hub.catalog.sync_servers()
 
-        refreshed = await hub.catalog.get_server(removed.id)
         active_accesses = await hub.catalog.get_user_servers(user.id)
         all_accesses = await hub.catalog.get_user_servers(user.id, active_only=False)
+        servers = await hub.catalog.list_servers()
         remote_user = test_services.remnawave.users[user.remnawave_user_uuid]
         remote_squad_ids = {item.uuid for item in remote_user.activeInternalSquads}
 
-        assert not refreshed.is_connected
-        assert refreshed.users_online == 0
-        assert all(not inbound.is_active for inbound in refreshed.inbounds)
         assert removed_squad_uuid not in test_services.remnawave.internal_squads
-        assert refreshed.id not in {access.server_id for access in active_accesses}
-        assert next(access for access in all_accesses if access.server_id == refreshed.id).status == AccessStatus.BLOCKED
+        assert removed.id not in {server.id for server in servers}
+        assert removed.id not in {access.server_id for access in active_accesses}
+        assert removed.id not in {access.server_id for access in all_accesses}
         assert removed_squad_uuid not in remote_squad_ids
+        with pytest.raises(NotFoundError):
+            await hub.catalog.get_server(removed.id)
 
 
 @pytest.mark.asyncio
@@ -130,11 +131,12 @@ async def test_sync_survives_missing_ten_gbit_server_for_existing_start_user(tes
 
         await hub.catalog.sync_servers()
 
+        refreshed_user = await hub.accounts.get_user(user.id)
         active_accesses = await hub.catalog.get_user_servers(user.id)
         all_accesses = await hub.catalog.get_user_servers(user.id, active_only=False)
-        blocked_assigned = next(access for access in all_accesses if access.server_id == assigned_server_id)
 
-        assert blocked_assigned.status == AccessStatus.BLOCKED
+        assert refreshed_user.assigned_server_id is None
+        assert assigned_server_id not in {access.server_id for access in all_accesses}
         assert all(access.server.server_type != ServerType.TEN_GBIT for access in active_accesses if access.server)
         assert any(access.server.server_type == ServerType.WHITELIST for access in active_accesses if access.server)
 

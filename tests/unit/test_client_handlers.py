@@ -55,6 +55,20 @@ class DummyState:
         self.state = None
 
 
+def _paid_subscription_stub(*, plan_code: PlanCode = PlanCode.UNLIMITED, plan_name: str = "Pro"):
+    return SimpleNamespace(
+        plan=SimpleNamespace(
+            code=plan_code,
+            name=plan_name,
+            period_days=30,
+            device_limit=8,
+            is_trial=False,
+        ),
+        next_billing_at=datetime(2026, 5, 18, 12, 0),
+        auto_renew=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_ensure_client_access_sends_combined_channel_and_agreement_step(test_services):
     message = DummyMessage(text="/start", user_id=21001)
@@ -635,6 +649,133 @@ async def test_activate_plan_with_insufficient_balance_shows_topup_actions(monke
     callbacks = [button.callback_data for button in buttons if button.callback_data]
     assert "client:topup_menu" in callbacks
     assert "client:plan_menu" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_activate_plan_succeeds_when_bundle_loading_fails(monkeypatch):
+    captured: dict[str, object] = {}
+    media_card = AsyncMock()
+    subscription = _paid_subscription_stub()
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["target"] = target
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    class DummyBilling:
+        async def activate_paid_plan(self, user_id, plan_code, charge_user=True):
+            return subscription
+
+    class DummyAccounts:
+        async def get_subscription_bundle(self, user_id):
+            raise RuntimeError("panel timeout")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(billing=DummyBilling(), accounts=DummyAccounts())
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+    monkeypatch.setattr(client_handlers, "edit_or_send_dynamic_media_card", media_card)
+
+    callback = SimpleNamespace(data=f"client:activate_plan:{PlanCode.UNLIMITED.value}")
+    container = SimpleNamespace(hub=fake_hub, settings=SimpleNamespace(backend_public_url=""))
+
+    await client_handlers.activate_plan(callback, container)
+
+    assert "Тариф «Pro» активирован." in str(captured["text"])
+    assert "Ссылка для подключения появится в разделе «Моя ссылка»" in str(captured["text"])
+    media_card.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_activate_plan_falls_back_to_text_when_media_card_send_fails(monkeypatch):
+    captured: dict[str, object] = {}
+    subscription = _paid_subscription_stub()
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["target"] = target
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    class DummyBilling:
+        async def activate_paid_plan(self, user_id, plan_code, charge_user=True):
+            return subscription
+
+    class DummyAccounts:
+        async def get_subscription_bundle(self, user_id):
+            return {
+                "subscription": subscription,
+                "subscription_info": SimpleNamespace(subscriptionUrl="https://sub.example/demo"),
+            }
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(billing=DummyBilling(), accounts=DummyAccounts())
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+    monkeypatch.setattr(
+        client_handlers,
+        "edit_or_send_dynamic_media_card",
+        AsyncMock(side_effect=RuntimeError("telegram media failed")),
+    )
+
+    callback = SimpleNamespace(data=f"client:activate_plan:{PlanCode.UNLIMITED.value}")
+    container = SimpleNamespace(hub=fake_hub, settings=SimpleNamespace(backend_public_url=""))
+
+    await client_handlers.activate_plan(callback, container)
+
+    assert "Ваша персональная ссылка VPN" in str(captured["text"])
+    assert captured["kwargs"]["parse_mode"] == "HTML"
+
+
+@pytest.mark.asyncio
+async def test_subscription_link_handles_bundle_errors_without_crashing(monkeypatch):
+    captured: dict[str, object] = {}
+    subscription = _paid_subscription_stub()
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["target"] = target
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
+        return None
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    class DummyAccounts:
+        async def get_subscription_bundle(self, user_id):
+            raise RuntimeError("panel timeout")
+
+        async def get_current_subscription(self, user_id):
+            return subscription
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(accounts=DummyAccounts())
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    callback = SimpleNamespace(data="client:subscription_link")
+    container = SimpleNamespace(hub=fake_hub, settings=SimpleNamespace(backend_public_url=""))
+
+    await client_handlers.subscription_link(callback, container)
+
+    assert "Ссылка пока недоступна." in str(captured["text"])
+    assert "попробуйте открыть этот раздел чуть позже" in str(captured["text"]).lower()
 
 
 @pytest.mark.asyncio

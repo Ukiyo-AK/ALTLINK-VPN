@@ -198,6 +198,76 @@ async def test_change_server_type_callback_parses_callback_data(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_toggle_server_handles_missing_local_server(monkeypatch):
+    rendered: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_render(target, text: str, reply_markup=None, **kwargs):
+        rendered.append(text)
+
+    class DummyCallback:
+        data = "admin:server_toggle:server-1:0"
+        from_user = SimpleNamespace(id=42)
+        message = SimpleNamespace()
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    async def fake_set_server_availability(server_id: str, is_available: bool):
+        raise admin_handlers.NotFoundError("missing")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(catalog=SimpleNamespace(set_server_availability=fake_set_server_availability))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render)
+
+    await admin_handlers.toggle_server(DummyCallback(), container)
+
+    assert rendered
+    assert "Сервер уже удалён из локальной базы" in rendered[0]
+
+
+@pytest.mark.asyncio
+async def test_change_server_type_handles_missing_local_server(monkeypatch):
+    rendered: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_render(target, text: str, reply_markup=None, **kwargs):
+        rendered.append(text)
+
+    class DummyCallback:
+        data = "admin:server_type:server-2:whitelist"
+        from_user = SimpleNamespace(id=42)
+        message = SimpleNamespace()
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    async def fake_set_server_type(server_id: str, server_type):
+        raise admin_handlers.NotFoundError("missing")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(catalog=SimpleNamespace(set_server_type=fake_set_server_type))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render)
+
+    await admin_handlers.change_server_type(DummyCallback(), container)
+
+    assert rendered
+    assert "Сервер уже удалён из локальной базы" in rendered[0]
+
+
+@pytest.mark.asyncio
 async def test_confirm_force_delete_server_shows_warning(monkeypatch):
     rendered: list[tuple[str, object]] = []
     calls: list[tuple[str, object]] = []

@@ -22,6 +22,7 @@ from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType, T
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
 from altlink.infrastructure.db.models import Subscription, SystemSetting, User
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
+from altlink.application.services.monitoring import MonitoringService
 from altlink.utils.latency import (
     LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY,
     LATENCY_RECHECK_THRESHOLD_MS,
@@ -90,6 +91,16 @@ def validate_csrf(request: Request, form: dict) -> None:
 
 def set_flash(request: Request, message: str, level: str = "success") -> None:
     request.session["flash"] = {"message": message, "level": level}
+
+
+async def load_server_latency_state(session) -> tuple[dict[str, dict], str | None]:
+    item = await session.scalar(select(SystemSetting).where(SystemSetting.key == MonitoringService.SERVER_LATENCY_STATUS_KEY))
+    raw = item.value if item is not None else None
+    if not isinstance(raw, dict):
+        return {}, None
+    servers = raw.get("servers", {})
+    checked_at = raw.get("checked_at")
+    return (servers if isinstance(servers, dict) else {}), (checked_at if isinstance(checked_at, str) else None)
 
 
 def pop_flash(request: Request) -> dict | None:
@@ -738,12 +749,15 @@ async def servers_page(request: Request):
         if admin is None:
             return login_redirect()
         servers = await hub.catalog.list_servers()
+        server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
         return render(
             request,
             "servers.html",
             title="Серверы",
             admin=admin,
             servers=servers,
+            server_latency_state=server_latency_state,
+            server_latency_checked_at=server_latency_checked_at,
             server_types=list(ServerType),
             active_nav="servers",
         )
@@ -770,7 +784,10 @@ async def server_toggle(request: Request, server_id: str):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await hub.catalog.set_server_availability(server_id, available)
+        try:
+            await hub.catalog.set_server_availability(server_id, available)
+        except NotFoundError:
+            return RedirectResponse("/admin/servers", status_code=303)
         return RedirectResponse("/admin/servers", status_code=303)
 
 
@@ -783,7 +800,10 @@ async def server_capacity(request: Request, server_id: str):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await hub.catalog.set_server_capacity(server_id, max_clients)
+        try:
+            await hub.catalog.set_server_capacity(server_id, max_clients)
+        except NotFoundError:
+            return RedirectResponse("/admin/servers", status_code=303)
         return RedirectResponse("/admin/servers", status_code=303)
 
 
@@ -796,7 +816,10 @@ async def server_type(request: Request, server_id: str):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await hub.catalog.set_server_type(server_id, ServerType(raw_type))
+        try:
+            await hub.catalog.set_server_type(server_id, ServerType(raw_type))
+        except NotFoundError:
+            return RedirectResponse("/admin/servers", status_code=303)
         return RedirectResponse("/admin/servers", status_code=303)
 
 
@@ -808,7 +831,10 @@ async def server_force_delete(request: Request, server_id: str):
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await hub.catalog.force_delete_server(server_id)
+        try:
+            await hub.catalog.force_delete_server(server_id)
+        except NotFoundError:
+            return RedirectResponse("/admin/servers", status_code=303)
         return RedirectResponse("/admin/servers", status_code=303)
 
 

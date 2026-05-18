@@ -8,12 +8,16 @@
 </section>
 
 <section class="panel">
+  {% if server_latency_checked_at %}
+  <p class="muted">Последняя latency-проверка: {{ server_latency_checked_at }}</p>
+  {% endif %}
   <table class="table">
     <thead>
       <tr>
         <th>Сервер</th>
         <th>Тип</th>
         <th>Локальный статус</th>
+        <th>Пинг</th>
         <th>Выдан доступ</th>
         <th>Онлайн сейчас</th>
         <th>Нагрузка online</th>
@@ -22,6 +26,7 @@
     </thead>
     <tbody>
       {% for server in servers %}
+      {% set latency = server_latency_state.get(server.id) if server_latency_state else None %}
       <tr>
         <td>
           <strong>{{ server.name }}</strong><br>
@@ -58,6 +63,21 @@
             <button type="submit" class="button danger">Удалить из БД</button>
           </form>
         </td>
+        <td>
+          {% if latency %}
+            {% if latency.reachable and latency.latency_ms is not none %}
+            <strong>{{ latency.latency_ms }} мс</strong><br>
+            {% else %}
+            <strong>Недоступно</strong><br>
+            {% endif %}
+            {% if latency.probe_target_host %}
+            <span class="muted">Цель: {{ latency.probe_target_host }}:{{ latency.probe_target_port or '—' }}</span><br>
+            {% endif %}
+            <span class="muted">{{ latency.checked_at or '—' }}</span>
+          {% else %}
+            <span class="muted">Нет данных</span>
+          {% endif %}
+        </td>
         <td>{{ server.current_clients }}</td>
         <td>{{ server.users_online }}</td>
         <td>{{ (server.load_percent ~ '%') if server.max_clients else '—' }}</td>
@@ -70,7 +90,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="7" class="muted">Серверы ещё не синхронизированы.</td></tr>
+      <tr><td colspan="8" class="muted">Серверы ещё не синхронизированы.</td></tr>
       {% endfor %}
     </tbody>
   </table>

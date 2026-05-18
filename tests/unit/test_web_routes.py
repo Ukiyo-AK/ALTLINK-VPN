@@ -452,6 +452,59 @@ async def test_admin_traffic_route_uses_dashboard_rows(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_servers_route_passes_latency_state(monkeypatch):
+    rendered: dict[str, object] = {}
+    servers = [SimpleNamespace(id="server-1", name="Whitelist NL")]
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    async def fake_scalar(_query):
+        return SimpleNamespace(
+            value={
+                "checked_at": "2026-05-17T12:00:00+00:00",
+                "servers": {
+                    "server-1": {
+                        "reachable": True,
+                        "latency_ms": 87,
+                        "probe_target_host": "wl.altlink.online",
+                        "probe_target_port": 44443,
+                        "checked_at": "2026-05-17T12:00:00+00:00",
+                    }
+                },
+            }
+        )
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            catalog=SimpleNamespace(list_servers=AsyncMock(return_value=servers)),
+            session=SimpleNamespace(scalar=fake_scalar),
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.servers_page(request)
+
+    assert response is rendered["context"]
+    assert rendered["template_name"] == "servers.html"
+    assert rendered["context"]["server_latency_checked_at"] == "2026-05-17T12:00:00+00:00"
+    assert rendered["context"]["server_latency_state"]["server-1"]["latency_ms"] == 87
+    assert rendered["context"]["server_latency_state"]["server-1"]["probe_target_host"] == "wl.altlink.online"
+
+
+@pytest.mark.asyncio
 async def test_settings_page_includes_whitelist_server_domain(monkeypatch):
     rendered: dict[str, object] = {}
 

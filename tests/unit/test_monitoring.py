@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
+
+from altlink.infrastructure.db.models import SystemSetting
 
 
 @pytest.mark.asyncio
@@ -54,6 +57,8 @@ async def test_record_server_latency_state_alerts_only_on_new_unreachable_server
             "country_code": server.country_code,
             "reachable": True,
             "latency_ms": 42,
+            "probe_target_host": "wl.altlink.online",
+            "probe_target_port": 44443,
         }
         unhealthy_probe = {
             "server_id": server.id,
@@ -63,6 +68,8 @@ async def test_record_server_latency_state_alerts_only_on_new_unreachable_server
             "reachable": False,
             "latency_ms": None,
             "error": "timeout",
+            "probe_target_host": "wl.altlink.online",
+            "probe_target_port": 44443,
         }
 
         assert await hub.monitoring.record_server_latency_state([healthy_probe]) == []
@@ -73,6 +80,11 @@ async def test_record_server_latency_state_alerts_only_on_new_unreachable_server
 
         repeat_alerts = await hub.monitoring.record_server_latency_state([unhealthy_probe])
         assert repeat_alerts == []
+        snapshot = await hub.session.scalar(
+            select(SystemSetting).where(SystemSetting.key == hub.monitoring.SERVER_LATENCY_STATUS_KEY)
+        )
+        assert snapshot.value["servers"][server.id]["probe_target_host"] == "wl.altlink.online"
+        assert snapshot.value["servers"][server.id]["probe_target_port"] == 44443
 
 
 @pytest.mark.asyncio

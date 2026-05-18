@@ -542,7 +542,9 @@ def show_metered_usage(subscription) -> bool:
     return bool(subscription and subscription.plan and is_metered_plan_code(subscription.plan.code))
 
 
-def resolve_subscription_payload(bundle: dict) -> str | None:
+def resolve_subscription_payload(bundle: dict | None) -> str | None:
+    if not bundle:
+        return None
     info = bundle.get("subscription_info")
     if info:
         return info.subscriptionUrl
@@ -550,6 +552,21 @@ def resolve_subscription_payload(bundle: dict) -> str | None:
     if keys and keys.enabledKeys:
         return keys.enabledKeys[0]
     return None
+
+
+async def safe_get_subscription_bundle(hub, user_id: str) -> dict | None:
+    try:
+        return await hub.accounts.get_subscription_bundle(user_id)
+    except Exception:
+        logger.exception("Failed to load subscription bundle for user %s", user_id)
+        return None
+
+
+def activation_link_pending_note() -> str:
+    return (
+        "\n\nСсылка для подключения появится в разделе «Моя ссылка», "
+        "как только панель подтвердит доступ."
+    )
 
 
 def subscription_markup(subscription):
@@ -2452,19 +2469,22 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
     subscription = None
     activation_payload = None
     reply_markup = None
+    response_parse_mode = None
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
         try:
             subscription = await hub.billing.activate_trial(user.id)
-            bundle = await hub.accounts.get_subscription_bundle(user.id)
+            bundle = await safe_get_subscription_bundle(hub, user.id)
             activation_payload = resolve_subscription_payload(bundle)
             text = (
                 "Тестовый период Pro активирован.\n\n"
                 f"Доступ ко всем активным серверам будет работать до {subscription.ends_at:%d.%m.%Y %H:%M}.\n"
                 f"Лимит устройств: {device_limit_label(subscription.plan)}"
             )
+            if not activation_payload:
+                text += activation_link_pending_note()
             reply_markup = subscription_link_markup(container.settings, subscription)
         except ConflictError as exc:
             text = str(exc)
@@ -2472,16 +2492,22 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
             text = str(exc)
             subscription = None
     if subscription is not None and activation_payload:
-        image = render_qr_png(activation_payload)
-        await edit_or_send_dynamic_media_card(
-            callback,
-            image_bytes=image,
-            filename="altlink-vpn-activation.png",
-            caption=trial_activation_caption(subscription, activation_payload),
-            reply_markup=reply_markup,
-            parse_mode="HTML",
-        )
-        return
+        caption = trial_activation_caption(subscription, activation_payload)
+        try:
+            image = render_qr_png(activation_payload)
+            await edit_or_send_dynamic_media_card(
+                callback,
+                image_bytes=image,
+                filename="altlink-vpn-activation.png",
+                caption=caption,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+            return
+        except Exception:
+            logger.exception("Failed to send trial activation media card")
+            text = caption
+            response_parse_mode = "HTML"
     await answer_or_edit(
         callback,
         text,
@@ -2492,6 +2518,7 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
             can_cancel=False,
             auto_renew_disabled=False,
         ).as_markup(),
+        parse_mode=response_parse_mode,
     )
 
 
@@ -2508,6 +2535,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
     current_subscription = None
     activation_payload = None
     reply_markup = None
+    response_parse_mode = None
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
@@ -2521,8 +2549,10 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
                 f"Лимит устройств: {device_limit_label(subscription.plan)}"
             )
             current_subscription = subscription
-            bundle = await hub.accounts.get_subscription_bundle(user.id)
+            bundle = await safe_get_subscription_bundle(hub, user.id)
             activation_payload = resolve_subscription_payload(bundle)
+            if not activation_payload:
+                text += activation_link_pending_note()
         except ConflictError as exc:
             reply_markup = insufficient_balance_actions().as_markup()
             text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
@@ -2537,17 +2567,23 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
             else subscription_markup(current_subscription)
         )
     if current_subscription is not None and activation_payload:
-        image = render_qr_png(activation_payload)
-        await edit_or_send_dynamic_media_card(
-            callback,
-            image_bytes=image,
-            filename="altlink-vpn-activation.png",
-            caption=activation_success_caption(current_subscription, activation_payload),
-            reply_markup=reply_markup,
-            parse_mode="HTML",
-        )
-        return
-    await answer_or_edit(callback, text, reply_markup=reply_markup)
+        caption = activation_success_caption(current_subscription, activation_payload)
+        try:
+            image = render_qr_png(activation_payload)
+            await edit_or_send_dynamic_media_card(
+                callback,
+                image_bytes=image,
+                filename="altlink-vpn-activation.png",
+                caption=caption,
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+            return
+        except Exception:
+            logger.exception("Failed to send activation media card for plan %s", plan_code.value)
+            text = caption
+            response_parse_mode = "HTML"
+    await answer_or_edit(callback, text, reply_markup=reply_markup, parse_mode=response_parse_mode)
 
 
 @router.callback_query(F.data == "client:subscription_cancel")
@@ -2589,26 +2625,43 @@ async def subscription_link(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-        bundle = await hub.accounts.get_subscription_bundle(user.id)
-        subscription = bundle.get("subscription")
+        bundle = await safe_get_subscription_bundle(hub, user.id)
+        subscription = bundle.get("subscription") if bundle else await hub.accounts.get_current_subscription(user.id)
         payload = resolve_subscription_payload(bundle)
         if not payload:
             await answer_or_edit(
                 callback,
-                "Ссылка пока недоступна. Сначала активируйте тестовый период или тариф.",
+                (
+                    "Ссылка пока недоступна. "
+                    "Если тариф уже активирован, попробуйте открыть этот раздел чуть позже."
+                    if subscription
+                    else "Ссылка пока недоступна. Сначала активируйте тестовый период или тариф."
+                ),
                 reply_markup=subscription_link_markup(container.settings, subscription),
                 disable_web_page_preview=True,
             )
             return
-        image = render_qr_png(payload)
-        await edit_or_send_dynamic_media_card(
-            callback,
-            image_bytes=image,
-            filename="altlink-vpn-qr.png",
-            caption=subscription_link_caption(payload),
-            reply_markup=subscription_link_markup(container.settings, subscription),
-            parse_mode="HTML",
-        )
+        caption = subscription_link_caption(payload)
+        try:
+            image = render_qr_png(payload)
+            await edit_or_send_dynamic_media_card(
+                callback,
+                image_bytes=image,
+                filename="altlink-vpn-qr.png",
+                caption=caption,
+                reply_markup=subscription_link_markup(container.settings, subscription),
+                parse_mode="HTML",
+            )
+            return
+        except Exception:
+            logger.exception("Failed to send subscription link media card for user %s", user.id)
+    await answer_or_edit(
+        callback,
+        caption,
+        reply_markup=subscription_link_markup(container.settings, subscription),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
 
 
 @router.callback_query(F.data == "client:subscription_qr")
