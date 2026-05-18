@@ -486,6 +486,24 @@ def format_support_request(item) -> str:
     return "\n".join(lines)
 
 
+def format_support_request_browser(items, active_index: int) -> str:
+    if not items:
+        return "Запросы поддержки\n\nЗапросов поддержки пока нет."
+
+    current = items[active_index]
+    open_count = len([item for item in items if item.status == SupportRequestStatus.NEW])
+    resolved_count = len(items) - open_count
+    lines = [
+        f"Запросы поддержки {active_index + 1}/{len(items)}",
+        "",
+        f"Открытых: {open_count}",
+        f"Закрытых: {resolved_count}",
+        "",
+        format_support_request(current),
+    ]
+    return "\n".join(lines)
+
+
 def format_payment_request(item) -> str:
     status_label = {
         "new": "ожидает решения",
@@ -1947,14 +1965,17 @@ async def support_requests_screen(message: Message, container: AppContainer):
     if not items:
         await render_admin(message, "Запросов поддержки пока нет.")
         return
-    open_count = len([item for item in items if item.status == SupportRequestStatus.NEW])
-    await render_admin(message, f"Запросы поддержки\n\nВсего показано: {len(items)}\nОткрытых: {open_count}")
-    for item in items[:10]:
-        sent = await message.answer(
-            format_support_request(item),
-            reply_markup=support_request_actions(item.id, item.status == SupportRequestStatus.RESOLVED).as_markup(),
-        )
-        remember_admin_card(sent)
+    current = items[0]
+    await render_admin(
+        message,
+        format_support_request_browser(items, 0),
+        reply_markup=support_request_actions(
+            current.id,
+            current.status == SupportRequestStatus.RESOLVED,
+            index=0,
+            total=len(items),
+        ).as_markup(),
+    )
 
 
 @router.callback_query(F.data == "admin:support:list")
@@ -1966,7 +1987,45 @@ async def refresh_support_requests(callback: CallbackQuery, container: AppContai
     if not items:
         await render_admin(callback, "Запросов поддержки пока нет.")
         return
-    await render_admin(callback, format_support_request(items[0]), reply_markup=support_request_actions(items[0].id, items[0].status == SupportRequestStatus.RESOLVED).as_markup())
+    current = items[0]
+    await render_admin(
+        callback,
+        format_support_request_browser(items, 0),
+        reply_markup=support_request_actions(
+            current.id,
+            current.status == SupportRequestStatus.RESOLVED,
+            index=0,
+            total=len(items),
+        ).as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:support:page:"))
+async def support_request_page(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    try:
+        requested_index = int(callback.data.rsplit(":", 1)[-1])
+    except ValueError:
+        await callback.answer("Некорректная страница.", show_alert=True)
+        return
+    async with container.hub() as hub:
+        items = await hub.support.list_requests(limit=20)
+    if not items:
+        await render_admin(callback, "Запросов поддержки пока нет.")
+        return
+    active_index = min(max(requested_index, 0), len(items) - 1)
+    current = items[active_index]
+    await render_admin(
+        callback,
+        format_support_request_browser(items, active_index),
+        reply_markup=support_request_actions(
+            current.id,
+            current.status == SupportRequestStatus.RESOLVED,
+            index=active_index,
+            total=len(items),
+        ).as_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("admin:support:resolve:"))
@@ -1981,7 +2040,22 @@ async def resolve_support_request(callback: CallbackQuery, container: AppContain
             admin_id=admin.id if admin else None,
             resolution_comment="Закрыто через admin bot",
         )
-    await render_admin(callback, format_support_request(item), reply_markup=support_request_actions(item.id, True).as_markup())
+        items = await hub.support.list_requests(limit=20)
+    if not items:
+        await render_admin(callback, "Запросов поддержки пока нет.")
+        return
+    active_index = next((index for index, current in enumerate(items) if current.id == item.id), 0)
+    current = items[active_index]
+    await render_admin(
+        callback,
+        format_support_request_browser(items, active_index),
+        reply_markup=support_request_actions(
+            current.id,
+            current.status == SupportRequestStatus.RESOLVED,
+            index=active_index,
+            total=len(items),
+        ).as_markup(),
+    )
 
 
 @router.message(F.text == "Промокоды")

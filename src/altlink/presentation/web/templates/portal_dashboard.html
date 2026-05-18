@@ -226,6 +226,7 @@
           <thead><tr><th>Сервер</th><th>Тип</th><th>Статус</th><th>Пинг</th></tr></thead>
           <tbody>
             {% for access in portal_servers if access.server %}
+            {% set latency = portal_server_latency_state.get(access.server.id) if portal_server_latency_state else None %}
             <tr data-server-id="{{ access.server.id }}" data-country-code="{{ (access.server.country_code or '')|upper }}">
               <td>{{ access.server.name }}</td>
               <td>
@@ -234,7 +235,31 @@
                 {% if access.server.server_type.value == 'regular' %}Обычный сервер{% endif %}
               </td>
               <td>{{ access.status }}</td>
-              <td><span class="server-latency-chip server-latency-chip-pending" data-latency-cell>Не измерен</span></td>
+              <td>
+                <span
+                  class="server-latency-chip {% if latency %}{% if latency.reachable and latency.latency_ms is not none %}server-latency-chip-ready{% elif latency.reachable %}server-latency-chip-muted{% else %}server-latency-chip-error{% endif %}{% else %}server-latency-chip-pending{% endif %}"
+                  data-latency-cell
+                  {% if latency and latency.reachable and latency.latency_ms is not none %}
+                  data-monitoring-label="{{ latency.latency_ms }} мс"
+                  data-monitoring-state="ready"
+                  {% elif latency %}
+                  data-monitoring-label="Недоступно"
+                  data-monitoring-state="error"
+                  {% endif %}
+                >
+                  {% if latency %}
+                    {% if latency.reachable and latency.latency_ms is not none %}
+                      {{ latency.latency_ms }} мс
+                    {% elif latency.reachable %}
+                      Нет данных
+                    {% else %}
+                      Недоступно
+                    {% endif %}
+                  {% else %}
+                    Не измерен
+                  {% endif %}
+                </span>
+              </td>
             </tr>
             {% else %}
             <tr><td colspan="4" class="muted">Серверы появятся после активации доступа.</td></tr>
@@ -253,6 +278,9 @@
             <strong id="portal-latency-value">—</strong>
             <div class="muted" id="portal-latency-hint">Нажмите кнопку, чтобы обновить пинг прямо в списке доступных серверов.</div>
           </div>
+          {% if portal_server_latency_checked_at %}
+          <p class="muted">Последняя серверная проверка: {{ portal_server_latency_checked_at }}</p>
+          {% endif %}
           <p class="muted latency-disclaimer">{{ latency_disclaimer }}</p>
         </div>
       </article>
@@ -394,6 +422,16 @@
         cell.classList.add(`server-latency-chip-${state}`);
       };
 
+      const restoreMonitoringState = (cell) => {
+        const label = cell?.dataset?.monitoringLabel;
+        const state = cell?.dataset?.monitoringState;
+        if (!label || !state) {
+          return false;
+        }
+        setLatencyState(cell, label, state);
+        return true;
+      };
+
       const measureOnce = async (probeUrl, timeoutMs) => {
         const started = performance.now();
         const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -486,7 +524,11 @@
           const reachable = probes.filter((item) => item.reachable && typeof item.latency_ms === "number");
           const best = reachable.length ? Math.min(...reachable.map((item) => item.latency_ms)) : null;
 
-          latencyCells.forEach((cell) => setLatencyState(cell, "Нет данных", "muted"));
+          latencyCells.forEach((cell) => {
+            if (!restoreMonitoringState(cell)) {
+              setLatencyState(cell, "Нет данных", "muted");
+            }
+          });
           probes.forEach((item) => {
             const cell = latencyCells.get(item.server_id);
             if (!cell) {
@@ -497,7 +539,9 @@
               setLatencyState(cell, label, "ready");
               return;
             }
-            setLatencyState(cell, "Недоступно", "error");
+            if (!restoreMonitoringState(cell)) {
+              setLatencyState(cell, "Недоступно", "error");
+            }
           });
 
           value.textContent = best === null ? "н/д" : `${best} мс`;

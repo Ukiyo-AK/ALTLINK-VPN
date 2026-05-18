@@ -17,6 +17,7 @@ from altlink.presentation.web.routes import (
     latency_probe,
     load_document_text,
     ensure_portal_login_attempt,
+    build_portal_context,
     portal_bot_login_url,
     portal_login_capabilities,
     portal_login_qr_data_url,
@@ -504,6 +505,61 @@ async def test_admin_servers_route_passes_latency_state(monkeypatch):
     assert rendered["context"]["server_latency_state"]["server-1"]["latency_ms"] == 87
     assert rendered["context"]["server_latency_state"]["server-1"]["probe_target_host"] == "wl.altlink.online"
     sync_servers.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_build_portal_context_includes_server_latency_state(monkeypatch):
+    async def fake_portal_channel_state(request, user):
+        return True
+
+    async def fake_scalar(_query):
+        return SimpleNamespace(
+            value={
+                "checked_at": "2026-05-19T12:00:00+00:00",
+                "servers": {
+                    "server-1": {
+                        "reachable": True,
+                        "latency_ms": 64,
+                        "probe_target_host": "wl.altlink.online",
+                        "probe_target_port": 44443,
+                        "checked_at": "2026-05-19T12:00:00+00:00",
+                    }
+                },
+            }
+        )
+
+    monkeypatch.setattr(web_routes, "portal_channel_state", fake_portal_channel_state)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                settings=SimpleNamespace(
+                    backend_public_url="https://altlink.online",
+                    client_bot_name="@altlink_bot",
+                    required_subscription_channel_url=None,
+                    whitelist_price_per_gb_rub=Decimal("4"),
+                )
+            )
+        )
+    )
+    hub = SimpleNamespace(
+        accounts=SimpleNamespace(
+            get_subscription_bundle=AsyncMock(return_value={"subscription": None, "subscription_info": None, "connection_keys": None}),
+            can_offer_trial=AsyncMock(return_value=False),
+        ),
+        catalog=SimpleNamespace(
+            get_user_servers=AsyncMock(return_value=[SimpleNamespace(server=SimpleNamespace(id="server-1", name="Whitelist EU"))])
+        ),
+        dashboard=SimpleNamespace(list_plans=AsyncMock(return_value=[])),
+        topups=SimpleNamespace(list_requests=AsyncMock(return_value=[])),
+        session=SimpleNamespace(scalar=fake_scalar),
+    )
+
+    context = await build_portal_context(request, hub, SimpleNamespace(id="user-1"))
+
+    assert context["portal_server_latency_checked_at"] == "2026-05-19T12:00:00+00:00"
+    assert context["portal_server_latency_state"]["server-1"]["latency_ms"] == 64
+    assert context["portal_server_latency_state"]["server-1"]["probe_target_host"] == "wl.altlink.online"
 
 
 @pytest.mark.asyncio

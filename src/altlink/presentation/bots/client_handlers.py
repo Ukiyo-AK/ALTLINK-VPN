@@ -27,7 +27,7 @@ from altlink.domain.plans import (
     is_metered_plan_code,
     parse_paid_plan_code,
 )
-from altlink.presentation.bots.admin_keyboards import payment_request_actions
+from altlink.presentation.bots.admin_keyboards import payment_request_actions, support_request_actions
 from altlink.presentation.bots.common import send_telegram_messages
 from altlink.presentation.bots.client_keyboards import (
     agreement_actions,
@@ -98,6 +98,17 @@ def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
         f"Сумма: {Decimal(amount):.2f} ₽\n"
         f"Номер заявки: {request_id}\n\n"
         "Проверьте оплату и выберите действие ниже."
+    )
+
+
+def admin_support_request_text(user, request_id: str, message: str) -> str:
+    user_name = f"@{user.username}" if getattr(user, "username", None) else f"Telegram ID {user.telegram_id}"
+    return (
+        "🆘 Новый запрос в поддержку\n\n"
+        f"Пользователь: {user_name}\n"
+        f"Telegram ID: {user.telegram_id}\n"
+        f"Номер запроса: {request_id}\n\n"
+        f"{message}"
     )
 
 
@@ -237,6 +248,27 @@ async def notify_admins_about_topup_request(
 
     text = admin_payment_request_text(user, amount, request_id)
     markup = payment_request_actions(request_id, "new").as_markup()
+    await send_telegram_messages(
+        bot_token=container.settings.admin_bot_token,
+        chat_ids=admin_telegram_ids,
+        text=text,
+        reply_markup=markup,
+    )
+
+
+async def notify_admins_about_support_request(
+    container: AppContainer,
+    *,
+    user,
+    request_id: str,
+    message: str,
+    admin_telegram_ids: list[int],
+) -> None:
+    if not admin_telegram_ids or not container.settings.admin_bot_token:
+        return
+
+    text = admin_support_request_text(user, request_id, message)
+    markup = support_request_actions(request_id, False).as_markup()
     await send_telegram_messages(
         bot_token=container.settings.admin_bot_token,
         chat_ids=admin_telegram_ids,
@@ -2051,14 +2083,22 @@ async def support_issue_submit(message: Message, state: FSMContext, container: A
         except ConflictError as exc:
             await answer_or_edit(message, str(exc))
             return
+        admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
         await state.clear()
-        await answer_or_edit(
-            message,
-            "Запрос в поддержку создан.\n\n"
-            f"Номер запроса: {item.id}\n"
-            "Мы передали сообщение администраторам. Если нужно, дополнительно напишите в аккаунт поддержки.",
-            reply_markup=support_actions(support_profile_url(container.settings)).as_markup(),
-        )
+    await notify_admins_about_support_request(
+        container,
+        user=user,
+        request_id=item.id,
+        message=item.message,
+        admin_telegram_ids=admin_telegram_ids,
+    )
+    await answer_or_edit(
+        message,
+        "Запрос в поддержку создан.\n\n"
+        f"Номер запроса: {item.id}\n"
+        "Мы передали сообщение администраторам. Если нужно, дополнительно напишите в аккаунт поддержки.",
+        reply_markup=support_actions(support_profile_url(container.settings)).as_markup(),
+    )
 
 
 @router.callback_query(F.data == "client:topup_menu")

@@ -912,6 +912,120 @@ async def test_payments_screen_renders_single_browser_message(monkeypatch):
     assert "req-1" in rendered[0]
 
 
+@pytest.mark.asyncio
+async def test_support_requests_screen_renders_single_browser_message(monkeypatch):
+    rendered: list[str] = []
+    extra_answers: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_list_requests(limit: int = 20):
+        return [
+            SimpleNamespace(
+                id="support-1",
+                status=admin_handlers.SupportRequestStatus.NEW,
+                topic="vpn_issue",
+                message="Не открывается ссылка",
+                created_at=__import__("datetime").datetime(2026, 5, 19, 10, 0),
+                resolved_at=None,
+                resolution_comment=None,
+                user=SimpleNamespace(telegram_id=999, username="client1"),
+            ),
+            SimpleNamespace(
+                id="support-2",
+                status=admin_handlers.SupportRequestStatus.RESOLVED,
+                topic="vpn_issue",
+                message="Уже решено",
+                created_at=__import__("datetime").datetime(2026, 5, 18, 10, 0),
+                resolved_at=__import__("datetime").datetime(2026, 5, 18, 11, 0),
+                resolution_comment="ok",
+                user=SimpleNamespace(telegram_id=555, username="client2"),
+            ),
+        ]
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    class DummyMessage:
+        from_user = SimpleNamespace(id=42)
+
+        async def answer(self, text: str, reply_markup=None, **kwargs):
+            extra_answers.append(text)
+            return self
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(support=SimpleNamespace(list_requests=fake_list_requests))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+
+    await admin_handlers.support_requests_screen(DummyMessage(), container)
+
+    assert len(rendered) == 1
+    assert extra_answers == []
+    assert "1/2" in rendered[0]
+    assert "support-1" in rendered[0]
+
+
+@pytest.mark.asyncio
+async def test_support_request_page_switches_between_requests(monkeypatch):
+    rendered: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_list_requests(limit: int = 20):
+        return [
+            SimpleNamespace(
+                id="support-1",
+                status=admin_handlers.SupportRequestStatus.NEW,
+                topic="vpn_issue",
+                message="Первый запрос",
+                created_at=__import__("datetime").datetime(2026, 5, 19, 10, 0),
+                resolved_at=None,
+                resolution_comment=None,
+                user=SimpleNamespace(telegram_id=999, username="client1"),
+            ),
+            SimpleNamespace(
+                id="support-2",
+                status=admin_handlers.SupportRequestStatus.RESOLVED,
+                topic="vpn_issue",
+                message="Второй запрос",
+                created_at=__import__("datetime").datetime(2026, 5, 18, 10, 0),
+                resolved_at=__import__("datetime").datetime(2026, 5, 18, 11, 0),
+                resolution_comment="ok",
+                user=SimpleNamespace(telegram_id=555, username="client2"),
+            ),
+        ]
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    class DummyCallback:
+        data = "admin:support:page:1"
+        from_user = SimpleNamespace(id=42)
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(support=SimpleNamespace(list_requests=fake_list_requests))
+
+    container = SimpleNamespace(hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+
+    await admin_handlers.support_request_page(DummyCallback(), container)
+
+    assert rendered
+    assert "2/2" in rendered[0]
+    assert "support-2" in rendered[0]
+
+
 def test_format_payment_browser_marks_yookassa_new_as_unfinished():
     items = [
         SimpleNamespace(

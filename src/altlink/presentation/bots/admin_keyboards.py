@@ -177,12 +177,25 @@ def top_users_actions(active_metric: str | None = None) -> InlineKeyboardBuilder
     return builder
 
 
-def support_request_actions(request_id: str, is_resolved: bool) -> InlineKeyboardBuilder:
+def support_request_actions(
+    request_id: str,
+    is_resolved: bool,
+    *,
+    index: int = 0,
+    total: int = 1,
+) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+    if total > 1:
+        previous_index = max(index - 1, 0)
+        next_index = min(index + 1, total - 1)
+        builder.button(text="◀️", callback_data=f"admin:support:page:{previous_index}")
+        builder.button(text=f"{index + 1}/{total}", callback_data="admin:support:list", style="primary")
+        builder.button(text="▶️", callback_data=f"admin:support:page:{next_index}")
+        builder.adjust(3)
     if not is_resolved:
         builder.button(text="Закрыть запрос", callback_data=f"admin:support:resolve:{request_id}", style="success")
     builder.button(text="Обновить список", callback_data="admin:support:list")
-    builder.adjust(1, 1)
+    builder.adjust(*( [3] if total > 1 else [] ), *( [1] if not is_resolved else [] ), 1)
     return builder
 
 

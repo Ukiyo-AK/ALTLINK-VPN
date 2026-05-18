@@ -228,6 +228,8 @@ async def portal_channel_state(request: Request, user: User) -> bool:
 
 
 def portal_plan_family(plan) -> str | None:
+    if plan is None:
+        return None
     raw_code = getattr(plan.code, "value", plan.code)
     if raw_code in {PlanCode.SINGLE_10GBIT.value, PlanCode.SINGLE_10GBIT_WEEKLY.value}:
         return "10gbit"
@@ -414,6 +416,7 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
     channel_ok = await portal_channel_state(request, user)
     show_usage_details = bool(subscription and subscription.plan and is_metered_plan_code(subscription.plan.code))
     trial_available = await hub.accounts.can_offer_trial(user.id)
+    server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
 
     qr_data_uri = None
     info = bundle.get("subscription_info")
@@ -439,6 +442,8 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_plans": plans,
         "portal_plan_groups": group_portal_plans(plans),
         "portal_payments": payments,
+        "portal_server_latency_state": server_latency_state,
+        "portal_server_latency_checked_at": server_latency_checked_at,
         "portal_qr_data_uri": qr_data_uri,
         "portal_channel_ok": channel_ok,
         "portal_show_usage_details": show_usage_details,

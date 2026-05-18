@@ -1026,6 +1026,39 @@ async def test_notify_admins_about_topup_request_sends_to_admin_bot(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_notify_admins_about_support_request_sends_to_admin_bot(monkeypatch):
+    sent: list[dict[str, object]] = []
+
+    async def fake_send_telegram_messages(*, bot_token: str, chat_ids, text: str, reply_markup=None):
+        sent.append(
+            {
+                "bot_token": bot_token,
+                "chat_ids": list(chat_ids),
+                "text": text,
+                "reply_markup": reply_markup,
+            }
+        )
+        return len(list(chat_ids))
+
+    monkeypatch.setattr(client_handlers, "send_telegram_messages", fake_send_telegram_messages)
+    container = SimpleNamespace(settings=SimpleNamespace(admin_bot_token="admin-token"))
+    user = SimpleNamespace(telegram_id=888, username="support_user")
+
+    await client_handlers.notify_admins_about_support_request(
+        container,
+        user=user,
+        request_id="support-55",
+        message="Не получается подключиться",
+        admin_telegram_ids=[11, 22],
+    )
+
+    assert sent[0]["bot_token"] == "admin-token"
+    assert sent[0]["chat_ids"] == [11, 22]
+    assert "support-55" in str(sent[0]["text"])
+    assert "Не получается подключиться" in str(sent[0]["text"])
+
+
+@pytest.mark.asyncio
 async def test_handle_topup_checkout_skips_admin_notifications_for_yookassa(monkeypatch):
     notify_admins = AsyncMock()
     render_checkout = AsyncMock()
