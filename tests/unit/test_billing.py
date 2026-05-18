@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import httpx
 import pytest
 from sqlalchemy import select
 
@@ -295,3 +296,68 @@ async def test_failed_plan_switch_does_not_credit_balance_or_cancel_current_subs
     assert refreshed_current.id == current.id
     assert refreshed_current.status == SubscriptionStatus.ACTIVE
     assert refunds == []
+
+
+@pytest.mark.asyncio
+async def test_activate_paid_plan_ignores_unrelated_remote_user_sync_failure(
+    test_services,
+    monkeypatch,
+):
+    async with test_services.hub() as hub:
+        broken_user = await hub.accounts.get_or_create_user(
+            telegram_id=13024,
+            username="broken_remote_sync",
+            first_name="Broken",
+            last_name="Remote",
+            language_code="ru",
+        )
+        await hub.topups.create_request(broken_user.id, Decimal("500"), auto_complete=True)
+        await hub.billing.activate_paid_plan(broken_user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13025,
+            username="activation_survives_other_user_failure",
+            first_name="Activation",
+            last_name="Survives",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+
+        original_update_user = test_services.remnawave.update_user
+
+        async def flaky_update_user(payload: dict):
+            if payload.get("telegramId") == broken_user.telegram_id:
+                raise httpx.ConnectError("temporary remote sync failure")
+            return await original_update_user(payload)
+
+        monkeypatch.setattr(test_services.remnawave, "update_user", flaky_update_user)
+
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        refreshed_user = await hub.accounts.get_user(user.id)
+        remote_user = await test_services.remnawave.get_user(refreshed_user.remnawave_user_uuid)
+
+    assert subscription.status == SubscriptionStatus.ACTIVE
+    assert remote_user.activeInternalSquads
+
+
+@pytest.mark.asyncio
+async def test_activate_paid_plan_wraps_panel_connection_errors_as_conflict(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13026,
+            username="panel_unavailable",
+            first_name="Panel",
+            last_name="Unavailable",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+
+        async def broken_create_user(payload: dict):
+            raise httpx.ConnectError("panel unavailable")
+
+        monkeypatch.setattr(test_services.remnawave, "create_user", broken_create_user)
+
+        with pytest.raises(ConflictError) as exc_info:
+            await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+
+    assert "Попробуйте позже" in str(exc_info.value)

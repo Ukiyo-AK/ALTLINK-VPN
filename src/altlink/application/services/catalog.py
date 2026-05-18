@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from decimal import Decimal
 
+import httpx
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -19,6 +21,8 @@ from altlink.infrastructure.db.models import (
     UserServerAccess,
 )
 from altlink.utils.time import utc_now
+
+logger = logging.getLogger(__name__)
 
 
 class CatalogService(BaseService):
@@ -297,6 +301,20 @@ class CatalogService(BaseService):
 
         await self._sync_user_squads(users, user_server_targets)
 
+    async def sync_user_target_squads(self, user_id: str) -> None:
+        if self.remnawave is None:
+            return
+        accesses = await self.get_user_servers(user_id)
+        target_server_ids = {access.server_id for access in accesses if access.server_id}
+        if not target_server_ids:
+            return
+        servers = [
+            server
+            for server in await self.list_servers()
+            if server.id in target_server_ids
+        ]
+        await self._sync_internal_squads(servers, strict=True)
+
     async def _resolve_server_targets(
         self,
         user: User,
@@ -354,7 +372,7 @@ class CatalogService(BaseService):
 
         return await self._pick_least_loaded_ten_gbit_server(servers)
 
-    async def _sync_internal_squads(self, servers: Sequence[Server] | None = None) -> None:
+    async def _sync_internal_squads(self, servers: Sequence[Server] | None = None, *, strict: bool = False) -> None:
         if self.remnawave is None:
             return
 
@@ -381,15 +399,27 @@ class CatalogService(BaseService):
                 squad = remote_by_name.get(squad_name)
 
             if squad is None:
-                created = await self.remnawave.create_internal_squad(name=squad_name, inbounds=inbound_ids)
-                server.remnawave_internal_squad_uuid = created.uuid
+                try:
+                    created = await self.remnawave.create_internal_squad(name=squad_name, inbounds=inbound_ids)
+                    server.remnawave_internal_squad_uuid = created.uuid
+                except Exception:
+                    logger.warning("Failed to create internal squad for server %s", server.id, exc_info=True)
+                    if strict:
+                        raise
+                    continue
             else:
-                updated = await self.remnawave.update_internal_squad(
-                    squad_uuid=squad.uuid,
-                    name=squad_name,
-                    inbounds=inbound_ids,
-                )
-                server.remnawave_internal_squad_uuid = updated.uuid
+                try:
+                    updated = await self.remnawave.update_internal_squad(
+                        squad_uuid=squad.uuid,
+                        name=squad_name,
+                        inbounds=inbound_ids,
+                    )
+                    server.remnawave_internal_squad_uuid = updated.uuid
+                except Exception:
+                    logger.warning("Failed to update internal squad for server %s", server.id, exc_info=True)
+                    if strict:
+                        raise
+                    continue
 
     async def _sync_user_squads(self, users: Sequence[User], user_server_targets: dict[str, set[str]]) -> None:
         if self.remnawave is None:
@@ -411,20 +441,24 @@ class CatalogService(BaseService):
                 if server_id in server_map and server_map[server_id].remnawave_internal_squad_uuid
             ]
             expire_at = subscription.grace_until if subscription.status == SubscriptionStatus.GRACE else subscription.ends_at
-            await self.remnawave.update_user(
-                {
-                    "uuid": user.remnawave_user_uuid,
-                    "username": user.remnawave_username or f"tg_{user.telegram_id}",
-                    "status": "ACTIVE" if user.status in {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE} else "DISABLED",
-                    "expireAt": expire_at.isoformat(),
-                    "trafficLimitBytes": int(subscription.traffic_limit_bytes or 0),
-                    "trafficLimitStrategy": "NO_RESET",
-                    "hwidDeviceLimit": subscription.plan.device_limit,
-                    "telegramId": user.telegram_id,
-                    "description": f"ALTLINK user {user.telegram_id}",
-                    "activeInternalSquads": squad_ids,
-                }
-            )
+            try:
+                await self.remnawave.update_user(
+                    {
+                        "uuid": user.remnawave_user_uuid,
+                        "username": user.remnawave_username or f"tg_{user.telegram_id}",
+                        "status": "ACTIVE" if user.status in {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE} else "DISABLED",
+                        "expireAt": expire_at.isoformat(),
+                        "trafficLimitBytes": int(subscription.traffic_limit_bytes or 0),
+                        "trafficLimitStrategy": "NO_RESET",
+                        "hwidDeviceLimit": subscription.plan.device_limit,
+                        "telegramId": user.telegram_id,
+                        "description": f"ALTLINK user {user.telegram_id}",
+                        "activeInternalSquads": squad_ids,
+                    }
+                )
+            except httpx.HTTPError:
+                logger.warning("Failed to sync remote squads for user %s", user.id, exc_info=True)
+                continue
 
     def _resolve_current_subscription(self, subscriptions: Sequence[Subscription]) -> Subscription | None:
         active_states = {SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL, SubscriptionStatus.GRACE}

@@ -115,7 +115,7 @@ class BillingService(BaseService):
         await self.catalog.assign_preferred_server(user.id, plan.code)
         user.status = UserStatus.TRIAL
         await self.catalog.rebuild_user_access_matrix()
-        await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=True)
+        await self._sync_user_remote_access(user, subscription, plan, enable=True, reset_traffic=True)
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="trial_activated",
@@ -213,7 +213,7 @@ class BillingService(BaseService):
             await self.catalog.assign_preferred_server(user.id, plan.code)
 
         await self.catalog.rebuild_user_access_matrix()
-        remote_user = await self._sync_remote_state(
+        remote_user = await self._sync_user_remote_access(
             user,
             subscription,
             plan,
@@ -268,7 +268,7 @@ class BillingService(BaseService):
         user.status = UserStatus.ACTIVE
         plan = await self.accounts.get_plan(subscription.plan.code)
         await self.catalog.rebuild_user_access_matrix()
-        await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=False)
+        await self._sync_user_remote_access(user, subscription, plan, enable=True, reset_traffic=False)
         return user
 
     async def cancel_subscription_renewal(self, user_id: str) -> Subscription:
@@ -391,7 +391,7 @@ class BillingService(BaseService):
                     )
                 await self._start_next_billing_cycle(subscription, plan)
                 user.status = UserStatus.ACTIVE
-                await self._sync_remote_state(user, subscription, plan, enable=True, reset_traffic=True)
+                await self._sync_user_remote_access(user, subscription, plan, enable=True, reset_traffic=True)
                 state_changed = True
                 continue
 
@@ -805,6 +805,30 @@ class BillingService(BaseService):
         unused_share = Decimal(str(remaining.total_seconds())) / Decimal(existing.plan.period_days * 86400)
         return max(quantize_money(current_price * unused_share), Decimal("0.00"))
 
+    async def _sync_user_remote_access(
+        self,
+        user: User,
+        subscription: Subscription,
+        plan: Plan,
+        *,
+        enable: bool,
+        reset_traffic: bool,
+    ):
+        try:
+            await self.catalog.sync_user_target_squads(user.id)
+        except httpx.HTTPStatusError as exc:
+            raise ConflictError(self._format_remnawave_error(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise ConflictError("Не удалось связаться с панелью для активации доступа. Попробуйте позже.") from exc
+
+        return await self._sync_remote_state(
+            user,
+            subscription,
+            plan,
+            enable=enable,
+            reset_traffic=reset_traffic,
+        )
+
     async def _sync_remote_state(
         self,
         user: User,
@@ -868,6 +892,8 @@ class BillingService(BaseService):
             return remote
         except httpx.HTTPStatusError as exc:
             raise ConflictError(self._format_remnawave_error(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise ConflictError("Не удалось связаться с панелью для активации доступа. Попробуйте позже.") from exc
 
     def _is_ignorable_state_error(self, exc: httpx.HTTPStatusError, desired_state: str) -> bool:
         response = exc.response
