@@ -325,37 +325,8 @@ class BillingService(BaseService):
                 continue
 
             if subscription.status == SubscriptionStatus.TRIAL:
-                trial_ends_at = ensure_utc(subscription.ends_at)
-                trial_reminder_window = self._trial_reminder_window(trial_ends_at - now)
-                if trial_reminder_window is not None:
-                    reminder_key, reminder_label = trial_reminder_window
-                    await self.notifications.queue(
-                        user_id=user.id,
-                        notification_type=NotificationType.BROADCAST,
-                        message=trial_expiring_message(trial_ends_at, reminder_label),
-                        payload={"kind": "trial_expiring", "window": reminder_key},
-                        dedupe_key=f"trial-reminder:{subscription.id}:{reminder_key}",
-                    )
-
-                if trial_ends_at <= now:
-                    subscription.status = SubscriptionStatus.EXPIRED
-                    user.status = UserStatus.BLOCKED
-                    if self.remnawave and user.remnawave_user_uuid:
-                        await self.remnawave.disable_user(user.remnawave_user_uuid)
-                    await self.notifications.queue(
-                        user_id=user.id,
-                        notification_type=NotificationType.TRIAL_ENDED,
-                        message=trial_ended_message(),
-                        dedupe_key=f"trial-ended:{subscription.id}",
-                    )
-                    await self.notifications.queue(
-                        user_id=user.id,
-                        notification_type=NotificationType.ACCESS_BLOCKED,
-                        message=blocked_message(),
-                        dedupe_key=f"trial-blocked:{subscription.id}",
-                    )
-                    state_changed = True
-                    continue
+                state_changed = await self._sync_trial_subscription_state(subscription, now) or state_changed
+                continue
 
             if subscription.status == SubscriptionStatus.GRACE:
                 subscription.status = SubscriptionStatus.ACTIVE
@@ -422,6 +393,30 @@ class BillingService(BaseService):
 
         if state_changed:
             await self.catalog.rebuild_user_access_matrix()
+
+    async def sync_user_trial_state(self, user_id: str) -> Subscription | None:
+        subscription = await self.session.scalar(
+            select(Subscription)
+            .where(
+                Subscription.user_id == user_id,
+                Subscription.status.in_(
+                    [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL, SubscriptionStatus.GRACE]
+                ),
+            )
+            .options(
+                joinedload(Subscription.plan),
+                joinedload(Subscription.user).joinedload(User.assigned_server),
+                joinedload(Subscription.user).joinedload(User.trial_period),
+            )
+            .order_by(Subscription.created_at.desc())
+        )
+        if subscription is None or subscription.status != SubscriptionStatus.TRIAL:
+            return subscription
+
+        if await self._sync_trial_subscription_state(subscription, utc_now()):
+            await self.catalog.rebuild_user_access_matrix()
+
+        return await self.accounts.get_current_subscription(user_id)
 
     async def snapshot_traffic(self) -> None:
         if self.remnawave is None:
@@ -508,15 +503,13 @@ class BillingService(BaseService):
         subscription.status = SubscriptionStatus.CANCELED
         subscription.canceled_at = utc_now()
         user.status = UserStatus.CANCELED
-        if self.remnawave and user.remnawave_user_uuid:
-            await self.remnawave.disable_user(user.remnawave_user_uuid)
+        await self._disable_remote_user_best_effort(user, event_type="subscription_cancel_disable_failed")
 
     async def _block_subscription(self, subscription: Subscription, user: User) -> None:
         subscription.status = SubscriptionStatus.BLOCKED
         subscription.blocked_at = utc_now()
         user.status = UserStatus.BLOCKED
-        if self.remnawave and user.remnawave_user_uuid:
-            await self.remnawave.disable_user(user.remnawave_user_uuid)
+        await self._disable_remote_user_best_effort(user, event_type="subscription_block_disable_failed")
         await self.notifications.queue(
             user_id=user.id,
             notification_type=NotificationType.ACCESS_BLOCKED,
@@ -791,6 +784,73 @@ class BillingService(BaseService):
                 message=inactive_subscription_promo_message("ALT10", 10),
                 payload={"promo_code": "ALT10", "discount_percent": 10, "campaign": "inactive_monthly"},
                 dedupe_key=f"inactive-promo:{user.id}:{month_key}",
+            )
+
+    async def _sync_trial_subscription_state(self, subscription: Subscription, now: datetime) -> bool:
+        user = subscription.user
+        if user is None:
+            return False
+
+        trial_ends_at = ensure_utc(subscription.ends_at)
+        trial_reminder_window = self._trial_reminder_window(trial_ends_at - now)
+        if trial_reminder_window is not None:
+            reminder_key, reminder_label = trial_reminder_window
+            await self.notifications.queue(
+                user_id=user.id,
+                notification_type=NotificationType.BROADCAST,
+                message=trial_expiring_message(trial_ends_at, reminder_label),
+                payload={"kind": "trial_expiring", "window": reminder_key},
+                dedupe_key=f"trial-reminder:{subscription.id}:{reminder_key}",
+            )
+
+        if trial_ends_at > now:
+            return False
+
+        subscription.status = SubscriptionStatus.EXPIRED
+        user.status = UserStatus.BLOCKED
+        await self._disable_remote_user_best_effort(user, event_type="trial_disable_failed")
+        await self.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.TRIAL_ENDED,
+            message=trial_ended_message(),
+            dedupe_key=f"trial-ended:{subscription.id}",
+        )
+        await self.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.ACCESS_BLOCKED,
+            message=blocked_message(),
+            dedupe_key=f"trial-blocked:{subscription.id}",
+        )
+        return True
+
+    async def _disable_remote_user_best_effort(self, user: User, *, event_type: str) -> None:
+        if self.remnawave is None or not user.remnawave_user_uuid:
+            return
+        try:
+            await self.remnawave.disable_user(user.remnawave_user_uuid)
+        except httpx.HTTPStatusError as exc:
+            await self.log_event(
+                level=SystemEventLevel.WARNING,
+                event_type=event_type,
+                message="Не удалось отключить пользователя в панели при обновлении статуса подписки.",
+                payload={
+                    "user_id": user.id,
+                    "telegram_id": user.telegram_id,
+                    "remnawave_user_uuid": user.remnawave_user_uuid,
+                    "error": self._format_remnawave_error(exc),
+                },
+            )
+        except httpx.HTTPError as exc:
+            await self.log_event(
+                level=SystemEventLevel.WARNING,
+                event_type=event_type,
+                message="Не удалось отключить пользователя в панели при обновлении статуса подписки.",
+                payload={
+                    "user_id": user.id,
+                    "telegram_id": user.telegram_id,
+                    "remnawave_user_uuid": user.remnawave_user_uuid,
+                    "error": str(exc),
+                },
             )
 
     def _calculate_residual_credit_rub(self, existing: Subscription | None) -> Decimal:

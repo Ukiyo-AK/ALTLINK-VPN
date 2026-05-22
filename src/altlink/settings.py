@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     )
 
     sync_servers_interval_minutes: int = 30
-    billing_interval_minutes: int = 60
+    billing_interval_minutes: int = 5
     traffic_snapshot_interval_minutes: int = 10
     notification_dispatch_interval_minutes: int = 2
     online_refresh_interval_minutes: int = 2

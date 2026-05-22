@@ -10,7 +10,7 @@ from sqlalchemy import select
 from altlink.application.services.billing import BillingService
 from altlink.application.services.base import ConflictError
 from altlink.domain.billing import compute_period_end, compute_prorated_daily_charge, quantize_money
-from altlink.domain.enums import BalanceTransactionType, NotificationType, PlanCode, SubscriptionStatus
+from altlink.domain.enums import BalanceTransactionType, NotificationType, PlanCode, SubscriptionStatus, UserStatus
 from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
 from altlink.infrastructure.db.models import BalanceTransaction
 from altlink.infrastructure.remnawave_schemas import RemoteSeriesPoint, RemoteUsageResponse, RemoteUsageTopNode
@@ -66,6 +66,41 @@ async def test_process_due_subscriptions_queues_trial_expiring_reminder(test_ser
     assert reminder.dedupe_key == f"trial-reminder:{subscription.id}:24h"
     assert "24 часа" in reminder.message
     assert "Пробный период" in reminder.message
+
+
+@pytest.mark.asyncio
+async def test_sync_user_trial_state_expires_overdue_trial_and_queues_notifications_even_if_remote_disable_fails(
+    test_services,
+    monkeypatch,
+):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13004,
+            username="trial_expired_sync",
+            first_name="Trial",
+            last_name="Expired",
+            language_code="ru",
+        )
+        subscription = await hub.billing.activate_trial(user.id)
+        subscription.ends_at = utc_now() - timedelta(minutes=5)
+        subscription.next_billing_at = subscription.ends_at
+
+        async def failing_disable_user(uuid: str):
+            raise httpx.ConnectError("panel offline")
+
+        monkeypatch.setattr(test_services.remnawave, "disable_user", failing_disable_user)
+
+        current = await hub.billing.sync_user_trial_state(user.id)
+        latest = await hub.accounts.get_latest_subscription(user.id)
+        refreshed_user = await hub.accounts.get_user(user.id)
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    assert current is None
+    assert latest is not None
+    assert latest.status == SubscriptionStatus.EXPIRED
+    assert refreshed_user.status == UserStatus.BLOCKED
+    assert any(item.user_id == user.id and item.type == NotificationType.TRIAL_ENDED for item in pending)
+    assert any(item.user_id == user.id and item.type == NotificationType.ACCESS_BLOCKED for item in pending)
 
 
 @pytest.mark.asyncio

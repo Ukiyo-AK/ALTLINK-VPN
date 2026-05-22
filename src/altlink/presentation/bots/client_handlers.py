@@ -1519,8 +1519,24 @@ async def ensure_client_access(message: Message | CallbackQuery, container: AppC
     return None
 
 
+async def sync_visible_trial_state(hub, user_id: str) -> None:
+    billing = getattr(hub, "billing", None)
+    if billing is None:
+        return
+    sync_trial_state = getattr(billing, "sync_user_trial_state", None)
+    if sync_trial_state is None:
+        return
+    try:
+        await sync_trial_state(user_id)
+    except Exception:
+        # The screen should still open even if the background state sync
+        # temporarily fails; the next billing pass will retry it.
+        return
+
+
 async def show_home(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
     user = await ensure_user(target.from_user, container, hub)
+    await sync_visible_trial_state(hub, user.id)
     subscription = await hub.accounts.get_current_subscription(user.id)
     latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
     show_trial = await hub.accounts.can_offer_trial(user.id)
@@ -1537,6 +1553,7 @@ async def show_home(target: Message | CallbackQuery, container: AppContainer, hu
 
 async def show_profile(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
     user = await ensure_user(target.from_user, container, hub)
+    await sync_visible_trial_state(hub, user.id)
     subscription = await hub.accounts.get_current_subscription(user.id)
     portal_url = await create_portal_autologin_url(hub, container.settings, user.id)
     await send_card_with_optional_media(
@@ -1555,6 +1572,7 @@ async def show_profile(target: Message | CallbackQuery, container: AppContainer,
 
 async def show_subscription(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
     user = await ensure_user(target.from_user, container, hub)
+    await sync_visible_trial_state(hub, user.id)
     await hub.billing.refresh_subscription_traffic(user.id)
     bundle = await hub.accounts.get_subscription_bundle(user.id)
     user_servers = await hub.catalog.get_user_servers(user.id)
