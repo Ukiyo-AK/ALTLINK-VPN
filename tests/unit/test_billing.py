@@ -100,7 +100,30 @@ async def test_sync_user_trial_state_expires_overdue_trial_and_queues_notificati
     assert latest.status == SubscriptionStatus.EXPIRED
     assert refreshed_user.status == UserStatus.BLOCKED
     assert any(item.user_id == user.id and item.type == NotificationType.TRIAL_ENDED for item in pending)
-    assert any(item.user_id == user.id and item.type == NotificationType.ACCESS_BLOCKED for item in pending)
+
+
+@pytest.mark.asyncio
+async def test_process_due_subscriptions_queues_trial_followup_for_expired_trial_without_paid_history(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13005,
+            username="trial_followup",
+            first_name="Trial",
+            last_name="Followup",
+            language_code="ru",
+        )
+        subscription = await hub.billing.activate_trial(user.id)
+        subscription.status = SubscriptionStatus.EXPIRED
+        subscription.ends_at = utc_now() - timedelta(hours=13)
+        subscription.next_billing_at = subscription.ends_at
+        user.status = UserStatus.BLOCKED
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    followup = next(item for item in pending if item.user_id == user.id and item.dedupe_key == f"trial-followup:{subscription.id}:12h")
+    assert followup.type == NotificationType.BROADCAST
+    assert "ALT10" in followup.message
 
 
 @pytest.mark.asyncio

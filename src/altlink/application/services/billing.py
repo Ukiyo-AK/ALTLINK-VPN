@@ -27,6 +27,7 @@ from altlink.domain.notifications import (
     blocked_message,
     inactive_subscription_promo_message,
     low_balance_message,
+    trial_followup_message,
     trial_expiring_message,
     trial_ended_message,
     upcoming_renewal_message,
@@ -390,6 +391,7 @@ class BillingService(BaseService):
                 )
 
         await self._queue_inactive_user_promos(now)
+        await self._queue_post_trial_followups(now)
 
         if state_changed:
             await self.catalog.rebuild_user_access_matrix()
@@ -782,8 +784,58 @@ class BillingService(BaseService):
                 user_id=user.id,
                 notification_type=NotificationType.PROMO_CODE,
                 message=inactive_subscription_promo_message("ALT10", 10),
-                payload={"promo_code": "ALT10", "discount_percent": 10, "campaign": "inactive_monthly"},
+                payload={
+                    "promo_code": "ALT10",
+                    "discount_percent": 10,
+                    "campaign": "inactive_monthly",
+                    "cta": "inactive_promo",
+                    "parse_mode": "HTML",
+                },
                 dedupe_key=f"inactive-promo:{user.id}:{month_key}",
+            )
+
+    async def _queue_post_trial_followups(self, now: datetime) -> None:
+        followup_ready_at = now - timedelta(hours=12)
+        subscriptions = list(
+            (
+                await self.session.scalars(
+                    select(Subscription)
+                    .join(Plan, Subscription.plan_id == Plan.id)
+                    .options(joinedload(Subscription.user), joinedload(Subscription.plan))
+                    .where(
+                        Subscription.status == SubscriptionStatus.EXPIRED,
+                        Subscription.ends_at <= followup_ready_at,
+                        Plan.is_trial.is_(True),
+                    )
+                    .order_by(Subscription.ends_at.desc())
+                )
+            ).all()
+        )
+        latest_trial_by_user: dict[str, Subscription] = {}
+        for subscription in subscriptions:
+            if subscription.user_id not in latest_trial_by_user:
+                latest_trial_by_user[subscription.user_id] = subscription
+
+        for subscription in latest_trial_by_user.values():
+            user = subscription.user
+            if user is None:
+                continue
+            if await self.accounts.has_paid_subscription_history(user.id):
+                continue
+            if await self.accounts.get_current_subscription(user.id) is not None:
+                continue
+            await self.notifications.queue(
+                user_id=user.id,
+                notification_type=NotificationType.BROADCAST,
+                message=trial_followup_message("ALT10", 10),
+                payload={
+                    "promo_code": "ALT10",
+                    "discount_percent": 10,
+                    "kind": "trial_followup",
+                    "cta": "trial_followup",
+                    "parse_mode": "HTML",
+                },
+                dedupe_key=f"trial-followup:{subscription.id}:12h",
             )
 
     async def _sync_trial_subscription_state(self, subscription: Subscription, now: datetime) -> bool:
@@ -799,7 +851,7 @@ class BillingService(BaseService):
                 user_id=user.id,
                 notification_type=NotificationType.BROADCAST,
                 message=trial_expiring_message(trial_ends_at, reminder_label),
-                payload={"kind": "trial_expiring", "window": reminder_key},
+                payload={"kind": "trial_expiring", "window": reminder_key, "cta": "trial_expiring"},
                 dedupe_key=f"trial-reminder:{subscription.id}:{reminder_key}",
             )
 
@@ -813,13 +865,8 @@ class BillingService(BaseService):
             user_id=user.id,
             notification_type=NotificationType.TRIAL_ENDED,
             message=trial_ended_message(),
+            payload={"kind": "trial_ended", "cta": "trial_ended"},
             dedupe_key=f"trial-ended:{subscription.id}",
-        )
-        await self.notifications.queue(
-            user_id=user.id,
-            notification_type=NotificationType.ACCESS_BLOCKED,
-            message=blocked_message(),
-            dedupe_key=f"trial-blocked:{subscription.id}",
         )
         return True
 

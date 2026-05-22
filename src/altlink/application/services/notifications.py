@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import Select, select
 
 from altlink.application.services.base import BaseService
@@ -64,6 +65,7 @@ class NotificationService(BaseService):
                         Notification.user_id,
                         Notification.type,
                         Notification.message,
+                        Notification.payload,
                         Notification.dedupe_key,
                         User.telegram_id,
                     )
@@ -88,7 +90,7 @@ class NotificationService(BaseService):
         outcomes: dict[str, dict[str, object | None]] = {}
         bot = Bot(token=bot_token)
         try:
-            for notification_id, user_id, notification_type, message, dedupe_key, telegram_id in rows:
+            for notification_id, user_id, notification_type, message, payload, dedupe_key, telegram_id in rows:
                 if telegram_id is None:
                     failed += 1
                     outcomes[notification_id] = {
@@ -106,7 +108,14 @@ class NotificationService(BaseService):
                     continue
 
                 try:
-                    await bot.send_message(chat_id=telegram_id, text=message)
+                    parse_mode = self._notification_parse_mode(notification_type, payload)
+                    reply_markup = self._notification_reply_markup(payload)
+                    await bot.send_message(
+                        chat_id=telegram_id,
+                        text=message,
+                        parse_mode=parse_mode,
+                        reply_markup=reply_markup,
+                    )
                     outcomes[notification_id] = {
                         "status": NotificationStatus.SENT,
                         "failure_reason": None,
@@ -168,3 +177,41 @@ class NotificationService(BaseService):
             len(rows),
         )
         return delivered
+
+    @staticmethod
+    def _notification_parse_mode(notification_type: NotificationType, payload: dict | None) -> str | None:
+        if isinstance(payload, dict):
+            parse_mode = payload.get("parse_mode")
+            if isinstance(parse_mode, str) and parse_mode:
+                return parse_mode
+        if notification_type == NotificationType.PROMO_CODE:
+            return "HTML"
+        return None
+
+    @staticmethod
+    def _notification_reply_markup(payload: dict | None) -> InlineKeyboardMarkup | None:
+        if not isinstance(payload, dict):
+            return None
+
+        cta = payload.get("cta")
+        if cta == "trial_expiring":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🧾 Подписка", callback_data="client:subscription")],
+                ]
+            )
+        if cta == "trial_ended":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🧾 Выбрать тариф", callback_data="client:plan_menu")],
+                    [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
+                ]
+            )
+        if cta in {"inactive_promo", "trial_followup"}:
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🧾 Выбрать тариф", callback_data="client:plan_menu")],
+                    [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="client:promo_prompt")],
+                ]
+            )
+        return None

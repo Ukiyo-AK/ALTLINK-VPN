@@ -698,6 +698,7 @@ async def is_channel_member(telegram_id: int, container: AppContainer) -> bool:
 
 
 async def answer_or_edit(message: Message | CallbackQuery, text: str, *, reply_markup=None, **kwargs):
+    kwargs = {key: value for key, value in kwargs.items() if value is not None}
     if isinstance(message, CallbackQuery):
         if await try_edit_tracked_client_card(message, text, reply_markup=reply_markup, media_file=None, **kwargs):
             await message.answer()
@@ -744,6 +745,7 @@ async def send_card_with_optional_media(
     media_section: str | None = None,
     fallback_markup=None,
     force_new_message: bool = False,
+    parse_mode: str | None = None,
 ) -> None:
     anchor = target.message if isinstance(target, CallbackQuery) else target
     media_filename = section_media_filename(media_section) if media_section else None
@@ -754,11 +756,15 @@ async def send_card_with_optional_media(
 
     last_exc: TelegramBadRequest | None = None
     for markup in markups:
+        text_kwargs = {"reply_markup": markup}
+        if parse_mode is not None:
+            text_kwargs["parse_mode"] = parse_mode
         if isinstance(target, CallbackQuery) and not force_new_message and await try_edit_tracked_client_card(
             target,
             text,
             reply_markup=markup,
             media_file=media_file,
+            parse_mode=parse_mode,
         ):
             if isinstance(target, CallbackQuery):
                 await target.answer()
@@ -766,11 +772,10 @@ async def send_card_with_optional_media(
 
         if media_file is not None and hasattr(anchor, "answer_photo"):
             try:
-                sent = await anchor.answer_photo(
-                    FSInputFile(str(media_file)),
-                    caption=text,
-                    reply_markup=markup,
-                )
+                photo_kwargs = {"caption": text, "reply_markup": markup}
+                if parse_mode is not None:
+                    photo_kwargs["parse_mode"] = parse_mode
+                sent = await anchor.answer_photo(FSInputFile(str(media_file)), **photo_kwargs)
                 remember_client_card(sent, has_media=True)
                 if isinstance(target, CallbackQuery):
                     await target.answer()
@@ -781,12 +786,12 @@ async def send_card_with_optional_media(
 
         try:
             if force_new_message:
-                sent = await anchor.answer(text, reply_markup=markup)
+                sent = await anchor.answer(text, **text_kwargs)
                 remember_client_card(sent, has_media=False)
                 if isinstance(target, CallbackQuery):
                     await target.answer()
             else:
-                await answer_or_edit(target, text, reply_markup=markup)
+                await answer_or_edit(target, text, **text_kwargs)
             return
         except TelegramBadRequest as exc:
             last_exc = exc
@@ -1010,6 +1015,20 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
         return "\n".join(lines)
 
     if user.status == "blocked" or (latest_subscription and getattr(latest_subscription, "status", None) == "blocked"):
+        latest_plan = getattr(latest_subscription, "plan", None)
+        if latest_plan is not None and getattr(latest_plan, "is_trial", False):
+            lines = [
+                "🏠 Главное меню",
+                "",
+                f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+                "Тестовый период завершён, поэтому доступ сейчас остановлен.",
+                "",
+                "Что делать дальше:",
+                "1. Откройте «Подписка».",
+                "2. Нажмите «Выбрать тариф».",
+                "3. Если средств не хватает, сначала пополните баланс.",
+            ]
+            return "\n".join(lines)
         lines = [
             "🏠 Главное меню",
             "",
@@ -1063,6 +1082,16 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         )
 
     if subscription is None:
+        latest_plan = getattr(subscription_for_state, "plan", None)
+        if latest_plan is not None and getattr(latest_plan, "is_trial", False):
+            return (
+                "🔐 Подписка\n\n"
+                "Пробный период уже завершён.\n"
+                f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n\n"
+                "Чтобы вернуться в сеть, откройте «Выбрать тариф» и активируйте Start или Pro.\n"
+                "Если на балансе не хватает средств, сначала пополните его.\n\n"
+                f"{access_links_text(settings)}"
+            )
         return (
             "🔐 Подписка\n\n"
             f"Последний тариф: {subscription_for_state.plan.name if subscription_for_state.plan else 'не выбран'}\n"
@@ -1614,11 +1643,13 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
     resolved_provider = hub.topups.resolved_provider()
     missing_settings = hub.topups.yookassa_missing_settings()
     promo_line = ""
+    response_parse_mode = None
     if pending_promo is not None:
         promo_line = (
-            f"Активный промокод: {pending_promo.code} • "
+            f"Активный промокод: <code>{pending_promo.code}</code> • "
             f"скидка {format_percent_compact(Decimal(pending_promo.reward_value))} на следующий тариф\n"
         )
+        response_parse_mode = "HTML"
     await send_card_with_optional_media(
         target,
         (
@@ -1634,6 +1665,7 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
         primary_markup=balance_actions().as_markup(),
         media_section="balance",
         force_new_message=not isinstance(target, CallbackQuery),
+        parse_mode=response_parse_mode,
     )
 
 
@@ -2400,11 +2432,14 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
             else:
                 await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
             return
+        response_parse_mode = None
         if "следующей покупке тарифа" in result_text and promo is not None:
             result_text = (
-                f"{result_text}\n\n"
-                f"🎟 В разделе «Подписка» цены уже будут показаны со скидкой по коду {promo.code}."
+                f"Промокод <code>{promo.code}</code> активирован. "
+                f"Скидка {Decimal(promo.reward_value):.2f}% применится при следующей покупке тарифа.\n\n"
+                f"🎟 В разделе «Подписка» цены уже будут показаны со скидкой по коду <code>{promo.code}</code>."
             )
+            response_parse_mode = "HTML"
         if promo_source == "onboarding":
             await hub.accounts.mark_promo_onboarding_completed(user.id)
             refreshed = await hub.accounts.get_user(user.id)
@@ -2414,7 +2449,7 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
 
     await state.clear()
     if promo_source == "onboarding":
-        await answer_or_edit(message, result_text)
+        await answer_or_edit(message, result_text, parse_mode=response_parse_mode)
         await send_reply_menu(message, force=True)
         await send_home_card(
             message,
@@ -2426,7 +2461,12 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
             as_new_message=True,
         )
         return
-    await answer_or_edit(message, result_text, reply_markup=balance_actions().as_markup())
+    await answer_or_edit(
+        message,
+        result_text,
+        reply_markup=balance_actions().as_markup(),
+        parse_mode=response_parse_mode,
+    )
 
 
 @router.callback_query(F.data == "client:referral")
