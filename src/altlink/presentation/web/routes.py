@@ -113,6 +113,47 @@ async def load_server_latency_state(session) -> tuple[dict[str, dict], str | Non
     return (servers if isinstance(servers, dict) else {}), (checked_at if isinstance(checked_at, str) else None)
 
 
+def landing_latency_label(latency: dict | None) -> tuple[str, str]:
+    if not isinstance(latency, dict):
+        return "Не измерен", "muted"
+    if latency.get("reachable"):
+        latency_ms = latency.get("latency_ms")
+        if isinstance(latency_ms, int | float):
+            return f"{round(latency_ms)} мс", "ready"
+        return "Нет данных", "muted"
+    return "Недоступно", "error"
+
+
+def build_landing_latency_items(servers, latency_state: dict[str, dict]) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    for server in servers or []:
+        if not getattr(server, "is_available", False):
+            continue
+        latency = latency_state.get(getattr(server, "id", "")) if isinstance(latency_state, dict) else None
+        label, state = landing_latency_label(latency)
+        latency_ms = latency.get("latency_ms") if isinstance(latency, dict) else None
+        items.append(
+            {
+                "server_id": getattr(server, "id", None),
+                "name": getattr(server, "name", None),
+                "country_code": (getattr(server, "country_code", "") or "").upper(),
+                "reachable": bool(latency.get("reachable")) if isinstance(latency, dict) else False,
+                "latency_ms": latency_ms if isinstance(latency_ms, int | float) else None,
+                "display_label": label,
+                "display_state": state,
+                "probe_target_host": latency.get("probe_target_host") if isinstance(latency, dict) else None,
+                "checked_at": latency.get("checked_at") if isinstance(latency, dict) else None,
+            }
+        )
+    return sorted(
+        [item for item in items if item.get("server_id")],
+        key=lambda item: (
+            item.get("country_code", ""),
+            item.get("name", ""),
+        ),
+    )
+
+
 def pop_flash(request: Request) -> dict | None:
     return request.session.pop("flash", None)
 
@@ -471,7 +512,21 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
 async def landing_page(request: Request):
     async with request.app.state.container.hub() as hub:
         plans = await hub.dashboard.list_plans()
+        servers = await hub.catalog.list_servers()
+        server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
     settings = request.app.state.settings
+    landing_latency_items = build_landing_latency_items(servers, server_latency_state)
+    landing_latency_values = [
+        item["latency_ms"]
+        for item in landing_latency_items
+        if isinstance(item.get("latency_ms"), int | float)
+    ]
+    landing_latency_best_label = f"{round(min(landing_latency_values))} мс" if landing_latency_values else "—"
+    landing_latency_initial_hint = (
+        "Показываем последние сохранённые значения по серверам. Кнопка ниже обновит замер из вашего браузера."
+        if landing_latency_items
+        else "Нажмите кнопку, чтобы запустить измерение."
+    )
     return render(
         request,
         "landing.html",
@@ -486,6 +541,10 @@ async def landing_page(request: Request):
         latency_api_url="/api/latency",
         latency_target_label=latency_target_label(),
         latency_disclaimer=latency_disclaimer_text(),
+        landing_latency_items=landing_latency_items,
+        landing_latency_checked_at=server_latency_checked_at,
+        landing_latency_best_label=landing_latency_best_label,
+        landing_latency_initial_hint=landing_latency_initial_hint,
     )
 
 

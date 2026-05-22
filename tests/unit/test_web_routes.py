@@ -508,6 +508,86 @@ async def test_admin_servers_route_passes_latency_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
+    rendered: dict[str, object] = {}
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    async def fake_scalar(_query):
+        return SimpleNamespace(
+            value={
+                "checked_at": "2026-05-22T12:00:00+00:00",
+                "servers": {
+                    "server-1": {
+                        "reachable": True,
+                        "latency_ms": 73,
+                        "probe_target_host": "wl.altlink.online",
+                        "probe_target_port": 44443,
+                        "checked_at": "2026-05-22T12:00:00+00:00",
+                    }
+                },
+            }
+        )
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            dashboard=SimpleNamespace(list_plans=AsyncMock(return_value=[])),
+            catalog=SimpleNamespace(
+                list_servers=AsyncMock(
+                    return_value=[
+                        SimpleNamespace(
+                            id="server-1",
+                            name="Whitelist NL",
+                            country_code="NL",
+                            is_available=True,
+                        )
+                    ]
+                )
+            ),
+            session=SimpleNamespace(scalar=fake_scalar),
+        )
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                container=SimpleNamespace(hub=fake_hub),
+                settings=SimpleNamespace(
+                    backend_public_url="https://altlink.online",
+                    client_bot_name="@altlink_bot",
+                    support_username="@altlink_support",
+                ),
+            )
+        )
+    )
+
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.landing_page(request)
+
+    assert response is rendered["context"]
+    assert rendered["template_name"] == "landing.html"
+    assert rendered["context"]["landing_latency_best_label"] == "73 мс"
+    assert rendered["context"]["landing_latency_checked_at"] == "2026-05-22T12:00:00+00:00"
+    assert rendered["context"]["landing_latency_items"] == [
+        {
+            "server_id": "server-1",
+            "name": "Whitelist NL",
+            "country_code": "NL",
+            "reachable": True,
+            "latency_ms": 73,
+            "display_label": "73 мс",
+            "display_state": "ready",
+            "probe_target_host": "wl.altlink.online",
+            "checked_at": "2026-05-22T12:00:00+00:00",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_build_portal_context_includes_server_latency_state(monkeypatch):
     async def fake_portal_channel_state(request, user):
         return True

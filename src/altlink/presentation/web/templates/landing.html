@@ -120,9 +120,16 @@
         <button class="button" type="button" id="latency-button">Проверить задержку</button>
       </div>
       <div class="landing-latency-card" id="latency-card">
-        <strong id="latency-value">—</strong>
-        <div class="muted" id="latency-hint">Нажмите кнопку, чтобы запустить измерение.</div>
-        <div class="landing-latency-list" id="latency-list"></div>
+        <strong id="latency-value">{{ landing_latency_best_label }}</strong>
+        <div class="muted" id="latency-hint">{{ landing_latency_initial_hint }}</div>
+        <div class="landing-latency-list" id="latency-list">
+          {% for item in landing_latency_items %}
+          <div class="landing-latency-item{% if item.display_state == 'error' %} is-error{% endif %}">
+            <span>{{ item.name }} · {{ item.country_code }}</span>
+            <strong>{{ item.display_label }}</strong>
+          </div>
+          {% endfor %}
+        </div>
       </div>
       <p class="muted latency-disclaimer">{{ latency_disclaimer }}</p>
     </section>
@@ -189,10 +196,49 @@
       const list = document.getElementById("latency-list");
       const endpoint = {{ latency_api_url | tojson }};
       const disclaimer = {{ latency_disclaimer | tojson }};
+      const fallbackProbes = {{ landing_latency_items | tojson }};
+      const fallbackCheckedAt = {{ landing_latency_checked_at | tojson }};
 
       if (!button || !value || !hint || !card || !list) {
         return;
       }
+
+      const fallbackByServerId = new Map(
+        fallbackProbes
+          .map((item) => [item.server_id, item])
+          .filter((entry) => entry[0])
+      );
+
+      const renderList = (items) => {
+        list.innerHTML = items.map((item) => `
+          <div class="landing-latency-item${item.display_state === "error" ? " is-error" : ""}">
+            <span>${item.name} · ${item.country_code}</span>
+            <strong>${item.display_label}</strong>
+          </div>
+        `).join("");
+      };
+
+      const bestLatencyLabel = (items) => {
+        const values = items
+          .map((item) => item.latency_ms)
+          .filter((latency) => typeof latency === "number");
+        return values.length ? `${Math.min(...values)} мс` : "н/д";
+      };
+
+      const restoreMonitoringState = (message) => {
+        if (!fallbackProbes.length) {
+          return false;
+        }
+        value.textContent = bestLatencyLabel(fallbackProbes);
+        hint.textContent = message || (
+          fallbackCheckedAt
+            ? "Показываем последние сохранённые значения по серверам. Кнопка ниже обновит замер из вашего браузера."
+            : "Показываем последние сохранённые значения по серверам."
+        );
+        renderList(fallbackProbes);
+        card.classList.remove("is-error");
+        return true;
+      };
 
       const measureOnce = async (probeUrl, timeoutMs) => {
         const started = performance.now();
@@ -255,7 +301,6 @@
         button.disabled = true;
         value.textContent = "…";
         hint.textContent = "Измеряем задержку от вашего браузера до нод ALTLINK.";
-        list.innerHTML = "";
         card.classList.remove("is-error");
         try {
           const response = await fetch(`${endpoint}?ts=${Date.now()}&include_local=1`, {
@@ -270,34 +315,61 @@
           const probes = await Promise.all(
             targets.map((item) => measureProbe(item, payload.timeout_ms || 4000, payload.recheck_threshold_ms || 250))
           );
-          const reachable = probes.filter((item) => item.reachable && typeof item.latency_ms === "number");
-          const best = reachable.length ? Math.min(...reachable.map((item) => item.latency_ms)) : null;
+          const probesByServerId = new Map(
+            probes
+              .map((item) => [item.server_id, item])
+              .filter((entry) => entry[0])
+          );
+          const mergedItems = targets.map((target) => {
+            const measured = probesByServerId.get(target.server_id);
+            if (measured?.reachable && typeof measured.latency_ms === "number") {
+              return {
+                server_id: target.server_id,
+                name: target.name,
+                country_code: target.country_code,
+                latency_ms: measured.latency_ms,
+                display_label: `${measured.latency_ms} мс`,
+                display_state: "ready",
+              };
+            }
+            const fallback = fallbackByServerId.get(target.server_id);
+            if (fallback) {
+              return fallback;
+            }
+            return {
+              server_id: target.server_id,
+              name: target.name,
+              country_code: target.country_code,
+              latency_ms: null,
+              display_label: "Недоступно",
+              display_state: "error",
+            };
+          });
 
-          value.textContent = best === null ? "н/д" : `${best} мс`;
-          hint.textContent = probes.length
-            ? `Пинг измерен из вашего браузера для ${probes.length} серверов.`
-            : "Сейчас нет доступных серверов для замера.";
-
-          list.innerHTML = probes.map((item) => {
-            const latency = item.reachable && typeof item.latency_ms === "number"
-              ? `${item.latency_ms} мс`
-              : "недоступно";
-            return `
-              <div class="landing-latency-item${item.reachable ? "" : " is-error"}">
-                <span>${item.name} · ${item.country_code}</span>
-                <strong>${latency}</strong>
-              </div>
-            `;
-          }).join("");
+          value.textContent = bestLatencyLabel(mergedItems);
+          const fallbackUsed = mergedItems.some((item) => {
+            const measured = probesByServerId.get(item.server_id);
+            return (!measured || !measured.reachable || typeof measured.latency_ms !== "number") && fallbackByServerId.has(item.server_id);
+          });
+          hint.textContent = !mergedItems.length
+            ? "Сейчас нет доступных серверов для замера."
+            : fallbackUsed
+              ? "Часть серверов обновлена из вашего браузера, а недоступные замеры показаны по последней серверной проверке."
+              : `Пинг измерен из вашего браузера для ${mergedItems.length} серверов.`;
+          renderList(mergedItems);
         } catch (error) {
-          value.textContent = "—";
-          hint.textContent = `Не удалось получить данные по зарубежным серверам. Попробуйте ещё раз. ${disclaimer}`;
-          list.innerHTML = "";
-          card.classList.add("is-error");
+          if (!restoreMonitoringState(`Не удалось обновить замер из браузера. Показываем последние сохранённые значения. ${disclaimer}`)) {
+            value.textContent = "—";
+            hint.textContent = `Не удалось получить данные по зарубежным серверам. Попробуйте ещё раз. ${disclaimer}`;
+            list.innerHTML = "";
+            card.classList.add("is-error");
+          }
         } finally {
           button.disabled = false;
         }
       });
+
+      restoreMonitoringState();
     })();
   </script>
 </body>
