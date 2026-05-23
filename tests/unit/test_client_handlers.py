@@ -442,6 +442,36 @@ async def test_try_edit_tracked_client_card_preserves_parse_mode_for_captions():
     assert captured["parse_mode"] == "HTML"
 
 
+@pytest.mark.asyncio
+async def test_try_edit_tracked_client_card_skips_other_message_ids():
+    target = SimpleNamespace(
+        message_id=120,
+        chat=SimpleNamespace(id=4321),
+        bot=SimpleNamespace(
+            edit_message_text=AsyncMock(),
+            edit_message_caption=AsyncMock(),
+            edit_message_media=AsyncMock(),
+        ),
+    )
+    client_handlers.CLIENT_LAST_CARD[4321] = (99, False)
+
+    try:
+        result = await client_handlers.try_edit_tracked_client_card(
+            target,
+            "updated",
+            reply_markup=None,
+            media_file=None,
+            parse_mode=None,
+        )
+    finally:
+        client_handlers.CLIENT_LAST_CARD.pop(4321, None)
+
+    assert result is False
+    target.bot.edit_message_text.assert_not_awaited()
+    target.bot.edit_message_caption.assert_not_awaited()
+    target.bot.edit_message_media.assert_not_awaited()
+
+
 def test_agreement_text_uses_link_instead_of_stub_when_available():
     text = client_handlers.agreement_text(consent_accepted=False, agreement_link_available=True)
 
@@ -470,6 +500,25 @@ def test_available_topup_provider_codes_follow_resolved_provider():
     assert client_handlers.available_topup_provider_codes("yookassa", "yookassa") == ["yookassa", "manual"]
     assert client_handlers.available_topup_provider_codes("manual", "manual") == ["manual"]
     assert client_handlers.available_topup_provider_codes("yookassa", "stub") == ["stub", "manual"]
+
+
+@pytest.mark.asyncio
+async def test_show_subscription_renders_for_active_trial_user(test_services):
+    message = DummyMessage(text="Подписка", user_id=21055)
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        await hub.accounts.complete_registration(user.id)
+        await hub.accounts.mark_channel_verified(user.id)
+        await hub.accounts.mark_promo_onboarding_completed(user.id)
+        await hub.billing.activate_trial(user.id)
+
+    async with test_services.hub() as hub:
+        await client_handlers.show_subscription(message, test_services, hub)
+
+    assert len(message.answers) == 1
+    assert "Подписка" in str(message.answers[0]["text"])
+    assert "Тариф" in str(message.answers[0]["text"])
 
 
 @pytest.mark.asyncio

@@ -862,6 +862,13 @@ async def try_edit_tracked_client_card(
         return False
 
     message_id, has_media = tracked
+    anchor_message_id = getattr(anchor, "message_id", None)
+    if anchor_message_id is not None and anchor_message_id != message_id:
+        # If the user clicked an older inline button or a notification CTA,
+        # update that exact message instead of silently editing some other
+        # tracked card elsewhere in the chat history.
+        return False
+
     try:
         if media_file is not None and has_media:
             await anchor.bot.edit_message_media(
