@@ -628,7 +628,11 @@ def subscription_link_caption(payload: str) -> str:
     return (
         "🔗 Ваша персональная ссылка VPN\n\n"
         f"<code>{escaped_payload}</code>\n\n"
-        "Откройте её в VPN-клиенте или отсканируйте QR-код."
+        "Откройте её в VPN-клиенте или отсканируйте QR-код.\n\n"
+        "Рекомендуемые приложения:\n"
+        "Android — <code>v2raytun</code>\n"
+        "iOS — <code>happ</code>\n"
+        "Windows — <code>throne</code>"
     )
 
 
