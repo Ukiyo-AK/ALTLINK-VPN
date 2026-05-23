@@ -32,7 +32,7 @@ async def run_startup_job(job, container: AppContainer, job_name: str) -> None:
 
 async def run_scheduler() -> None:
     settings = get_settings()
-    configure_logging(settings.debug)
+    configure_logging(settings.debug, settings=settings, service_name="scheduler")
     container = AppContainer(settings)
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
     scheduler.add_job(

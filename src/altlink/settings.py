@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
     timezone: str = "UTC"
+    log_to_file: bool = True
+    log_dir: str = "logs"
+    log_file_max_bytes: int = 5 * 1024 * 1024
+    log_file_backup_count: int = 5
 
     secret_key: str = "change-me"
     session_secret_key: str = "change-me-session"

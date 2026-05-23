@@ -13,7 +13,7 @@ from altlink.settings import get_settings
 
 async def run_admin_bot() -> None:
     settings = get_settings()
-    configure_logging(settings.debug)
+    configure_logging(settings.debug, settings=settings, service_name="admin-bot")
     container = AppContainer(settings)
     bot = Bot(token=settings.admin_bot_token)
     dispatcher = Dispatcher()

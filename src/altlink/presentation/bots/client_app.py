@@ -13,7 +13,7 @@ from altlink.settings import get_settings
 
 async def run_client_bot() -> None:
     settings = get_settings()
-    configure_logging(settings.debug)
+    configure_logging(settings.debug, settings=settings, service_name="client-bot")
     container = AppContainer(settings)
     bot = Bot(token=settings.client_bot_token)
     dispatcher = Dispatcher()
@@ -33,4 +33,3 @@ async def run_client_bot() -> None:
 
 if __name__ == "__main__":
     asyncio.run(run_client_bot())
-

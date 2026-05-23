@@ -20,6 +20,8 @@ services:
     env_file: .env
     ports:
       - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,6 +36,8 @@ services:
     build: .
     command: ["python", "-m", "altlink.main", "client-bot"]
     env_file: .env
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,6 +52,8 @@ services:
     build: .
     command: ["python", "-m", "altlink.main", "admin-bot"]
     env_file: .env
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +68,8 @@ services:
     build: .
     command: ["python", "-m", "altlink.main", "scheduler"]
     env_file: .env
+    volumes:
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,4 +82,3 @@ services:
 
 volumes:
   postgres-data:
-

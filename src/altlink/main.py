@@ -5,6 +5,7 @@ import sys
 
 import uvicorn
 
+from altlink.logging_config import configure_logging
 from altlink.presentation.bots.admin_app import run_admin_bot
 from altlink.presentation.bots.client_app import run_client_bot
 from altlink.presentation.web.app import create_app
@@ -16,6 +17,7 @@ def main() -> None:
     settings = get_settings()
     mode = sys.argv[1] if len(sys.argv) > 1 else "backend"
     if mode == "backend":
+        configure_logging(getattr(settings, "debug", False), settings=settings, service_name="backend")
         uvicorn.run(
             "altlink.presentation.web.app:create_app",
             factory=True,
@@ -24,6 +26,7 @@ def main() -> None:
             reload=False,
             proxy_headers=True,
             forwarded_allow_ips="*",
+            log_config=None,
         )
         return
     if mode == "client-bot":

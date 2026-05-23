@@ -44,7 +44,7 @@ class SimpleRateLimitMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    configure_logging(settings.debug)
+    configure_logging(settings.debug, settings=settings, service_name="backend")
     container = AppContainer(settings)
     app.state.settings = settings
     app.state.container = container
