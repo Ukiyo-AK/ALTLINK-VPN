@@ -34,7 +34,15 @@ def ensure_sqlite_directory(database_url: str) -> None:
 
 def create_engine(settings: Settings) -> AsyncEngine:
     ensure_sqlite_directory(settings.database_url)
-    return create_async_engine(settings.database_url, echo=settings.sql_echo, future=True)
+    url = make_url(settings.database_url)
+    engine_kwargs = {
+        "echo": settings.sql_echo,
+        "future": True,
+        "pool_pre_ping": True,
+    }
+    if not url.drivername.startswith("sqlite"):
+        engine_kwargs["pool_recycle"] = 1800
+    return create_async_engine(settings.database_url, **engine_kwargs)
 
 
 def create_session_factory(settings: Settings) -> async_sessionmaker[AsyncSession]:

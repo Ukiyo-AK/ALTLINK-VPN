@@ -320,81 +320,87 @@ class BillingService(BaseService):
 
         state_changed = False
         for subscription in subscriptions:
-            user = subscription.user
-            plan = subscription.plan
-            if user is None or plan is None:
-                continue
-
-            if subscription.status == SubscriptionStatus.TRIAL:
-                state_changed = await self._sync_trial_subscription_state(subscription, now) or state_changed
-                continue
-
-            if subscription.status == SubscriptionStatus.GRACE:
-                subscription.status = SubscriptionStatus.ACTIVE
-                if user.status == UserStatus.GRACE:
-                    user.status = UserStatus.ACTIVE
-
-            if subscription.status != SubscriptionStatus.ACTIVE:
-                continue
-
-            if is_metered_plan_code(plan.code):
-                await self._refresh_whitelist_usage(user, subscription)
-                await self._apply_instant_whitelist_charges(user, subscription)
-
-            renewal_charge = self._compute_renewal_charge(subscription, plan)
-            due_at = ensure_utc(subscription.next_billing_at)
-            if due_at <= now:
-                if not subscription.auto_renew:
-                    await self._cancel_subscription(subscription, user)
-                    state_changed = True
-                    continue
-
-                if Decimal(user.balance_rub) < renewal_charge:
-                    await self._block_subscription(subscription, user)
-                    state_changed = True
-                    continue
-
-                if renewal_charge > 0:
-                    await self.accounts.adjust_balance(
-                        user_id=user.id,
-                        amount_rub=-renewal_charge,
-                        transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
-                        description=self._charge_description(plan),
-                    )
-                await self._start_next_billing_cycle(subscription, plan)
-                user.status = UserStatus.ACTIVE
-                await self._sync_user_remote_access(user, subscription, plan, enable=True, reset_traffic=True)
-                state_changed = True
-                continue
-
-            if due_at - now <= timedelta(days=1):
-                await self.notifications.queue(
-                    user_id=user.id,
-                    notification_type=NotificationType.UPCOMING_RENEWAL,
-                    message=upcoming_renewal_message(renewal_charge, due_at),
-                    dedupe_key=f"renewal:{subscription.id}:{now.date().isoformat()}",
-                )
-            threshold = Decimal(self.settings.low_balance_threshold_rub)
-            reminder_window = self._low_balance_reminder_window(due_at - now)
-            if Decimal(user.balance_rub) <= max(threshold, renewal_charge) and reminder_window is not None:
-                reminder_key, reminder_label = reminder_window
-                await self.notifications.queue(
-                    user_id=user.id,
-                    notification_type=NotificationType.LOW_BALANCE,
-                    message=low_balance_message(
-                        Decimal(user.balance_rub),
-                        renewal_charge,
-                        due_at,
-                        reminder_label,
-                    ),
-                    dedupe_key=f"low-balance:{subscription.id}:{due_at.isoformat()}:{reminder_key}",
-                )
+            state_changed = await self._process_due_subscription(subscription, now) or state_changed
+            await self._commit_checkpoint()
 
         await self._queue_inactive_user_promos(now)
         await self._queue_post_trial_followups(now)
+        await self._commit_checkpoint()
 
         if state_changed:
             await self.catalog.rebuild_user_access_matrix()
+            await self._commit_checkpoint()
+
+    async def _process_due_subscription(self, subscription: Subscription, now: datetime) -> bool:
+        user = subscription.user
+        plan = subscription.plan
+        if user is None or plan is None:
+            return False
+
+        if subscription.status == SubscriptionStatus.TRIAL:
+            return await self._sync_trial_subscription_state(subscription, now)
+
+        if subscription.status == SubscriptionStatus.GRACE:
+            subscription.status = SubscriptionStatus.ACTIVE
+            if user.status == UserStatus.GRACE:
+                user.status = UserStatus.ACTIVE
+
+        if subscription.status != SubscriptionStatus.ACTIVE:
+            return False
+
+        if is_metered_plan_code(plan.code):
+            await self._refresh_whitelist_usage(user, subscription)
+            await self._apply_instant_whitelist_charges(user, subscription)
+
+        renewal_charge = self._compute_renewal_charge(subscription, plan)
+        due_at = ensure_utc(subscription.next_billing_at)
+        if due_at <= now:
+            if not subscription.auto_renew:
+                await self._cancel_subscription(subscription, user)
+                return True
+
+            if Decimal(user.balance_rub) < renewal_charge:
+                await self._block_subscription(subscription, user)
+                return True
+
+            if renewal_charge > 0:
+                await self.accounts.adjust_balance(
+                    user_id=user.id,
+                    amount_rub=-renewal_charge,
+                    transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
+                    description=self._charge_description(plan),
+                )
+            await self._start_next_billing_cycle(subscription, plan)
+            user.status = UserStatus.ACTIVE
+            await self._sync_user_remote_access(user, subscription, plan, enable=True, reset_traffic=True)
+            return True
+
+        if due_at - now <= timedelta(days=1):
+            await self.notifications.queue(
+                user_id=user.id,
+                notification_type=NotificationType.UPCOMING_RENEWAL,
+                message=upcoming_renewal_message(renewal_charge, due_at),
+                dedupe_key=f"renewal:{subscription.id}:{now.date().isoformat()}",
+            )
+        threshold = Decimal(self.settings.low_balance_threshold_rub)
+        reminder_window = self._low_balance_reminder_window(due_at - now)
+        if Decimal(user.balance_rub) <= max(threshold, renewal_charge) and reminder_window is not None:
+            reminder_key, reminder_label = reminder_window
+            await self.notifications.queue(
+                user_id=user.id,
+                notification_type=NotificationType.LOW_BALANCE,
+                message=low_balance_message(
+                    Decimal(user.balance_rub),
+                    renewal_charge,
+                    due_at,
+                    reminder_label,
+                ),
+                dedupe_key=f"low-balance:{subscription.id}:{due_at.isoformat()}:{reminder_key}",
+            )
+        return False
+
+    async def _commit_checkpoint(self) -> None:
+        await self.session.commit()
 
     async def sync_user_trial_state(self, user_id: str) -> Subscription | None:
         subscription = await self.session.scalar(

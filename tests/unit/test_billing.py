@@ -69,6 +69,46 @@ async def test_process_due_subscriptions_queues_trial_expiring_reminder(test_ser
 
 
 @pytest.mark.asyncio
+async def test_process_due_subscriptions_commits_in_small_checkpoints(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user_one = await hub.accounts.get_or_create_user(
+            telegram_id=13006,
+            username="trial_checkpoint_one",
+            first_name="Trial",
+            last_name="CheckpointOne",
+            language_code="ru",
+        )
+        subscription_one = await hub.billing.activate_trial(user_one.id)
+        subscription_one.ends_at = utc_now() + timedelta(hours=20)
+        subscription_one.next_billing_at = subscription_one.ends_at
+
+        user_two = await hub.accounts.get_or_create_user(
+            telegram_id=13007,
+            username="trial_checkpoint_two",
+            first_name="Trial",
+            last_name="CheckpointTwo",
+            language_code="ru",
+        )
+        subscription_two = await hub.billing.activate_trial(user_two.id)
+        subscription_two.ends_at = utc_now() + timedelta(hours=20)
+        subscription_two.next_billing_at = subscription_two.ends_at
+
+        original_commit = hub.session.commit
+        commit_calls = 0
+
+        async def counting_commit():
+            nonlocal commit_calls
+            commit_calls += 1
+            return await original_commit()
+
+        monkeypatch.setattr(hub.session, "commit", counting_commit)
+
+        await hub.billing.process_due_subscriptions()
+
+    assert commit_calls >= 2
+
+
+@pytest.mark.asyncio
 async def test_sync_user_trial_state_expires_overdue_trial_and_queues_notifications_even_if_remote_disable_fails(
     test_services,
     monkeypatch,
