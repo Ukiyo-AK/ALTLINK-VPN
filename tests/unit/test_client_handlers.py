@@ -56,6 +56,34 @@ class DummyState:
         self.state = None
 
 
+class DummyCallbackMessage:
+    def __init__(self) -> None:
+        self.chat = SimpleNamespace(id=777)
+        self.message_id = 55
+        self.edits: list[dict[str, object]] = []
+        self.answers: list[dict[str, object]] = []
+
+    async def edit_text(self, text: str, reply_markup=None):
+        payload = {"text": text, "reply_markup": reply_markup}
+        self.edits.append(payload)
+        return SimpleNamespace(chat=self.chat, message_id=self.message_id)
+
+    async def answer(self, text: str, reply_markup=None):
+        payload = {"text": text, "reply_markup": reply_markup}
+        self.answers.append(payload)
+        return SimpleNamespace(chat=self.chat, message_id=self.message_id)
+
+
+class DummyCallback:
+    def __init__(self) -> None:
+        self.message = DummyCallbackMessage()
+        self.callback_answers: list[dict[str, object]] = []
+
+    async def answer(self, text: str | None = None, show_alert: bool | None = None, url: str | None = None):
+        self.callback_answers.append({"text": text, "show_alert": show_alert, "url": url})
+        return None
+
+
 def _paid_subscription_stub(*, plan_code: PlanCode = PlanCode.UNLIMITED, plan_name: str = "Pro"):
     return SimpleNamespace(
         plan=SimpleNamespace(
@@ -420,6 +448,42 @@ def test_activation_success_caption_includes_copyable_link():
     assert "Тариф «Pro» активирован" in caption
     assert "<code>https://sub.example/demo?x=1&amp;y=2</code>" in caption
     assert "Ваша персональная ссылка VPN" in caption
+
+
+@pytest.mark.asyncio
+async def test_answer_or_edit_topup_checkout_skips_callback_redirect_for_external_urls(monkeypatch):
+    callback = DummyCallback()
+    monkeypatch.setattr(client_handlers, "CallbackQuery", DummyCallback)
+    monkeypatch.setattr(client_handlers, "try_edit_tracked_client_card", AsyncMock(return_value=False))
+
+    await client_handlers.answer_or_edit_topup_checkout(
+        callback,
+        "Checkout",
+        payment_url="https://pay.yookassa.example/confirm/demo",
+        request_id="req-1",
+        can_check=True,
+    )
+
+    assert callback.callback_answers == [{"text": None, "show_alert": None, "url": None}]
+
+
+@pytest.mark.asyncio
+async def test_answer_or_edit_topup_checkout_keeps_callback_redirect_for_telegram_urls(monkeypatch):
+    callback = DummyCallback()
+    monkeypatch.setattr(client_handlers, "CallbackQuery", DummyCallback)
+    monkeypatch.setattr(client_handlers, "try_edit_tracked_client_card", AsyncMock(return_value=False))
+
+    await client_handlers.answer_or_edit_topup_checkout(
+        callback,
+        "Checkout",
+        payment_url="https://t.me/altlink_support",
+        request_id="req-1",
+        can_check=False,
+    )
+
+    assert callback.callback_answers == [
+        {"text": None, "show_alert": None, "url": "https://t.me/altlink_support"}
+    ]
 
 
 @pytest.mark.asyncio

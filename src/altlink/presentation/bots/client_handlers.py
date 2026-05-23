@@ -83,10 +83,39 @@ def support_username_label(settings) -> str:
 
 
 def support_profile_url(settings) -> str | None:
+    raw = (settings.support_username or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return raw
     username = support_username_label(settings).lstrip("@")
     if not username:
         return None
+    if not TELEGRAM_USERNAME_RE.fullmatch(username):
+        return None
     return f"https://t.me/{username}"
+
+
+def normalize_action_url(url: str | None) -> str | None:
+    raw = str(url or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    if parsed.scheme in {"http", "https"} and parsed.netloc:
+        return raw
+    return None
+
+
+def callback_redirect_url(url: str | None) -> str | None:
+    normalized = normalize_action_url(url)
+    if not normalized:
+        return None
+    parsed = urlparse(normalized)
+    hostname = (parsed.netloc or "").lower()
+    if hostname in {"t.me", "telegram.me"}:
+        return normalized
+    return None
 
 
 def admin_payment_request_text(user, amount: Decimal, request_id: str) -> str:
@@ -286,6 +315,7 @@ async def answer_or_edit_topup_checkout(
     request_id: str | None = None,
     can_check: bool = False,
 ) -> None:
+    payment_url = normalize_action_url(payment_url)
     reply_markup = topup_checkout_actions(
         payment_url=payment_url,
         payment_label=payment_label,
@@ -306,8 +336,9 @@ async def answer_or_edit_topup_checkout(
                 remember_client_card(result, has_media=False)
                 rendered = True
         if rendered:
-            if payment_url:
-                await target.answer(url=payment_url)
+            redirect_url = callback_redirect_url(payment_url)
+            if redirect_url:
+                await target.answer(url=redirect_url)
             else:
                 await target.answer()
             return
