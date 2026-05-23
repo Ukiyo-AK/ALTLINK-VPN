@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import httpx
 import pytest
 
 
@@ -115,6 +116,37 @@ async def test_can_offer_trial_requires_clean_account_history(test_services):
         await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
 
         assert await hub.accounts.can_offer_trial(user.id) is False
+
+
+@pytest.mark.asyncio
+async def test_get_subscription_bundle_tolerates_missing_subscription_info(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=11007,
+            username="bundle_partial_user",
+            first_name="Bundle",
+            last_name="Partial",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        short_uuid = user.remnawave_short_uuid
+
+    async def missing_subscription_info(short_uuid_value: str):
+        request = httpx.Request("GET", f"https://remna.example/api/sub/{short_uuid_value}/info")
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+    monkeypatch.setattr(test_services.remnawave, "get_subscription_info", missing_subscription_info)
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_user_by_telegram_id(11007)
+        bundle = await hub.accounts.get_subscription_bundle(user.id)
+
+    assert bundle["subscription"] is not None
+    assert bundle["accessible_nodes"]
+    assert bundle["connection_keys"] is not None
+    assert bundle["subscription_info"] is None
+    assert user.remnawave_short_uuid == short_uuid
 
 
 @pytest.mark.asyncio

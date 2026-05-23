@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 
+import httpx
 from sqlalchemy import Text, cast, delete, func, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -31,6 +33,8 @@ from altlink.infrastructure.db.models import (
 from altlink.infrastructure.remnawave_schemas import RemoteUser
 from altlink.utils.security import hash_password, verify_password
 from altlink.utils.time import utc_now
+
+logger = logging.getLogger(__name__)
 
 
 class AccountService(BaseService):
@@ -269,20 +273,60 @@ class AccountService(BaseService):
     async def get_subscription_bundle(self, user_id: str) -> dict:
         user = await self.get_user(user_id)
         await self.ensure_remote_user_link(user)
+        subscription = await self.get_current_subscription(user.id)
         if self.remnawave is None or not user.remnawave_user_uuid or not user.remnawave_short_uuid:
-            return {"user": user, "subscription": await self.get_current_subscription(user.id)}
+            return {"user": user, "subscription": subscription}
 
-        accessible_nodes = await self.remnawave.get_accessible_nodes(user.remnawave_user_uuid)
-        connection_keys = await self.remnawave.get_connection_keys(user.remnawave_user_uuid)
-        subscription_info = await self.remnawave.get_subscription_info(user.remnawave_short_uuid)
-
-        return {
+        bundle = {
             "user": user,
-            "subscription": await self.get_current_subscription(user.id),
-            "accessible_nodes": accessible_nodes,
-            "connection_keys": connection_keys,
-            "subscription_info": subscription_info,
+            "subscription": subscription,
         }
+
+        async def safe_remote_part(label: str, loader, *, default):
+            try:
+                return await loader()
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code == 404:
+                    logger.warning(
+                        "Remnawave bundle part %s is missing for user %s; continuing with partial bundle.",
+                        label,
+                        user.id,
+                    )
+                    return default
+                logger.warning(
+                    "Failed to load Remnawave bundle part %s for user %s.",
+                    label,
+                    user.id,
+                    exc_info=True,
+                )
+                return default
+            except httpx.HTTPError:
+                logger.warning(
+                    "Failed to load Remnawave bundle part %s for user %s.",
+                    label,
+                    user.id,
+                    exc_info=True,
+                )
+                return default
+
+        bundle["accessible_nodes"] = await safe_remote_part(
+            "accessible_nodes",
+            lambda: self.remnawave.get_accessible_nodes(user.remnawave_user_uuid),
+            default=[],
+        )
+        bundle["connection_keys"] = await safe_remote_part(
+            "connection_keys",
+            lambda: self.remnawave.get_connection_keys(user.remnawave_user_uuid),
+            default=None,
+        )
+        bundle["subscription_info"] = await safe_remote_part(
+            "subscription_info",
+            lambda: self.remnawave.get_subscription_info(user.remnawave_short_uuid),
+            default=None,
+        )
+
+        return bundle
 
     async def adjust_balance(
         self,

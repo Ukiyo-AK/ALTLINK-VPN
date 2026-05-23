@@ -1610,9 +1610,13 @@ async def show_subscription(target: Message | CallbackQuery, container: AppConta
     user = await ensure_user(target.from_user, container, hub)
     await sync_visible_trial_state(hub, user.id)
     await hub.billing.refresh_subscription_traffic(user.id)
-    bundle = await hub.accounts.get_subscription_bundle(user.id)
+    bundle = await safe_get_subscription_bundle(hub, user.id)
     user_servers = await hub.catalog.get_user_servers(user.id)
-    subscription = bundle.get("subscription")
+    if bundle is None:
+        subscription = await hub.accounts.get_current_subscription(user.id)
+        bundle = {"user": user, "subscription": subscription}
+    else:
+        subscription = bundle.get("subscription")
     latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
     activity_summary = await hub.online.get_user_activity_summary(user.id) if getattr(hub, "online", None) else None
     await send_card_with_optional_media(

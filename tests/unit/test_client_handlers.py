@@ -6,6 +6,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
@@ -519,6 +520,34 @@ async def test_show_subscription_renders_for_active_trial_user(test_services):
     assert len(message.answers) == 1
     assert "Подписка" in str(message.answers[0]["text"])
     assert "Тариф" in str(message.answers[0]["text"])
+
+
+@pytest.mark.asyncio
+async def test_show_subscription_tolerates_missing_remote_subscription_info(test_services, monkeypatch):
+    message = DummyMessage(text="Подписка", user_id=21056)
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        await hub.accounts.complete_registration(user.id)
+        await hub.accounts.mark_channel_verified(user.id)
+        await hub.accounts.mark_promo_onboarding_completed(user.id)
+        await hub.billing.activate_trial(user.id)
+        short_uuid = user.remnawave_short_uuid
+
+    async def missing_subscription_info(short_uuid_value: str):
+        request = httpx.Request("GET", f"https://remna.example/api/sub/{short_uuid_value}/info")
+        response = httpx.Response(404, request=request)
+        raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+    monkeypatch.setattr(test_services.remnawave, "get_subscription_info", missing_subscription_info)
+
+    async with test_services.hub() as hub:
+        await client_handlers.show_subscription(message, test_services, hub)
+
+    assert len(message.answers) == 1
+    assert "Подписка" in str(message.answers[0]["text"])
+    assert "Тариф" in str(message.answers[0]["text"])
+    assert short_uuid is not None
 
 
 @pytest.mark.asyncio
