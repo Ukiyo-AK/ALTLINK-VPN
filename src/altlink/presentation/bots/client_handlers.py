@@ -577,12 +577,12 @@ def show_metered_usage(subscription) -> bool:
 def resolve_subscription_payload(bundle: dict | None) -> str | None:
     if not bundle:
         return None
+    payload = bundle.get("subscription_url")
+    if payload:
+        return payload
     info = bundle.get("subscription_info")
     if info:
         return info.subscriptionUrl
-    keys = bundle.get("connection_keys")
-    if keys and keys.enabledKeys:
-        return keys.enabledKeys[0]
     return None
 
 

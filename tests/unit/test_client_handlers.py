@@ -397,6 +397,18 @@ def test_subscription_link_caption_uses_telegram_code_formatting():
     assert "удобно копировать через меню Telegram" not in caption
 
 
+def test_resolve_subscription_payload_prefers_subscription_url_over_raw_keys():
+    payload = client_handlers.resolve_subscription_payload(
+        {
+            "subscription_url": "https://sub.example/demo",
+            "connection_keys": SimpleNamespace(enabledKeys=["vless://raw-config"]),
+            "subscription_info": None,
+        }
+    )
+
+    assert payload == "https://sub.example/demo"
+
+
 def test_activation_success_caption_includes_copyable_link():
     subscription = SimpleNamespace(
         plan=SimpleNamespace(name="Pro", period_days=30, device_limit=8),

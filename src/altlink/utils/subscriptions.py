@@ -17,6 +17,26 @@ def local_subscription_proxy_url(settings, short_uuid: str, client_type: str | N
     return url
 
 
+def remnawave_public_subscription_url(settings, short_uuid: str, client_type: str | None = None) -> str | None:
+    base_url = (
+        getattr(settings, "remnawave_subscription_base_url", "")
+        or getattr(settings, "remnawave_base_url", "")
+        or ""
+    ).strip()
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not short_uuid:
+        return None
+
+    normalized_base = base_url.rstrip("/")
+    if parsed.path in {"", "/"}:
+        normalized_base = f"{parsed.scheme}://{parsed.netloc}/api/sub"
+
+    url = f"{normalized_base}/{quote(short_uuid, safe='')}"
+    if client_type:
+        url = f"{url}/{quote(client_type, safe='')}"
+    return url
+
+
 def build_client_announce_text(user, subscription, settings) -> str:
     raw_status = getattr(user, "status", None)
     status_value = getattr(raw_status, "value", raw_status)
@@ -63,4 +83,3 @@ def decode_announce_header(value: str | None) -> str | None:
 def encode_announce_header(text: str) -> str:
     encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
     return f"base64:{encoded}"
-

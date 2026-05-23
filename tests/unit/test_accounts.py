@@ -146,6 +146,7 @@ async def test_get_subscription_bundle_tolerates_missing_subscription_info(test_
     assert bundle["accessible_nodes"]
     assert bundle["connection_keys"] is not None
     assert bundle["subscription_info"] is None
+    assert bundle["subscription_url"] == f"https://remna.example/api/sub/{short_uuid}"
     assert user.remnawave_short_uuid == short_uuid
 
 

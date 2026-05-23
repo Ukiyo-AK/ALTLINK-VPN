@@ -461,10 +461,7 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
 
     qr_data_uri = None
     info = bundle.get("subscription_info")
-    keys = bundle.get("connection_keys")
-    payload = info.subscriptionUrl if info else None
-    if payload is None and keys and keys.enabledKeys:
-        payload = keys.enabledKeys[0]
+    payload = bundle.get("subscription_url") or (info.subscriptionUrl if info else None)
     if payload:
         qr_png = render_qr_png(payload)
         qr_data_uri = f"data:image/png;base64,{base64.b64encode(qr_png).decode('ascii')}"
