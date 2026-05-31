@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from altlink.infrastructure.remnawave_client import RemnawaveClient
+from altlink.infrastructure.remnawave_schemas import RemoteUser
 from altlink.settings import Settings
 
 
@@ -144,4 +145,42 @@ async def test_ip_control_methods_use_remnawave_contract(monkeypatch):
     assert calls == [
         ("POST", "/api/ip-control/fetch-users-ips/node-1"),
         ("GET", "/api/ip-control/fetch-users-ips/result/job-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_revoke_subscription_and_connection_keys_use_remnawave_contract(monkeypatch):
+    client = RemnawaveClient(
+        Settings(
+            _env_file=None,
+            remnawave_base_url="https://remna.example",
+            remnawave_api_token="token",
+        )
+    )
+    calls: list[tuple[str, str]] = []
+    expected_user = object()
+
+    async def fake_request(method: str, path: str, **kwargs):
+        calls.append((method, path))
+        if method == "POST":
+            return {"uuid": "user-1"}
+        return {
+            "enabledKeys": ["vless://user-1@server.example"],
+            "hiddenKeys": [],
+            "disabledKeys": [],
+        }
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    monkeypatch.setattr(RemoteUser, "model_validate", lambda payload: expected_user)
+    try:
+        remote_user = await client.revoke_user_subscription("user-1")
+        keys = await client.get_connection_keys("user-1")
+    finally:
+        await client.aclose()
+
+    assert remote_user is expected_user
+    assert keys.enabledKeys == ["vless://user-1@server.example"]
+    assert calls == [
+        ("POST", "/api/users/user-1/actions/revoke"),
+        ("GET", "/api/subscriptions/connection-keys/user-1"),
     ]

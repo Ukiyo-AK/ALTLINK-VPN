@@ -176,6 +176,24 @@ class FakeRemnawave:
         )
         return self.users[user_uuid]
 
+    async def revoke_user_subscription(self, user_uuid: str):
+        user = self.users[user_uuid]
+        self.users[user_uuid] = self._build_user(
+            user_uuid=user.uuid,
+            user_id=user.id,
+            username=user.username,
+            telegram_id=user.telegramId,
+            expire_at=user.expireAt,
+            short_uuid=f"sub-{uuid4().hex[:8]}",
+            status=user.status,
+            traffic_limit_bytes=user.trafficLimitBytes,
+            hwid_device_limit=user.hwidDeviceLimit,
+            used_bytes=user.userTraffic.usedTrafficBytes,
+            lifetime_used_bytes=user.userTraffic.lifetimeUsedTrafficBytes,
+            active_squads=[item.uuid for item in user.activeInternalSquads],
+        )
+        return self.users[user_uuid]
+
     async def delete_user(self, user_uuid: str):
         self.users.pop(user_uuid, None)
         self.hwid_devices.pop(user_uuid, None)
@@ -297,7 +315,15 @@ class FakeRemnawave:
         )
 
     async def get_connection_keys(self, user_uuid: str):
-        return RemoteConnectionKeys(enabledKeys=[f"vmess://{user_uuid}"], hiddenKeys=[], disabledKeys=[])
+        return RemoteConnectionKeys(
+            enabledKeys=[
+                f"vless://{user_uuid}@server-one.example",
+                f"vless://{user_uuid}@server-two.example",
+                f"trojan://{user_uuid}@server-three.example",
+            ],
+            hiddenKeys=[],
+            disabledKeys=[],
+        )
 
     async def get_user_usage(self, user_uuid: str, start: date, end: date):
         whitelist_node = next(node for node in self.nodes.values() if "Whitelist" in node.name)

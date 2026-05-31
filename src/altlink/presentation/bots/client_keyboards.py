@@ -167,19 +167,39 @@ def subscription_actions(
         builder.button(text="Мои устройства", callback_data="client:devices:0", style="primary")
     if show_traffic:
         builder.button(text="Трафик и списания", callback_data="client:traffic")
-    if can_cancel and not auto_renew_disabled:
-        builder.button(text="Отказаться от подписки", callback_data="client:subscription_cancel", style="danger")
-    if can_cancel and auto_renew_disabled:
-        builder.button(text="Включить продление", callback_data="client:subscription_resume", style="success")
+    if show_link:
+        builder.button(text="Подробнее", callback_data="client:subscription_details", style="primary")
     builder.button(text="Меню", callback_data="client:home")
     rows = [1]
     if show_link:
         rows.append(2)
-    second_row = int(show_traffic) + int(can_cancel)
+    second_row = int(show_traffic) + int(show_link)
     if second_row:
         rows.append(second_row)
     rows.append(1)
     builder.adjust(*rows)
+    return builder
+
+
+def subscription_details_actions(*, can_manage_auto_renew: bool, auto_renew_disabled: bool) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    if can_manage_auto_renew and not auto_renew_disabled:
+        builder.button(text="Выкл. автопродление", callback_data="client:subscription_cancel", style="danger")
+    if can_manage_auto_renew and auto_renew_disabled:
+        builder.button(text="Вкл. автопродление", callback_data="client:subscription_resume", style="success")
+    builder.button(text="Перевыпустить ссылку", callback_data="client:subscription_revoke_prompt", style="danger")
+    builder.button(text="VLESS-ключи", callback_data="client:vless_keys", style="primary")
+    builder.button(text="Подписка", callback_data="client:subscription", style="primary")
+    builder.button(text="Меню", callback_data="client:home")
+    builder.adjust(*([1] * (2 + int(can_manage_auto_renew))), 2)
+    return builder
+
+
+def subscription_revoke_confirmation_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Да, перевыпустить", callback_data="client:subscription_revoke_confirm", style="danger")
+    builder.button(text="Отмена", callback_data="client:subscription_details", style="primary")
+    builder.adjust(1, 1)
     return builder
 
 

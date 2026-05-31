@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
+from math import ceil
 from uuid import uuid4
 
 import httpx
@@ -33,7 +34,7 @@ from altlink.infrastructure.db.models import (
 from altlink.infrastructure.remnawave_schemas import RemoteHwidDevice, RemoteUser
 from altlink.utils.subscriptions import remnawave_public_subscription_url
 from altlink.utils.security import hash_password, verify_password
-from altlink.utils.time import utc_now
+from altlink.utils.time import ensure_utc, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +367,66 @@ class AccountService(BaseService):
         except Exception as exc:
             logger.warning("Failed to delete Remnawave HWID device for user %s.", user.id, exc_info=True)
             raise ConflictError("Не удалось удалить устройство. Попробуйте ещё раз чуть позже.") from exc
+
+    async def revoke_user_subscription_link(self, user_id: str) -> RemoteUser:
+        user = await self.get_user(user_id)
+        if self.remnawave is None:
+            raise ConflictError("Панель временно недоступна. Попробуйте ещё раз чуть позже.")
+        await self.ensure_remote_user_link(user)
+        if not user.remnawave_user_uuid:
+            raise NotFoundError("Ссылка подписки пока недоступна.")
+        try:
+            remote = await self.remnawave.revoke_user_subscription(user.remnawave_user_uuid)
+        except Exception as exc:
+            logger.warning("Failed to revoke Remnawave subscription link for user %s.", user.id, exc_info=True)
+            raise ConflictError("Не удалось перевыпустить ссылку. Попробуйте ещё раз чуть позже.") from exc
+        self._apply_remote_user(user, remote)
+        await self.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="subscription_link_revoked",
+            message="Пользователь перевыпустил ссылку подписки.",
+            payload={"user_id": user.id, "remote_user_uuid": remote.uuid},
+        )
+        await self.session.flush()
+        return remote
+
+    async def get_rate_limited_user_vless_keys(self, user_id: str) -> list[str]:
+        user = await self.session.scalar(select(User).where(User.id == user_id).with_for_update())
+        if user is None:
+            raise NotFoundError("Пользователь не найден.")
+        cooldown = timedelta(seconds=max(int(self.settings.vless_keys_download_cooldown_seconds), 0))
+        now = utc_now()
+        if user.vless_keys_downloaded_at is not None:
+            retry_after = cooldown - (now - ensure_utc(user.vless_keys_downloaded_at))
+            if retry_after.total_seconds() > 0:
+                minutes = max(ceil(retry_after.total_seconds() / 60), 1)
+                cooldown_minutes = max(ceil(cooldown.total_seconds() / 60), 1)
+                raise ConflictError(
+                    f"VLESS-ключи можно получить не чаще одного раза в {cooldown_minutes} мин. "
+                    f"Подождите ещё {minutes} мин."
+                )
+        if self.remnawave is None:
+            raise ConflictError("Панель временно недоступна. Попробуйте ещё раз чуть позже.")
+        await self.ensure_remote_user_link(user)
+        if not user.remnawave_user_uuid:
+            raise NotFoundError("VLESS-ключи пока недоступны. Сначала активируйте тариф.")
+        try:
+            keys = await self.remnawave.get_connection_keys(user.remnawave_user_uuid)
+        except Exception as exc:
+            logger.warning("Failed to load VLESS keys for user %s.", user.id, exc_info=True)
+            raise ConflictError("Не удалось подготовить VLESS-ключи. Попробуйте ещё раз чуть позже.") from exc
+        vless_keys = [item for item in keys.enabledKeys if item.lower().startswith("vless://")]
+        if not vless_keys:
+            raise NotFoundError("Для вашего тарифа сейчас нет доступных VLESS-ключей.")
+        user.vless_keys_downloaded_at = now
+        await self.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="vless_keys_downloaded",
+            message="Пользователь запросил файл VLESS-ключей.",
+            payload={"user_id": user.id, "keys_count": len(vless_keys)},
+        )
+        await self.session.flush()
+        return vless_keys
 
     async def adjust_balance(
         self,

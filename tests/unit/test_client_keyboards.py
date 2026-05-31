@@ -24,6 +24,8 @@ from altlink.presentation.bots.client_keyboards import (
     promo_onboarding_skip_actions,
     subscription_link_actions,
     subscription_actions,
+    subscription_details_actions,
+    subscription_revoke_confirmation_actions,
     topup_amount_confirm_actions,
     topup_checkout_actions,
     topup_provider_actions,
@@ -180,7 +182,7 @@ def test_portal_login_complete_actions_include_open_button():
     assert open_button["style"] == "success"
 
 
-def test_subscription_actions_render_cancel_and_hide_traffic():
+def test_subscription_actions_render_details_and_hide_traffic():
     metered_flat = [
         text
         for row in inline_rows(
@@ -189,7 +191,8 @@ def test_subscription_actions_render_cancel_and_hide_traffic():
         for text in row
     ]
     assert "Трафик и списания" in metered_flat
-    assert "Отказаться от подписки" in metered_flat
+    assert "Подробнее" in metered_flat
+    assert "Выкл. автопродление" not in metered_flat
     assert "Моя ссылка" in metered_flat
 
     unlimited_flat = [
@@ -201,6 +204,40 @@ def test_subscription_actions_render_cancel_and_hide_traffic():
     ]
     assert "Трафик и списания" not in unlimited_flat
     assert "Моя ссылка" not in unlimited_flat
+    assert "Подробнее" not in unlimited_flat
+
+
+def test_subscription_details_actions_render_auto_renew_and_technical_controls():
+    enabled_flat = [
+        text
+        for row in inline_rows(
+            subscription_details_actions(can_manage_auto_renew=True, auto_renew_disabled=False).as_markup()
+        )
+        for text in row
+    ]
+    assert "Выкл. автопродление" in enabled_flat
+    assert "Вкл. автопродление" not in enabled_flat
+    assert "Перевыпустить ссылку" in enabled_flat
+    assert "VLESS-ключи" in enabled_flat
+
+    disabled_flat = [
+        text
+        for row in inline_rows(
+            subscription_details_actions(can_manage_auto_renew=True, auto_renew_disabled=True).as_markup()
+        )
+        for text in row
+    ]
+    assert "Вкл. автопродление" in disabled_flat
+    assert "Выкл. автопродление" not in disabled_flat
+
+
+def test_subscription_revoke_confirmation_actions_require_explicit_confirmation():
+    flat = [
+        text
+        for row in inline_rows(subscription_revoke_confirmation_actions().as_markup())
+        for text in row
+    ]
+    assert flat == ["Да, перевыпустить", "Отмена"]
 
 
 def test_subscription_link_actions_keep_only_help_and_navigation():

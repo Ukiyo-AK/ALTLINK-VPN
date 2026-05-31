@@ -52,6 +52,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     referral_reward_granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    vless_keys_downloaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     remnawave_user_uuid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     remnawave_username: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)

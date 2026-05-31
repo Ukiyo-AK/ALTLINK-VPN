@@ -47,7 +47,9 @@ from altlink.presentation.bots.client_keyboards import (
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
     site_actions,
+    subscription_details_actions,
     subscription_link_actions,
+    subscription_revoke_confirmation_actions,
     subscription_actions,
     support_actions,
     topup_amount_confirm_actions,
@@ -660,6 +662,13 @@ def hwid_device_details_text(device: dict[str, object]) -> str:
     )
 
 
+def subscription_details_markup(subscription):
+    return subscription_details_actions(
+        can_manage_auto_renew=can_manage_auto_renew(subscription),
+        auto_renew_disabled=bool(subscription and not subscription.auto_renew),
+    ).as_markup()
+
+
 def clamp_hwid_device_page(devices: list[dict[str, object]], page: int) -> int:
     total_pages = max((len(devices) + CLIENT_DEVICE_PAGE_SIZE - 1) // CLIENT_DEVICE_PAGE_SIZE, 1)
     return min(max(page, 0), total_pages - 1)
@@ -1205,23 +1214,6 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
             f"{access_links_text(settings)}"
         )
 
-    server_lines = []
-    whitelist_servers = 0
-    standard_servers = 0
-    for access in user_servers:
-        if not access.server:
-            continue
-        type_label = {
-            "ten_gbit": "Start",
-            "whitelist": "Белые списки",
-            "regular": "Обычный",
-        }[access.server.server_type.value]
-        if access.server.server_type.value == "whitelist":
-            whitelist_servers += 1
-        else:
-            standard_servers += 1
-        server_lines.append(f"{access.server.name} • {type_label} • {access.status}")
-
     lines = [
         "🔐 Подписка",
         "",
@@ -1245,14 +1237,47 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         )
         if pending_whitelist_cost > Decimal("0.00"):
             lines.append(f"Осталось удержать после пополнения: {pending_whitelist_cost:.2f} ₽")
+    return "\n".join(lines)
+
+
+def subscription_details_text(subscription, user_servers: list) -> str:
+    lines = ["⚙️ Подробнее о подписке", ""]
+    if subscription is None:
+        lines.append("У вас пока нет активного тарифа.")
+        return "\n".join(lines)
     lines.extend(
         [
+            f"🧾 Тариф: {subscription.plan.name}",
+            f"🔁 Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
             "",
             "🌐 Доступные серверы:",
-            "\n".join(server_lines) if server_lines else "Пока нет активных серверов.",
         ]
     )
+    server_lines = []
+    for access in user_servers:
+        if not access.server:
+            continue
+        type_label = {
+            "ten_gbit": "Start",
+            "whitelist": "Белые списки",
+            "regular": "Обычный",
+        }[access.server.server_type.value]
+        server_lines.append(f"{access.server.name} • {type_label} • {access.status}")
+    lines.append("\n".join(server_lines) if server_lines else "Пока нет активных серверов.")
     return "\n".join(lines)
+
+
+def vless_keys_file_content(keys: list[str]) -> bytes:
+    lines = [
+        "ALTLINK VLESS keys",
+        "",
+        "Один ключ соответствует одному доступному серверу.",
+        "Импортируйте нужную строку vless:// в приложение вручную.",
+        "",
+    ]
+    for index, key in enumerate(keys, start=1):
+        lines.extend([f"{index}.", key, ""])
+    return "\n".join(lines).encode("utf-8")
 
 
 def plan_menu_text() -> str:
@@ -1708,22 +1733,19 @@ async def show_subscription(target: Message | CallbackQuery, container: AppConta
     await sync_visible_trial_state(hub, user.id)
     await hub.billing.refresh_subscription_traffic(user.id)
     bundle = await safe_get_subscription_bundle(hub, user.id)
-    user_servers = await hub.catalog.get_user_servers(user.id)
     if bundle is None:
         subscription = await hub.accounts.get_current_subscription(user.id)
         bundle = {"user": user, "subscription": subscription}
     else:
         subscription = bundle.get("subscription")
     latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
-    activity_summary = await hub.online.get_user_activity_summary(user.id) if getattr(hub, "online", None) else None
     await send_card_with_optional_media(
         target,
         subscription_text(
             bundle,
-            user_servers,
+            [],
             container.settings,
             latest_subscription=latest_subscription,
-            activity_summary=activity_summary,
         ),
         primary_markup=subscription_markup(subscription),
         media_section="subscription",
@@ -2796,6 +2818,96 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
     await answer_or_edit(callback, text, reply_markup=reply_markup, parse_mode=response_parse_mode)
 
 
+@router.callback_query(F.data == "client:subscription_details")
+async def subscription_details(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        subscription = await hub.accounts.get_current_subscription(user.id)
+        user_servers = await hub.catalog.get_user_servers(user.id) if subscription else []
+    await answer_or_edit(
+        callback,
+        subscription_details_text(subscription, user_servers),
+        reply_markup=subscription_details_markup(subscription) if subscription else subscription_markup(None),
+    )
+
+
+@router.callback_query(F.data == "client:subscription_revoke_prompt")
+async def subscription_revoke_prompt(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        subscription = await hub.accounts.get_current_subscription(user.id)
+    if subscription is None:
+        await answer_or_edit(callback, "У вас пока нет активного тарифа.", reply_markup=subscription_markup(None))
+        return
+    await answer_or_edit(
+        callback,
+        (
+            "Перевыпустить ссылку подписки?\n\n"
+            "Старая ссылка и ранее импортированные VLESS-ключи перестанут работать. "
+            "После перевыпуска добавьте новую ссылку в приложение заново."
+        ),
+        reply_markup=subscription_revoke_confirmation_actions().as_markup(),
+    )
+
+
+@router.callback_query(F.data == "client:subscription_revoke_confirm")
+async def subscription_revoke_confirm(callback: CallbackQuery, container: AppContainer):
+    parse_mode = None
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        subscription = await hub.accounts.get_current_subscription(user.id)
+        if subscription is None:
+            text = "У вас пока нет активного тарифа."
+            markup = subscription_markup(None)
+        else:
+            try:
+                await hub.accounts.revoke_user_subscription_link(user.id)
+                bundle = await safe_get_subscription_bundle(hub, user.id)
+                payload = resolve_subscription_payload(bundle)
+                text = "Ссылка подписки перевыпущена. Старые ссылки и ключи больше не работают."
+                if payload:
+                    text += f"\n\nНовая ссылка:\n<code>{html.escape(payload)}</code>"
+                    parse_mode = "HTML"
+                markup = subscription_details_markup(subscription)
+            except (ConflictError, NotFoundError, ServiceError) as exc:
+                text = str(exc)
+                markup = subscription_details_markup(subscription)
+    await answer_or_edit(callback, text, reply_markup=markup, parse_mode=parse_mode)
+
+
+@router.callback_query(F.data == "client:vless_keys")
+async def vless_keys(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        subscription = await hub.accounts.get_current_subscription(user.id)
+        if subscription is None:
+            await callback.answer("Сначала активируйте тариф.", show_alert=True)
+            return
+        try:
+            keys = await hub.accounts.get_rate_limited_user_vless_keys(user.id)
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+    cooldown_seconds = max(int(container.settings.vless_keys_download_cooldown_seconds), 0)
+    cooldown_minutes = max((cooldown_seconds + 59) // 60, 1)
+    await callback.message.answer_document(
+        BufferedInputFile(vless_keys_file_content(keys), filename="altlink-vless-keys.txt"),
+        caption=(
+            f"VLESS-ключи готовы: {len(keys)} шт.\n"
+            f"Получать новый файл можно не чаще одного раза в {cooldown_minutes} мин."
+        ),
+    )
+    await callback.answer("Файл отправлен.")
+
+
 @router.callback_query(F.data == "client:subscription_cancel")
 async def subscription_cancel(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
@@ -2811,7 +2923,7 @@ async def subscription_cancel(callback: CallbackQuery, container: AppContainer):
         except (ConflictError, NotFoundError, ServiceError) as exc:
             text = str(exc)
             subscription = await hub.accounts.get_current_subscription(user.id)
-    await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
+    await answer_or_edit(callback, text, reply_markup=subscription_details_markup(subscription))
 
 
 @router.callback_query(F.data == "client:subscription_resume")
@@ -2826,7 +2938,7 @@ async def subscription_resume(callback: CallbackQuery, container: AppContainer):
         except (ConflictError, NotFoundError, ServiceError) as exc:
             text = str(exc)
             subscription = await hub.accounts.get_current_subscription(user.id)
-    await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
+    await answer_or_edit(callback, text, reply_markup=subscription_details_markup(subscription))
 
 
 @router.callback_query(F.data == "client:subscription_link")

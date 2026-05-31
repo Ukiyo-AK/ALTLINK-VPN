@@ -85,6 +85,7 @@ def _ensure_runtime_schema_sync(connection) -> None:
         "referral_code": String(32),
         "referred_by_user_id": String(36),
         "referral_reward_granted_at": DateTime(timezone=True),
+        "vless_keys_downloaded_at": DateTime(timezone=True),
     }
 
     for column_name, column_type in expected_columns.items():

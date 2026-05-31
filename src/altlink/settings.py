@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     user_abuse_ip_fetch_poll_attempts: int = 5
     user_abuse_ip_fetch_poll_delay_seconds: float = 1.0
     user_abuse_hwid_fetch_concurrency: int = 8
+    vless_keys_download_cooldown_seconds: int = 300
     latency_probe_scheme: str = "https"
     latency_probe_port: int = 44443
     latency_probe_path: str = "/ping"

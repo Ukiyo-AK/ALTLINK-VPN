@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+
+from altlink.application.services.base import ConflictError
 
 
 @pytest.mark.asyncio
@@ -197,3 +200,48 @@ async def test_hwid_devices_are_loaded_and_deleted_for_current_user_only(test_se
     assert [item.hwid for item in devices] == ["first-hwid"]
     assert [item.hwid for item in untouched_foreign_devices] == ["second-hwid"]
     assert remaining_devices == []
+
+
+@pytest.mark.asyncio
+async def test_revoke_user_subscription_link_updates_local_short_uuid(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=11010,
+            username="revoke_link_user",
+            first_name="Revoke",
+            last_name="Link",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        old_short_uuid = user.remnawave_short_uuid
+
+        remote = await hub.accounts.revoke_user_subscription_link(user.id)
+        updated = await hub.accounts.get_user(user.id)
+
+    assert remote.shortUuid != old_short_uuid
+    assert updated.remnawave_short_uuid == remote.shortUuid
+
+
+@pytest.mark.asyncio
+async def test_vless_keys_download_filters_keys_and_enforces_cooldown(test_services):
+    original_get_connection_keys = test_services.remnawave.get_connection_keys
+    get_connection_keys = AsyncMock(side_effect=original_get_connection_keys)
+    test_services.remnawave.get_connection_keys = get_connection_keys
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=11011,
+            username="vless_keys_user",
+            first_name="Vless",
+            last_name="Keys",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+
+        keys = await hub.accounts.get_rate_limited_user_vless_keys(user.id)
+        with pytest.raises(ConflictError, match="5 мин"):
+            await hub.accounts.get_rate_limited_user_vless_keys(user.id)
+
+    assert len(keys) == 2
+    assert all(item.startswith("vless://") for item in keys)
+    assert get_connection_keys.await_count == 1

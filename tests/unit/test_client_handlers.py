@@ -416,6 +416,42 @@ def test_subscription_text_for_start_on_whitelist_server_keeps_billing_details_w
     assert "Уже списано за белые списки: 8.00 ₽" in text
     assert "Текущий баланс: 42.50 ₽" not in text
     assert "ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ" not in text
+    assert "Whitelist EU" not in text
+    assert "Regular PL" not in text
+
+
+def test_subscription_details_text_contains_servers_and_auto_renew_status():
+    subscription = _paid_subscription_stub()
+    user_servers = [
+        SimpleNamespace(
+            status="active",
+            server=SimpleNamespace(name="Whitelist EU", server_type=SimpleNamespace(value="whitelist")),
+        ),
+        SimpleNamespace(
+            status="active",
+            server=SimpleNamespace(name="Regular PL", server_type=SimpleNamespace(value="regular")),
+        ),
+    ]
+
+    text = client_handlers.subscription_details_text(subscription, user_servers)
+
+    assert "Подробнее о подписке" in text
+    assert "Автопродление: включено" in text
+    assert "Whitelist EU • Белые списки • active" in text
+    assert "Regular PL • Обычный • active" in text
+
+
+def test_vless_keys_file_content_contains_each_key_on_separate_line():
+    content = client_handlers.vless_keys_file_content(
+        [
+            "vless://first-key@server-one.example",
+            "vless://second-key@server-two.example",
+        ]
+    ).decode("utf-8")
+
+    assert "ALTLINK VLESS keys" in content
+    assert "vless://first-key@server-one.example" in content
+    assert "vless://second-key@server-two.example" in content
 
 
 def test_subscription_link_caption_uses_telegram_code_formatting():
