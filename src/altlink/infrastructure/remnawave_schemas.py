@@ -145,6 +145,28 @@ class RemoteHwidDevice(BaseSchema):
     updatedAt: datetime
 
 
+class RemoteConnectedIp(BaseSchema):
+    ip: str
+    lastSeen: datetime
+
+
+class RemoteUserConnectedIps(BaseSchema):
+    userId: str
+    ips: list[RemoteConnectedIp] = []
+
+
+class RemoteNodeUsersIpsResult(BaseSchema):
+    success: bool
+    nodeUuid: str
+    users: list[RemoteUserConnectedIps] = []
+
+
+class RemoteNodeUsersIpsJob(BaseSchema):
+    isCompleted: bool
+    isFailed: bool
+    result: RemoteNodeUsersIpsResult | None = None
+
+
 class RemoteSubscriptionInfoUser(BaseSchema):
     shortUuid: str
     daysLeft: int

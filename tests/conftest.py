@@ -34,6 +34,7 @@ from altlink.infrastructure.db.models import Base, Plan
 from altlink.infrastructure.remnawave_schemas import (
     RemoteAccessibleNode,
     RemoteAccessibleSquad,
+    RemoteConnectedIp,
     RemoteConnectionKeys,
     RemoteHwidDevice,
     RemoteInbound,
@@ -42,6 +43,8 @@ from altlink.infrastructure.remnawave_schemas import (
     RemoteManagedInternalSquad,
     RemoteNode,
     RemoteNodeConfigProfile,
+    RemoteNodeUsersIpsJob,
+    RemoteNodeUsersIpsResult,
     RemoteNodeUserUsageRow,
     RemoteSeriesPoint,
     RemoteSubscriptionInfo,
@@ -50,6 +53,7 @@ from altlink.infrastructure.remnawave_schemas import (
     RemoteUsageResponse,
     RemoteUsageTopNode,
     RemoteUser,
+    RemoteUserConnectedIps,
     RemoteUserTraffic,
 )
 from altlink.settings import Settings
@@ -62,6 +66,8 @@ class FakeRemnawave:
         self.nodes = self._seed_nodes()
         self.node_user_usage_totals: dict[tuple[str, str], int] = {}
         self.hwid_devices: dict[str, list[RemoteHwidDevice]] = {}
+        self.node_user_ips: dict[str, dict[str, list[str]]] = {}
+        self.ip_control_jobs: dict[str, str] = {}
 
     async def list_nodes(self):
         return list(self.nodes.values())
@@ -101,6 +107,7 @@ class FakeRemnawave:
             return await self.create_user(payload)
         updated = self._build_user(
             user_uuid=remote.uuid,
+            user_id=remote.id,
             username=payload.get("username", remote.username),
             telegram_id=payload.get("telegramId", remote.telegramId),
             expire_at=datetime.fromisoformat(payload["expireAt"]),
@@ -119,6 +126,7 @@ class FakeRemnawave:
         user = self.users[user_uuid]
         self.users[user_uuid] = self._build_user(
             user_uuid=user.uuid,
+            user_id=user.id,
             username=user.username,
             telegram_id=user.telegramId,
             expire_at=user.expireAt,
@@ -136,6 +144,7 @@ class FakeRemnawave:
         user = self.users[user_uuid]
         self.users[user_uuid] = self._build_user(
             user_uuid=user.uuid,
+            user_id=user.id,
             username=user.username,
             telegram_id=user.telegramId,
             expire_at=user.expireAt,
@@ -153,6 +162,7 @@ class FakeRemnawave:
         user = self.users[user_uuid]
         self.users[user_uuid] = self._build_user(
             user_uuid=user.uuid,
+            user_id=user.id,
             username=user.username,
             telegram_id=user.telegramId,
             expire_at=user.expireAt,
@@ -178,6 +188,30 @@ class FakeRemnawave:
         devices = self.hwid_devices.get(user_uuid, [])
         self.hwid_devices[user_uuid] = [device for device in devices if device.hwid != hwid]
         return list(self.hwid_devices[user_uuid])
+
+    async def fetch_node_users_ips(self, node_uuid: str):
+        job_id = str(uuid4())
+        self.ip_control_jobs[job_id] = node_uuid
+        return job_id
+
+    async def get_node_users_ips_result(self, job_id: str):
+        node_uuid = self.ip_control_jobs[job_id]
+        now = datetime.now(UTC)
+        return RemoteNodeUsersIpsJob(
+            isCompleted=True,
+            isFailed=False,
+            result=RemoteNodeUsersIpsResult(
+                success=True,
+                nodeUuid=node_uuid,
+                users=[
+                    RemoteUserConnectedIps(
+                        userId=user_id,
+                        ips=[RemoteConnectedIp(ip=ip, lastSeen=now) for ip in ips],
+                    )
+                    for user_id, ips in self.node_user_ips.get(node_uuid, {}).items()
+                ],
+            ),
+        )
 
     def add_hwid_device(
         self,
@@ -351,12 +385,14 @@ class FakeRemnawave:
         user = self.users[user_uuid]
         self.users[user_uuid] = self._build_user(
             user_uuid=user.uuid,
+            user_id=user.id,
             username=user.username,
             telegram_id=user.telegramId,
             expire_at=user.expireAt,
             short_uuid=user.shortUuid,
             status=user.status,
             traffic_limit_bytes=user.trafficLimitBytes,
+            hwid_device_limit=user.hwidDeviceLimit,
             used_bytes=used_bytes,
             lifetime_used_bytes=lifetime_used_bytes or used_bytes,
             active_squads=[item.uuid for item in user.activeInternalSquads],
@@ -364,6 +400,9 @@ class FakeRemnawave:
 
     def set_node_usage(self, node_uuid: str, user_uuid: str, total_bytes: int) -> None:
         self.node_user_usage_totals[(node_uuid, user_uuid)] = total_bytes
+
+    def set_node_user_ips(self, node_uuid: str, remote_user_id: int, ips: list[str]) -> None:
+        self.node_user_ips.setdefault(node_uuid, {})[str(remote_user_id)] = ips
 
     def _seed_nodes(self) -> dict[str, RemoteNode]:
         ten_uuid = str(uuid4())
@@ -442,6 +481,7 @@ class FakeRemnawave:
         self,
         *,
         user_uuid: str,
+        user_id: int | None = None,
         username: str,
         telegram_id: int | None,
         expire_at: datetime,
@@ -460,7 +500,7 @@ class FakeRemnawave:
                 active_squad_objects.append(RemoteInternalSquad(uuid=squad.uuid, name=squad.name))
         return RemoteUser(
             uuid=user_uuid,
-            id=1,
+            id=user_id or len(self.users) + 1,
             shortUuid=short_uuid,
             username=username,
             status=status,

@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     online_refresh_interval_minutes: int = 2
     remnawave_healthcheck_interval_minutes: int = 5
     server_latency_monitor_interval_minutes: int = 360
+    user_abuse_monitor_interval_minutes: int = 5
+    user_abuse_unique_ip_threshold: int = 5
+    user_abuse_ip_fetch_poll_attempts: int = 5
+    user_abuse_ip_fetch_poll_delay_seconds: float = 1.0
+    user_abuse_hwid_fetch_concurrency: int = 8
     latency_probe_scheme: str = "https"
     latency_probe_port: int = 44443
     latency_probe_path: str = "/ping"

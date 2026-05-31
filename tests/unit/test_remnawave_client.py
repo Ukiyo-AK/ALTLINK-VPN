@@ -99,3 +99,49 @@ async def test_hwid_device_methods_use_remnawave_contract(monkeypatch):
         ("GET", "/api/hwid/devices/user-1", {}),
         ("POST", "/api/hwid/devices/delete", {"json": {"userUuid": "user-1", "hwid": "hwid-1"}}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_ip_control_methods_use_remnawave_contract(monkeypatch):
+    client = RemnawaveClient(
+        Settings(
+            _env_file=None,
+            remnawave_base_url="https://remna.example",
+            remnawave_api_token="token",
+        )
+    )
+    calls: list[tuple[str, str]] = []
+
+    async def fake_request(method: str, path: str, **kwargs):
+        calls.append((method, path))
+        if method == "POST":
+            return {"jobId": "job-1"}
+        return {
+            "isCompleted": True,
+            "isFailed": False,
+            "result": {
+                "success": True,
+                "nodeUuid": "609237c1-7ffb-4d76-9861-a14b7ddc8a6a",
+                "users": [
+                    {
+                        "userId": "42",
+                        "ips": [{"ip": "203.0.113.10", "lastSeen": "2026-06-01T10:00:00Z"}],
+                    }
+                ],
+            },
+        }
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    try:
+        job_id = await client.fetch_node_users_ips("node-1")
+        status = await client.get_node_users_ips_result(job_id)
+    finally:
+        await client.aclose()
+
+    assert job_id == "job-1"
+    assert status.result is not None
+    assert status.result.users[0].ips[0].ip == "203.0.113.10"
+    assert calls == [
+        ("POST", "/api/ip-control/fetch-users-ips/node-1"),
+        ("GET", "/api/ip-control/fetch-users-ips/result/job-1"),
+    ]

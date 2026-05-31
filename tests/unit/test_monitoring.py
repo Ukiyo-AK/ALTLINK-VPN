@@ -106,3 +106,86 @@ async def test_manual_client_maintenance_blocks_regular_users_but_allows_excepti
 
         await hub.monitoring.remove_manual_maintenance_exception(user)
         assert await hub.monitoring.is_client_maintenance_active(telegram_id=user.telegram_id) is True
+
+
+@pytest.mark.asyncio
+async def test_record_user_abuse_state_alerts_only_on_new_or_increased_excess(test_services):
+    test_services.settings.user_abuse_unique_ip_threshold = 3
+    base_observation = {
+        "user_id": "user-1",
+        "telegram_id": 42001,
+        "username": "shared_link",
+        "ips": ["203.0.113.1", "203.0.113.2", "203.0.113.3"],
+        "hwid_device_count": 3,
+        "device_limit": 2,
+    }
+
+    async with test_services.hub() as hub:
+        first_alerts = await hub.monitoring.record_user_abuse_state([base_observation])
+        repeat_alerts = await hub.monitoring.record_user_abuse_state([base_observation])
+        increased_alerts = await hub.monitoring.record_user_abuse_state(
+            [{**base_observation, "ips": [*base_observation["ips"], "203.0.113.4"]}]
+        )
+        await hub.monitoring.record_user_abuse_state(
+            [{**base_observation, "ips": [], "hwid_device_count": 2}]
+        )
+        repeated_after_recovery = await hub.monitoring.record_user_abuse_state([base_observation])
+
+    assert {item.kind for item in first_alerts} == {"user_many_active_ips", "user_hwid_limit_exceeded"}
+    assert repeat_alerts == []
+    assert [item.kind for item in increased_alerts] == ["user_many_active_ips"]
+    assert {item.kind for item in repeated_after_recovery} == {"user_many_active_ips", "user_hwid_limit_exceeded"}
+
+
+@pytest.mark.asyncio
+async def test_record_user_abuse_state_preserves_alerts_when_remote_data_is_temporarily_unavailable(test_services):
+    test_services.settings.user_abuse_unique_ip_threshold = 3
+    observation = {
+        "user_id": "user-1",
+        "telegram_id": 42003,
+        "username": "temporary_failure",
+        "ips": ["203.0.113.1", "203.0.113.2", "203.0.113.3"],
+        "hwid_device_count": 3,
+        "device_limit": 2,
+    }
+
+    async with test_services.hub() as hub:
+        await hub.monitoring.record_user_abuse_state([observation])
+        alerts = await hub.monitoring.record_user_abuse_state(
+            [{**observation, "ips": None, "hwid_device_count": None}]
+        )
+        snapshot = await hub.session.scalar(
+            select(SystemSetting).where(SystemSetting.key == hub.monitoring.USER_ABUSE_STATUS_KEY)
+        )
+
+    assert alerts == []
+    assert snapshot.value["users"]["user-1"]["ip_alert_active"] is True
+    assert snapshot.value["users"]["user-1"]["device_alert_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_capture_user_abuse_state_collects_live_ips_and_hwid_devices(test_services):
+    test_services.settings.user_abuse_unique_ip_threshold = 5
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=42002,
+            username="live_abuse",
+            first_name="Live",
+            last_name="Abuse",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        remote_user = hub.remnawave.users[user.remnawave_user_uuid]
+        node_uuid = next(iter(hub.remnawave.nodes))
+        hub.remnawave.set_node_user_ips(
+            node_uuid,
+            remote_user.id,
+            ["203.0.113.1", "203.0.113.2", "203.0.113.3", "203.0.113.4", "203.0.113.5"],
+        )
+        for index in range(9):
+            hub.remnawave.add_hwid_device(user.remnawave_user_uuid, hwid=f"hwid-{index}")
+
+        alerts = await hub.monitoring.capture_user_abuse_state()
+
+    assert {item.kind for item in alerts} == {"user_many_active_ips", "user_hwid_limit_exceeded"}
+    assert all(item.details["telegram_id"] == 42002 for item in alerts)

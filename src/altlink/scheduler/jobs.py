@@ -57,6 +57,28 @@ def format_server_latency_alert(alerts) -> str:
     return "\n".join(lines)
 
 
+def format_user_abuse_alert(alerts) -> str:
+    lines = ["⚠️ Антиабуз: обнаружена подозрительная активность", ""]
+    for item in alerts:
+        details = item.details
+        telegram_id = details.get("telegram_id") or "—"
+        lines.append(f"• {item.subject} (Telegram ID: {telegram_id})")
+        if item.kind == "user_many_active_ips":
+            lines.append(
+                f"  Одновременно подключено уникальных IP: {details.get('unique_ip_count', 0)} "
+                f"(порог: {details.get('unique_ip_threshold', '—')})"
+            )
+            ips = details.get("unique_ips") or []
+            if ips:
+                lines.append(f"  IP: {', '.join(str(ip) for ip in ips[:12])}")
+        elif item.kind == "user_hwid_limit_exceeded":
+            lines.append(
+                f"  HWID-устройств: {details.get('hwid_device_count', 0)} "
+                f"при лимите {details.get('device_limit', '—')}"
+            )
+    return "\n".join(lines)
+
+
 async def sync_servers_job(container: AppContainer) -> None:
     admin_ids: list[int] = []
     alerts = []
@@ -96,6 +118,21 @@ async def topups_job(container: AppContainer) -> None:
 async def online_job(container: AppContainer) -> None:
     async with container.hub() as hub:
         await hub.online.refresh_online_cache(detailed=False)
+
+
+async def user_abuse_monitor_job(container: AppContainer) -> None:
+    admin_ids: list[int] = []
+    alerts = []
+    async with container.hub() as hub:
+        alerts = await hub.monitoring.capture_user_abuse_state()
+        if alerts:
+            admin_ids = await hub.accounts.list_admin_telegram_ids()
+    if alerts:
+        await send_telegram_messages(
+            bot_token=container.settings.admin_bot_token,
+            chat_ids=admin_ids,
+            text=format_user_abuse_alert(alerts),
+        )
 
 
 async def remnawave_health_job(container: AppContainer) -> None:

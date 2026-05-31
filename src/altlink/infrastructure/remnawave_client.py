@@ -15,6 +15,7 @@ from altlink.infrastructure.remnawave_schemas import (
     RemoteHwidDevice,
     RemoteManagedInternalSquad,
     RemoteNode,
+    RemoteNodeUsersIpsJob,
     RemoteNodeUserUsageRow,
     RemoteSubscriptionInfo,
     RemoteSubscriptionRequestRecord,
@@ -42,6 +43,8 @@ class RemnawaveGateway(Protocol):
     async def get_connection_keys(self, user_uuid: str) -> RemoteConnectionKeys: ...
     async def get_user_hwid_devices(self, user_uuid: str) -> list[RemoteHwidDevice]: ...
     async def delete_user_hwid_device(self, user_uuid: str, hwid: str) -> list[RemoteHwidDevice]: ...
+    async def fetch_node_users_ips(self, node_uuid: str) -> str: ...
+    async def get_node_users_ips_result(self, job_id: str) -> RemoteNodeUsersIpsJob: ...
     async def get_user_usage(self, user_uuid: str, start: date, end: date) -> RemoteUsageResponse: ...
     async def get_node_user_usage(self, node_uuid: str, start: datetime, end: datetime) -> list[RemoteNodeUserUsageRow] | None: ...
     async def get_subscription_request_history(self, user_uuid: str) -> list[RemoteSubscriptionRequestRecord]: ...
@@ -187,6 +190,14 @@ class RemnawaveClient:
         )
         devices = payload.get("devices", []) if isinstance(payload, dict) else []
         return [RemoteHwidDevice.model_validate(item) for item in devices]
+
+    async def fetch_node_users_ips(self, node_uuid: str) -> str:
+        payload = await self._request("POST", f"/api/ip-control/fetch-users-ips/{node_uuid}")
+        return str((payload or {}).get("jobId") or "")
+
+    async def get_node_users_ips_result(self, job_id: str) -> RemoteNodeUsersIpsJob:
+        payload = await self._request("GET", f"/api/ip-control/fetch-users-ips/result/{job_id}")
+        return RemoteNodeUsersIpsJob.model_validate(payload)
 
     async def get_user_usage(self, user_uuid: str, start: date, end: date) -> RemoteUsageResponse:
         payload = await self._request(

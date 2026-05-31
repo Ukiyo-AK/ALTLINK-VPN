@@ -17,6 +17,7 @@ from altlink.scheduler.jobs import (
     sync_servers_job,
     topups_job,
     traffic_job,
+    user_abuse_monitor_job,
 )
 from altlink.settings import get_settings
 
@@ -63,6 +64,12 @@ async def run_scheduler() -> None:
         args=[container],
     )
     scheduler.add_job(online_job, "interval", minutes=settings.online_refresh_interval_minutes, args=[container])
+    scheduler.add_job(
+        user_abuse_monitor_job,
+        "interval",
+        minutes=settings.user_abuse_monitor_interval_minutes,
+        args=[container],
+    )
     scheduler.start()
 
     heartbeat = asyncio.create_task(heartbeat_loop("/tmp/altlink-scheduler.heartbeat"))
@@ -73,6 +80,7 @@ async def run_scheduler() -> None:
         await run_startup_job(billing_job, container, "billing")
         await run_startup_job(traffic_job, container, "traffic")
         await run_startup_job(online_job, container, "online")
+        await run_startup_job(user_abuse_monitor_job, container, "user_abuse_monitor")
         await run_startup_job(topups_job, container, "topups")
         await run_startup_job(notifications_job, container, "notifications")
         while True:
