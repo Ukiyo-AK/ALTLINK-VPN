@@ -35,6 +35,7 @@ from altlink.infrastructure.remnawave_schemas import (
     RemoteAccessibleNode,
     RemoteAccessibleSquad,
     RemoteConnectionKeys,
+    RemoteHwidDevice,
     RemoteInbound,
     RemoteInternalSquad,
     RemoteInternalSquadInfo,
@@ -60,6 +61,7 @@ class FakeRemnawave:
         self.internal_squads: dict[str, RemoteManagedInternalSquad] = {}
         self.nodes = self._seed_nodes()
         self.node_user_usage_totals: dict[tuple[str, str], int] = {}
+        self.hwid_devices: dict[str, list[RemoteHwidDevice]] = {}
 
     async def list_nodes(self):
         return list(self.nodes.values())
@@ -166,7 +168,40 @@ class FakeRemnawave:
 
     async def delete_user(self, user_uuid: str):
         self.users.pop(user_uuid, None)
+        self.hwid_devices.pop(user_uuid, None)
         return {}
+
+    async def get_user_hwid_devices(self, user_uuid: str):
+        return list(self.hwid_devices.get(user_uuid, []))
+
+    async def delete_user_hwid_device(self, user_uuid: str, hwid: str):
+        devices = self.hwid_devices.get(user_uuid, [])
+        self.hwid_devices[user_uuid] = [device for device in devices if device.hwid != hwid]
+        return list(self.hwid_devices[user_uuid])
+
+    def add_hwid_device(
+        self,
+        user_uuid: str,
+        *,
+        hwid: str | None = None,
+        platform: str | None = "Android",
+        os_version: str | None = "14",
+        device_model: str | None = "Test device",
+        user_agent: str | None = "Happ/1.0",
+    ) -> RemoteHwidDevice:
+        now = datetime.now(UTC)
+        device = RemoteHwidDevice(
+            hwid=hwid or str(uuid4()),
+            userUuid=user_uuid,
+            platform=platform,
+            osVersion=os_version,
+            deviceModel=device_model,
+            userAgent=user_agent,
+            createdAt=now,
+            updatedAt=now,
+        )
+        self.hwid_devices.setdefault(user_uuid, []).append(device)
+        return device
 
     async def get_accessible_nodes(self, user_uuid: str):
         user = self.users[user_uuid]

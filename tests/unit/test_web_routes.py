@@ -626,6 +626,7 @@ async def test_build_portal_context_includes_server_latency_state(monkeypatch):
         accounts=SimpleNamespace(
             get_subscription_bundle=AsyncMock(return_value={"subscription": None, "subscription_info": None, "connection_keys": None}),
             can_offer_trial=AsyncMock(return_value=False),
+            list_user_hwid_devices=AsyncMock(return_value=[]),
         ),
         catalog=SimpleNamespace(
             get_user_servers=AsyncMock(return_value=[SimpleNamespace(server=SimpleNamespace(id="server-1", name="Whitelist EU"))])

@@ -12,6 +12,7 @@ from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt,
 from altlink.infrastructure.remnawave_schemas import (
     RemoteAccessibleNode,
     RemoteConnectionKeys,
+    RemoteHwidDevice,
     RemoteManagedInternalSquad,
     RemoteNode,
     RemoteNodeUserUsageRow,
@@ -39,6 +40,8 @@ class RemnawaveGateway(Protocol):
     async def get_accessible_nodes(self, user_uuid: str) -> list[RemoteAccessibleNode]: ...
     async def get_subscription_info(self, short_uuid: str) -> RemoteSubscriptionInfo: ...
     async def get_connection_keys(self, user_uuid: str) -> RemoteConnectionKeys: ...
+    async def get_user_hwid_devices(self, user_uuid: str) -> list[RemoteHwidDevice]: ...
+    async def delete_user_hwid_device(self, user_uuid: str, hwid: str) -> list[RemoteHwidDevice]: ...
     async def get_user_usage(self, user_uuid: str, start: date, end: date) -> RemoteUsageResponse: ...
     async def get_node_user_usage(self, node_uuid: str, start: datetime, end: datetime) -> list[RemoteNodeUserUsageRow] | None: ...
     async def get_subscription_request_history(self, user_uuid: str) -> list[RemoteSubscriptionRequestRecord]: ...
@@ -170,6 +173,20 @@ class RemnawaveClient:
     async def get_connection_keys(self, user_uuid: str) -> RemoteConnectionKeys:
         payload = await self._request("GET", f"/api/subscriptions/connection-keys/{user_uuid}")
         return RemoteConnectionKeys.model_validate(payload)
+
+    async def get_user_hwid_devices(self, user_uuid: str) -> list[RemoteHwidDevice]:
+        payload = await self._request("GET", f"/api/hwid/devices/{user_uuid}")
+        devices = payload.get("devices", []) if isinstance(payload, dict) else []
+        return [RemoteHwidDevice.model_validate(item) for item in devices]
+
+    async def delete_user_hwid_device(self, user_uuid: str, hwid: str) -> list[RemoteHwidDevice]:
+        payload = await self._request(
+            "POST",
+            "/api/hwid/devices/delete",
+            json={"userUuid": user_uuid, "hwid": hwid},
+        )
+        devices = payload.get("devices", []) if isinstance(payload, dict) else []
+        return [RemoteHwidDevice.model_validate(item) for item in devices]
 
     async def get_user_usage(self, user_uuid: str, start: date, end: date) -> RemoteUsageResponse:
         payload = await self._request(

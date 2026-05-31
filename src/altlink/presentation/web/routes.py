@@ -33,6 +33,7 @@ from altlink.utils.latency import (
     single_probe_server_latency,
     server_probe_port,
 )
+from altlink.utils.devices import hwid_device_view
 from altlink.utils.qr import render_qr_png
 from altlink.utils.security import generate_token
 from altlink.utils.telegram_web import check_channel_membership, verify_telegram_auth_payload
@@ -458,6 +459,7 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
     show_usage_details = bool(subscription and subscription.plan and is_metered_plan_code(subscription.plan.code))
     trial_available = await hub.accounts.can_offer_trial(user.id)
     server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
+    portal_devices, portal_devices_error = await safe_user_hwid_device_views(hub, user.id)
 
     qr_data_uri = None
     info = bundle.get("subscription_info")
@@ -486,6 +488,8 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_channel_ok": channel_ok,
         "portal_show_usage_details": show_usage_details,
         "portal_trial_available": trial_available,
+        "portal_devices": portal_devices,
+        "portal_devices_error": portal_devices_error,
         "portal_subscription_payload": payload,
         "portal_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/portal",
         "client_bot_url": f"https://t.me/{request.app.state.settings.client_bot_name.lstrip('@')}" if request.app.state.settings.client_bot_name else None,
@@ -503,6 +507,17 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         ),
         "telegram_login_bot": request.app.state.settings.client_bot_name.lstrip("@"),
     }
+
+
+async def safe_user_hwid_device_views(hub, user_id: str) -> tuple[list[dict[str, object]], str | None]:
+    try:
+        devices = await hub.accounts.list_user_hwid_devices(user_id)
+    except ServiceError as exc:
+        return [], str(exc)
+    except Exception:
+        logger.warning("Failed to load HWID devices for user %s.", user_id, exc_info=True)
+        return [], "Не удалось загрузить устройства из панели. Попробуйте обновить страницу чуть позже."
+    return [hwid_device_view(item) for item in devices], None
 
 
 @router.get("/")
@@ -717,6 +732,7 @@ async def user_detail(request: Request, user_id: str):
         bundle = await hub.accounts.get_subscription_bundle(user_id)
         user_servers = await hub.catalog.get_user_servers(user_id)
         plans = await hub.dashboard.list_plans()
+        devices, devices_error = await safe_user_hwid_device_views(hub, user_id)
         return render(
             request,
             "user_detail.html",
@@ -726,6 +742,8 @@ async def user_detail(request: Request, user_id: str):
             bundle=bundle,
             user_servers=user_servers,
             plans=plans,
+            devices=devices,
+            devices_error=devices_error,
             whitelist_cost_rub=bytes_to_gb_cost(
                 card["subscription"].whitelist_traffic_used_bytes if card["subscription"] else 0,
                 Decimal(request.app.state.settings.whitelist_price_per_gb_rub),
@@ -1232,6 +1250,26 @@ async def portal_home(request: Request):
             return portal_login_redirect()
         context = await build_portal_context(request, hub, user)
         return render(request, "portal_dashboard.html", **context)
+
+
+@router.post("/portal/devices/delete")
+async def portal_device_delete(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    hwid = str(form.get("hwid", "")).strip()
+    if not hwid:
+        set_flash(request, "Устройство не выбрано.", "danger")
+        return RedirectResponse("/portal", status_code=303)
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        try:
+            await hub.accounts.delete_user_hwid_device(user.id, hwid)
+            set_flash(request, "Устройство удалено.")
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+    return RedirectResponse("/portal", status_code=303)
 
 
 @router.post("/portal/trial")

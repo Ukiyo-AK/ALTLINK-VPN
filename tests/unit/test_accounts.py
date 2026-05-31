@@ -164,3 +164,36 @@ async def test_list_admin_telegram_ids_merges_settings_and_admin_rows(test_servi
         ids = await hub.accounts.list_admin_telegram_ids()
 
     assert ids == [101, 202, 303]
+
+
+@pytest.mark.asyncio
+async def test_hwid_devices_are_loaded_and_deleted_for_current_user_only(test_services):
+    async with test_services.hub() as hub:
+        first = await hub.accounts.get_or_create_user(
+            telegram_id=11008,
+            username="first_device_user",
+            first_name="First",
+            last_name="Device",
+            language_code="ru",
+        )
+        second = await hub.accounts.get_or_create_user(
+            telegram_id=11009,
+            username="second_device_user",
+            first_name="Second",
+            last_name="Device",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(first.id)
+        await hub.billing.activate_trial(second.id)
+        own_device = test_services.remnawave.add_hwid_device(first.remnawave_user_uuid, hwid="first-hwid")
+        foreign_device = test_services.remnawave.add_hwid_device(second.remnawave_user_uuid, hwid="second-hwid")
+
+        devices = await hub.accounts.list_user_hwid_devices(first.id)
+        await hub.accounts.delete_user_hwid_device(first.id, foreign_device.hwid)
+        untouched_foreign_devices = await hub.accounts.list_user_hwid_devices(second.id)
+        await hub.accounts.delete_user_hwid_device(first.id, own_device.hwid)
+        remaining_devices = await hub.accounts.list_user_hwid_devices(first.id)
+
+    assert [item.hwid for item in devices] == ["first-hwid"]
+    assert [item.hwid for item in untouched_foreign_devices] == ["second-hwid"]
+    assert remaining_devices == []

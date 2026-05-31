@@ -30,7 +30,7 @@ from altlink.infrastructure.db.models import (
     TrialPeriod,
     User,
 )
-from altlink.infrastructure.remnawave_schemas import RemoteUser
+from altlink.infrastructure.remnawave_schemas import RemoteHwidDevice, RemoteUser
 from altlink.utils.subscriptions import remnawave_public_subscription_url
 from altlink.utils.security import hash_password, verify_password
 from altlink.utils.time import utc_now
@@ -333,6 +333,39 @@ class AccountService(BaseService):
         )
 
         return bundle
+
+    async def list_user_hwid_devices(self, user_id: str) -> list[RemoteHwidDevice]:
+        user = await self.get_user(user_id)
+        if self.remnawave is None:
+            return []
+        try:
+            await self.ensure_remote_user_link(user)
+            if not user.remnawave_user_uuid:
+                return []
+            return await self.remnawave.get_user_hwid_devices(user.remnawave_user_uuid)
+        except Exception as exc:
+            logger.warning("Failed to load Remnawave HWID devices for user %s.", user.id, exc_info=True)
+            raise ConflictError("Не удалось загрузить устройства из панели. Попробуйте ещё раз чуть позже.") from exc
+
+    async def delete_user_hwid_device(self, user_id: str, hwid: str) -> list[RemoteHwidDevice]:
+        user = await self.get_user(user_id)
+        if self.remnawave is None:
+            raise NotFoundError("Устройство не найдено.")
+        try:
+            await self.ensure_remote_user_link(user)
+            if not user.remnawave_user_uuid:
+                raise NotFoundError("Устройство не найдено.")
+            return await self.remnawave.delete_user_hwid_device(user.remnawave_user_uuid, hwid)
+        except NotFoundError:
+            raise
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise NotFoundError("Устройство уже удалено или не найдено.") from exc
+            logger.warning("Failed to delete Remnawave HWID device for user %s.", user.id, exc_info=True)
+            raise ConflictError("Не удалось удалить устройство. Попробуйте ещё раз чуть позже.") from exc
+        except Exception as exc:
+            logger.warning("Failed to delete Remnawave HWID device for user %s.", user.id, exc_info=True)
+            raise ConflictError("Не удалось удалить устройство. Попробуйте ещё раз чуть позже.") from exc
 
     async def adjust_balance(
         self,

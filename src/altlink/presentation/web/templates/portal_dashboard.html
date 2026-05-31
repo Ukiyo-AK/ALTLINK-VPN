@@ -99,6 +99,42 @@
       {% endif %}
     </section>
 
+    <section class="panel stack device-panel">
+      <div class="split">
+        <h2>Мои устройства</h2>
+        <span class="badge">{{ portal_devices|length }} зарегистрировано</span>
+      </div>
+      <p class="muted">
+        Здесь отображаются устройства, которые зарегистрировал совместимый клиент. После удаления потребуется подключить устройство заново.
+      </p>
+      {% if portal_devices_error %}
+      <div class="alert danger">{{ portal_devices_error }}</div>
+      {% else %}
+      <table class="table">
+        <thead><tr><th>Устройство</th><th>Клиент</th><th>Последнее подключение</th><th>Дата создания</th><th></th></tr></thead>
+        <tbody>
+          {% for device in portal_devices %}
+          <tr>
+            <td>{{ device.name }}</td>
+            <td>{{ device.client }}</td>
+            <td>{{ device.last_connected_at.strftime('%d.%m.%Y %H:%M') }}</td>
+            <td>{{ device.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+            <td>
+              <form method="post" action="/portal/devices/delete" onsubmit="return confirm('Удалить это устройство?')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="hwid" value="{{ device.hwid }}">
+                <button type="submit" class="button danger compact">Удалить</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="muted">Пока устройств нет. Они появятся после первого подключения через совместимое приложение.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+
     <section class="portal-grid">
       <article class="panel stack">
         <div class="split">

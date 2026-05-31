@@ -12,6 +12,8 @@ from altlink.presentation.bots.admin_keyboards import (
     server_delete_confirmation_actions,
     system_logs_actions,
     user_actions,
+    user_device_detail_actions,
+    user_devices_actions,
     user_delete_confirmation_actions,
     user_lookup_actions,
     user_subscription_actions,
@@ -111,3 +113,14 @@ def test_system_logs_actions_exposes_refresh_button():
             "style": "primary",
         }
     ]
+
+
+def test_user_devices_actions_paginate_and_fit_telegram_limit():
+    user_id = "609237c1-7ffb-4d76-9861-a14b7ddc8a6a"
+    devices = [{"name": f"Device {index}"} for index in range(10)]
+    buttons = inline_buttons(user_devices_actions(user_id, devices, page=1, page_size=6).as_markup())
+    buttons += inline_buttons(user_device_detail_actions(user_id, page=1).as_markup())
+
+    device_buttons = [item for item in buttons if item.get("callback_data", "").startswith("adm:do:")]
+    assert len(device_buttons) == 4
+    assert all(len(item["callback_data"].encode("utf-8")) <= 64 for item in buttons)

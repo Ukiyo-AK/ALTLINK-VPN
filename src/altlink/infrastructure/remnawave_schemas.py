@@ -134,6 +134,17 @@ class RemoteConnectionKeys(BaseSchema):
     disabledKeys: list[str]
 
 
+class RemoteHwidDevice(BaseSchema):
+    hwid: str
+    userUuid: str
+    platform: str | None = None
+    osVersion: str | None = None
+    deviceModel: str | None = None
+    userAgent: str | None = None
+    createdAt: datetime
+    updatedAt: datetime
+
+
 class RemoteSubscriptionInfoUser(BaseSchema):
     shortUuid: str
     daysLeft: int

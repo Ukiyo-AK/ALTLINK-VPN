@@ -22,6 +22,8 @@ USER_MESSAGE_PREFIX = "adm:um"
 USER_MESSAGE_CANCEL_PREFIX = "adm:uc"
 USER_DELETE_PREFIX = "adm:ux"
 USER_DELETE_CONFIRM_PREFIX = "adm:xc"
+USER_DEVICES_PREFIX = "adm:dl"
+USER_DEVICE_PREFIX = "adm:do"
 
 PROMO_TOGGLE_PREFIX = "adm:pt"
 PAYMENT_APPROVE_PREFIX = "adm:pa"
@@ -67,9 +69,49 @@ def user_actions(user_id: str) -> InlineKeyboardBuilder:
     builder.button(text="Подписка и статус", callback_data=f"{USER_SUBSCRIPTIONS_PREFIX}:{user_id}", style="primary")
     builder.button(text="Корректировка баланса", callback_data=f"{USER_BALANCE_PREFIX}:{user_id}", style="primary")
     builder.button(text="Написать клиенту", callback_data=f"{USER_MESSAGE_PREFIX}:{user_id}", style="success")
+    builder.button(text="Устройства", callback_data=f"{USER_DEVICES_PREFIX}:0:{user_id}", style="primary")
     builder.button(text="Обновить карточку", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
     builder.button(text="Удалить аккаунт", callback_data=f"{USER_DELETE_PREFIX}:{user_id}", style="danger")
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 2)
+    return builder
+
+
+def user_devices_actions(
+    user_id: str,
+    devices: list[dict[str, object]],
+    *,
+    page: int,
+    page_size: int,
+) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    start = page * page_size
+    for index, device in enumerate(devices[start : start + page_size], start=start):
+        name = str(device.get("name") or "Неизвестное устройство")
+        builder.button(
+            text=f"📱 {name[:42]}",
+            callback_data=f"{USER_DEVICE_PREFIX}:{page}:{index}:{user_id}",
+            style="primary",
+        )
+    total_pages = max((len(devices) + page_size - 1) // page_size, 1)
+    if page > 0:
+        builder.button(text="← Назад", callback_data=f"{USER_DEVICES_PREFIX}:{page - 1}:{user_id}")
+    if page + 1 < total_pages:
+        builder.button(text="Вперёд →", callback_data=f"{USER_DEVICES_PREFIX}:{page + 1}:{user_id}")
+    builder.button(text="К карточке", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
+    rows = [1] * min(page_size, max(len(devices) - start, 0))
+    navigation_count = int(page > 0) + int(page + 1 < total_pages)
+    if navigation_count:
+        rows.append(navigation_count)
+    rows.append(1)
+    builder.adjust(*rows)
+    return builder
+
+
+def user_device_detail_actions(user_id: str, *, page: int) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="К устройствам", callback_data=f"{USER_DEVICES_PREFIX}:{page}:{user_id}")
+    builder.button(text="К карточке", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
+    builder.adjust(1, 1)
     return builder
 
 

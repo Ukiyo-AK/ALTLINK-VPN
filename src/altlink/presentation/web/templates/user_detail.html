@@ -65,6 +65,33 @@
   </article>
 </section>
 
+<section class="panel device-panel">
+  <div class="split">
+    <h2>Устройства клиента</h2>
+    <span class="badge">{{ devices|length }} зарегистрировано</span>
+  </div>
+  {% if devices_error %}
+  <div class="alert danger">{{ devices_error }}</div>
+  {% else %}
+  <table class="table">
+    <thead><tr><th>Устройство</th><th>Клиент</th><th>Платформа</th><th>Последнее подключение</th><th>Дата создания</th></tr></thead>
+    <tbody>
+      {% for device in devices %}
+      <tr>
+        <td>{{ device.name }}</td>
+        <td>{{ device.client }}</td>
+        <td>{{ device.platform }}{% if device.os_version != 'Не определена' %} • {{ device.os_version }}{% endif %}</td>
+        <td>{{ device.last_connected_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        <td>{{ device.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Совместимые клиенты пока не зарегистрировали устройства.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
 <section class="grid-two">
   <article class="panel">
     <h2>Доступные серверы</h2>

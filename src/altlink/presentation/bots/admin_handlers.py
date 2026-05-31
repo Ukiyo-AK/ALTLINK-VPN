@@ -58,6 +58,8 @@ from altlink.presentation.bots.admin_keyboards import (
     USER_DEACTIVATE_PREFIX,
     USER_DELETE_CONFIRM_PREFIX,
     USER_DELETE_PREFIX,
+    USER_DEVICE_PREFIX,
+    USER_DEVICES_PREFIX,
     USER_OPEN_PREFIX,
     USER_PLAN_PREFIX,
     USER_SUBSCRIPTIONS_PREFIX,
@@ -79,12 +81,15 @@ from altlink.presentation.bots.admin_keyboards import (
     system_logs_actions,
     top_users_actions,
     user_actions,
+    user_device_detail_actions,
+    user_devices_actions,
     user_delete_confirmation_actions,
     user_lookup_actions,
     user_message_prompt_actions,
     user_subscription_actions,
 )
 from altlink.utils.media import media_path
+from altlink.utils.devices import hwid_device_view
 
 router = Router(name="admin-router")
 logger = logging.getLogger(__name__)
@@ -92,6 +97,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_USERNAME_RE = re.compile(r"^@?[A-Za-z][A-Za-z0-9_]{4,31}$")
 UUIDISH_RE = re.compile(r"^[0-9a-fA-F-]{8,}$")
 SHORT_UUID_RE = re.compile(r"^[A-Za-z0-9_-]{8,}$")
+ADMIN_DEVICE_PAGE_SIZE = 6
 
 USER_LOOKUP_PROMPT = "Введите Telegram ID, @username, локальный UUID или Remnawave UUID пользователя."
 ADMIN_MENU_TEXTS = {
@@ -897,6 +903,74 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         await render_admin(target, text)
 
 
+def clamp_admin_hwid_device_page(devices: list[dict[str, object]], page: int) -> int:
+    total_pages = max((len(devices) + ADMIN_DEVICE_PAGE_SIZE - 1) // ADMIN_DEVICE_PAGE_SIZE, 1)
+    return min(max(page, 0), total_pages - 1)
+
+
+def format_admin_hwid_device_datetime(value) -> str:
+    return value.strftime("%d.%m.%Y %H:%M") if value else "—"
+
+
+async def show_user_hwid_devices(target: Message | CallbackQuery, user_id: str, container: AppContainer, *, page: int = 0):
+    async with container.hub() as hub:
+        user = await hub.accounts.get_user(user_id)
+        try:
+            devices = [hwid_device_view(item) for item in await hub.accounts.list_user_hwid_devices(user_id)]
+        except ServiceError as exc:
+            await render_admin(target, f"Устройства пользователя\n\n{exc}", reply_markup=user_actions(user_id).as_markup())
+            return
+    page = clamp_admin_hwid_device_page(devices, page)
+    total_pages = max((len(devices) + ADMIN_DEVICE_PAGE_SIZE - 1) // ADMIN_DEVICE_PAGE_SIZE, 1)
+    text = (
+        "Устройства пользователя\n\n"
+        f"Пользователь: {user_label(user)}\n"
+        f"Найдено: {len(devices)} • страница {page + 1} из {total_pages}"
+    )
+    if not devices:
+        text += "\n\nПока совместимые клиенты не зарегистрировали ни одного устройства."
+    await render_admin(
+        target,
+        text,
+        reply_markup=user_devices_actions(
+            user_id,
+            devices,
+            page=page,
+            page_size=ADMIN_DEVICE_PAGE_SIZE,
+        ).as_markup(),
+    )
+
+
+async def show_user_hwid_device(
+    target: Message | CallbackQuery,
+    user_id: str,
+    container: AppContainer,
+    *,
+    page: int,
+    index: int,
+):
+    async with container.hub() as hub:
+        user = await hub.accounts.get_user(user_id)
+        try:
+            devices = await hub.accounts.list_user_hwid_devices(user_id)
+        except ServiceError as exc:
+            await render_admin(target, f"Устройства пользователя\n\n{exc}", reply_markup=user_actions(user_id).as_markup())
+            return
+    if index < 0 or index >= len(devices):
+        await show_user_hwid_devices(target, user_id, container, page=page)
+        return
+    device = hwid_device_view(devices[index])
+    text = (
+        "Устройство пользователя\n\n"
+        f"Пользователь: {user_label(user)}\n"
+        f"Название: {device['name']}\n"
+        f"Клиент: {device['client']}\n"
+        f"Последнее подключение: {format_admin_hwid_device_datetime(device['last_connected_at'])}\n"
+        f"Дата создания: {format_admin_hwid_device_datetime(device['created_at'])}"
+    )
+    await render_admin(target, text, reply_markup=user_device_detail_actions(user_id, page=page).as_markup())
+
+
 async def show_subscription_controls(target: Message | CallbackQuery, user_id: str, container: AppContainer):
     async with container.hub() as hub:
         card = await hub.accounts.user_card(user_id)
@@ -1509,6 +1583,33 @@ async def open_user(callback: CallbackQuery, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
         return
     await show_user_card(callback, callback.data.split(":")[-1], container)
+
+
+@router.callback_query(F.data.startswith(f"{USER_DEVICES_PREFIX}:"))
+async def open_user_hwid_devices(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    try:
+        page_token, user_id = callback.data.removeprefix(f"{USER_DEVICES_PREFIX}:").split(":", 1)
+        page = int(page_token)
+    except (TypeError, ValueError):
+        await callback.answer("Некорректная страница.", show_alert=True)
+        return
+    await show_user_hwid_devices(callback, user_id, container, page=page)
+
+
+@router.callback_query(F.data.startswith(f"{USER_DEVICE_PREFIX}:"))
+async def open_user_hwid_device(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    try:
+        page_token, index_token, user_id = callback.data.removeprefix(f"{USER_DEVICE_PREFIX}:").split(":", 2)
+        page = int(page_token)
+        index = int(index_token)
+    except (TypeError, ValueError):
+        await callback.answer("Некорректное устройство.", show_alert=True)
+        return
+    await show_user_hwid_device(callback, user_id, container, page=page, index=index)
 
 
 @router.callback_query(F.data.startswith(f"{USER_SUBSCRIPTIONS_PREFIX}:"))

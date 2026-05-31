@@ -33,6 +33,9 @@ from altlink.presentation.bots.client_keyboards import (
     agreement_actions,
     balance_actions,
     channel_actions,
+    device_delete_confirmation_actions,
+    device_detail_actions,
+    device_list_actions,
     insufficient_balance_actions,
     main_menu,
     menu_actions,
@@ -52,6 +55,7 @@ from altlink.presentation.bots.client_keyboards import (
     topup_actions,
     topup_provider_actions,
 )
+from altlink.utils.devices import hwid_device_fingerprint, hwid_device_view
 from altlink.utils.media import media_path
 from altlink.utils.qr import render_qr_png
 from altlink.utils.telegram_web import check_channel_membership
@@ -61,6 +65,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 CLIENT_LAST_CARD: dict[int, tuple[int, bool]] = {}
 CLIENT_REPLY_MENU_READY: set[int] = set()
+CLIENT_DEVICE_PAGE_SIZE = 6
 
 
 class TopupStates(StatesGroup):
@@ -639,6 +644,63 @@ def subscription_markup(subscription):
         can_cancel=can_manage_auto_renew(subscription),
         auto_renew_disabled=bool(subscription and not subscription.auto_renew),
     ).as_markup()
+
+
+def format_hwid_device_datetime(value) -> str:
+    return value.strftime("%d.%m.%Y %H:%M") if value else "—"
+
+
+def hwid_device_details_text(device: dict[str, object]) -> str:
+    return (
+        "📱 Устройство\n\n"
+        f"Название: {device['name']}\n"
+        f"Клиент: {device['client']}\n"
+        f"Последнее подключение: {format_hwid_device_datetime(device['last_connected_at'])}\n"
+        f"Дата создания: {format_hwid_device_datetime(device['created_at'])}"
+    )
+
+
+def clamp_hwid_device_page(devices: list[dict[str, object]], page: int) -> int:
+    total_pages = max((len(devices) + CLIENT_DEVICE_PAGE_SIZE - 1) // CLIENT_DEVICE_PAGE_SIZE, 1)
+    return min(max(page, 0), total_pages - 1)
+
+
+async def show_client_hwid_devices(
+    target: Message | CallbackQuery,
+    hub,
+    user_id: str,
+    *,
+    page: int = 0,
+    notice: str | None = None,
+) -> None:
+    try:
+        devices = [hwid_device_view(item) for item in await hub.accounts.list_user_hwid_devices(user_id)]
+    except ServiceError as exc:
+        await answer_or_edit(target, f"📱 Мои устройства\n\n{exc}", reply_markup=subscription_markup(None))
+        return
+    page = clamp_hwid_device_page(devices, page)
+    total_pages = max((len(devices) + CLIENT_DEVICE_PAGE_SIZE - 1) // CLIENT_DEVICE_PAGE_SIZE, 1)
+    text = (
+        "📱 Мои устройства\n\n"
+        "Здесь показаны устройства, которые зарегистрировал совместимый клиент.\n"
+        f"Найдено: {len(devices)} • страница {page + 1} из {total_pages}"
+    )
+    if not devices:
+        text += "\n\nПока устройств нет. Они появятся после первого подключения через совместимое приложение."
+    if notice:
+        text += f"\n\n{notice}"
+    await answer_or_edit(
+        target,
+        text,
+        reply_markup=device_list_actions(devices, page=page, page_size=CLIENT_DEVICE_PAGE_SIZE).as_markup(),
+    )
+
+
+async def load_client_hwid_device(hub, user_id: str, index: int):
+    devices = await hub.accounts.list_user_hwid_devices(user_id)
+    if index < 0 or index >= len(devices):
+        raise NotFoundError("Устройство уже удалено или список изменился.")
+    return devices[index]
 
 
 def billed_whitelist_cost(subscription) -> Decimal:
@@ -2815,6 +2877,106 @@ async def subscription_link(callback: CallbackQuery, container: AppContainer):
 @router.callback_query(F.data == "client:subscription_qr")
 async def subscription_qr(callback: CallbackQuery, container: AppContainer):
     await subscription_link(callback, container)
+
+
+@router.callback_query(F.data.startswith("client:devices:"))
+async def hwid_devices(callback: CallbackQuery, container: AppContainer):
+    try:
+        page = int(callback.data.rsplit(":", 1)[-1])
+    except ValueError:
+        await callback.answer("Некорректная страница.", show_alert=True)
+        return
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        await show_client_hwid_devices(callback, hub, user.id, page=page)
+
+
+@router.callback_query(F.data.startswith("client:device:"))
+async def hwid_device_detail(callback: CallbackQuery, container: AppContainer):
+    try:
+        _, _, page_token, index_token = callback.data.split(":")
+        page = int(page_token)
+        index = int(index_token)
+    except (TypeError, ValueError):
+        await callback.answer("Некорректное устройство.", show_alert=True)
+        return
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        try:
+            device = await load_client_hwid_device(hub, user.id, index)
+        except (ConflictError, NotFoundError) as exc:
+            await show_client_hwid_devices(callback, hub, user.id, page=page, notice=str(exc))
+            return
+        view = hwid_device_view(device)
+        await answer_or_edit(
+            callback,
+            hwid_device_details_text(view),
+            reply_markup=device_detail_actions(
+                page=page,
+                index=index,
+                fingerprint=str(view["fingerprint"]),
+            ).as_markup(),
+        )
+
+
+@router.callback_query(F.data.startswith("client:device_delete:"))
+async def hwid_device_delete_prompt(callback: CallbackQuery, container: AppContainer):
+    try:
+        _, _, page_token, index_token, fingerprint = callback.data.split(":")
+        page = int(page_token)
+        index = int(index_token)
+    except (TypeError, ValueError):
+        await callback.answer("Некорректное устройство.", show_alert=True)
+        return
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        try:
+            device = await load_client_hwid_device(hub, user.id, index)
+            if hwid_device_fingerprint(device) != fingerprint:
+                raise NotFoundError("Список устройств изменился. Откройте устройство заново.")
+        except (ConflictError, NotFoundError) as exc:
+            await show_client_hwid_devices(callback, hub, user.id, page=page, notice=str(exc))
+            return
+        view = hwid_device_view(device)
+        await answer_or_edit(
+            callback,
+            f"{hwid_device_details_text(view)}\n\nУдалить это устройство?",
+            reply_markup=device_delete_confirmation_actions(
+                page=page,
+                index=index,
+                fingerprint=fingerprint,
+            ).as_markup(),
+        )
+
+
+@router.callback_query(F.data.startswith("client:device_confirm:"))
+async def hwid_device_delete_confirm(callback: CallbackQuery, container: AppContainer):
+    try:
+        _, _, page_token, index_token, fingerprint = callback.data.split(":")
+        page = int(page_token)
+        index = int(index_token)
+    except (TypeError, ValueError):
+        await callback.answer("Некорректное устройство.", show_alert=True)
+        return
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        try:
+            device = await load_client_hwid_device(hub, user.id, index)
+            if hwid_device_fingerprint(device) != fingerprint:
+                raise NotFoundError("Список устройств изменился. Откройте устройство заново.")
+            await hub.accounts.delete_user_hwid_device(user.id, device.hwid)
+        except (ConflictError, NotFoundError) as exc:
+            await show_client_hwid_devices(callback, hub, user.id, page=page, notice=str(exc))
+            return
+        await show_client_hwid_devices(callback, hub, user.id, page=page, notice="Устройство удалено.")
 
 
 @router.callback_query(F.data == "client:traffic")

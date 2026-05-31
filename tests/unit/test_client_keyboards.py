@@ -10,6 +10,9 @@ from altlink.presentation.bots.client_keyboards import (
     agreement_actions,
     balance_actions,
     channel_actions,
+    device_delete_confirmation_actions,
+    device_detail_actions,
+    device_list_actions,
     insufficient_balance_actions,
     main_menu,
     menu_actions,
@@ -277,3 +280,23 @@ def test_topup_checkout_actions_can_customize_open_button_label():
 
     open_button = next(button for button in buttons if button["text"] == "Открыть поддержку")
     assert open_button["url"] == "https://t.me/support"
+
+
+def test_device_list_actions_paginate_more_than_eight_devices():
+    devices = [{"name": f"Device {index}"} for index in range(10)]
+
+    first_buttons = inline_buttons(device_list_actions(devices, page=0, page_size=6).as_markup())
+    second_buttons = inline_buttons(device_list_actions(devices, page=1, page_size=6).as_markup())
+
+    assert len([item for item in first_buttons if item.get("callback_data", "").startswith("client:device:")]) == 6
+    assert len([item for item in second_buttons if item.get("callback_data", "").startswith("client:device:")]) == 4
+    assert any(item.get("callback_data") == "client:devices:1" for item in first_buttons)
+    assert any(item.get("callback_data") == "client:devices:0" for item in second_buttons)
+
+
+def test_device_delete_callbacks_fit_telegram_limit():
+    fingerprint = "123456789abc"
+    buttons = inline_buttons(device_detail_actions(page=100, index=1000, fingerprint=fingerprint).as_markup())
+    buttons += inline_buttons(device_delete_confirmation_actions(page=100, index=1000, fingerprint=fingerprint).as_markup())
+
+    assert all(len(item["callback_data"].encode("utf-8")) <= 64 for item in buttons)

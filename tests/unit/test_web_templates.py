@@ -90,3 +90,12 @@ def test_legal_templates_mark_document_body_for_aggressive_wrapping():
 
     assert "legal-document-body" in agreement
     assert "legal-document-body" in privacy
+
+
+def test_portal_and_admin_user_templates_show_hwid_devices():
+    portal = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
+    admin = (TEMPLATE_ROOT / "user_detail.html").read_text(encoding="utf-8")
+
+    assert 'action="/portal/devices/delete"' in portal
+    assert "portal_devices" in portal
+    assert "devices_error" in admin

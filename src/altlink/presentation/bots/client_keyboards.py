@@ -164,6 +164,7 @@ def subscription_actions(
     builder.button(text="Выбрать тариф", callback_data="client:plan_menu", style="primary")
     if show_link:
         builder.button(text="Моя ссылка", callback_data="client:subscription_link", style="primary")
+        builder.button(text="Мои устройства", callback_data="client:devices:0", style="primary")
     if show_traffic:
         builder.button(text="Трафик и списания", callback_data="client:traffic")
     if can_cancel and not auto_renew_disabled:
@@ -171,13 +172,59 @@ def subscription_actions(
     if can_cancel and auto_renew_disabled:
         builder.button(text="Включить продление", callback_data="client:subscription_resume", style="success")
     builder.button(text="Меню", callback_data="client:home")
-    first_row = 1 + int(show_link)
-    rows = [first_row]
+    rows = [1]
+    if show_link:
+        rows.append(2)
     second_row = int(show_traffic) + int(can_cancel)
     if second_row:
         rows.append(second_row)
     rows.append(1)
     builder.adjust(*rows)
+    return builder
+
+
+def device_list_actions(devices: list[dict[str, object]], *, page: int, page_size: int) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    start = page * page_size
+    for index, device in enumerate(devices[start : start + page_size], start=start):
+        name = str(device.get("name") or "Неизвестное устройство")
+        builder.button(text=f"📱 {name[:42]}", callback_data=f"client:device:{page}:{index}", style="primary")
+    total_pages = max((len(devices) + page_size - 1) // page_size, 1)
+    if page > 0:
+        builder.button(text="← Назад", callback_data=f"client:devices:{page - 1}")
+    if page + 1 < total_pages:
+        builder.button(text="Вперёд →", callback_data=f"client:devices:{page + 1}")
+    builder.button(text="Подписка", callback_data="client:subscription")
+    rows = [1] * min(page_size, max(len(devices) - start, 0))
+    navigation_count = int(page > 0) + int(page + 1 < total_pages)
+    if navigation_count:
+        rows.append(navigation_count)
+    rows.append(1)
+    builder.adjust(*rows)
+    return builder
+
+
+def device_detail_actions(*, page: int, index: int, fingerprint: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="Удалить устройство",
+        callback_data=f"client:device_delete:{page}:{index}:{fingerprint}",
+        style="danger",
+    )
+    builder.button(text="Вернуться", callback_data=f"client:devices:{page}")
+    builder.adjust(1, 1)
+    return builder
+
+
+def device_delete_confirmation_actions(*, page: int, index: int, fingerprint: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="Да, удалить",
+        callback_data=f"client:device_confirm:{page}:{index}:{fingerprint}",
+        style="danger",
+    )
+    builder.button(text="Отмена", callback_data=f"client:device:{page}:{index}")
+    builder.adjust(1, 1)
     return builder
 
 
