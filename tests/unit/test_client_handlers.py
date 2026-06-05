@@ -444,14 +444,18 @@ def test_subscription_details_text_contains_servers_and_auto_renew_status():
 def test_vless_keys_file_content_contains_each_key_on_separate_line():
     content = client_handlers.vless_keys_file_content(
         [
-            "vless://first-key@server-one.example",
-            "vless://second-key@server-two.example",
+            "vless://first-key@server-one.example#NL%20Start",
+            "vless://second-key@server-two.example#%D0%91%D0%B5%D0%BB%D1%8B%D0%B5%20%D1%81%D0%BF%D0%B8%D1%81%D0%BA%D0%B8",
+            "vless://third-key@server-three.example",
         ]
     ).decode("utf-8")
 
     assert "ALTLINK VLESS keys" in content
-    assert "vless://first-key@server-one.example" in content
-    assert "vless://second-key@server-two.example" in content
+    assert "1. Название конфига: NL Start" in content
+    assert "Ключ: vless://first-key@server-one.example#NL%20Start" in content
+    assert "2. Название конфига: Белые списки" in content
+    assert "Ключ: vless://second-key@server-two.example#%D0%91%D0%B5%D0%BB%D1%8B%D0%B5%20%D1%81%D0%BF%D0%B8%D1%81%D0%BA%D0%B8" in content
+    assert "3. Название конфига: Конфиг 3" in content
 
 
 def test_subscription_link_caption_uses_telegram_code_formatting():

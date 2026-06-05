@@ -99,3 +99,12 @@ def test_portal_and_admin_user_templates_show_hwid_devices():
     assert 'action="/portal/devices/delete"' in portal
     assert "portal_devices" in portal
     assert "devices_error" in admin
+
+
+def test_web_theme_does_not_use_legacy_yellow_palette():
+    style = Path("src/altlink/presentation/web/static/style.css").read_text(encoding="utf-8")
+    dashboard = (TEMPLATE_ROOT / "dashboard.html").read_text(encoding="utf-8")
+    web_theme = f"{style}\n{dashboard}".lower()
+
+    for legacy_token in ("gold", "#c79b2f", "#d17d26", "199, 155, 47", "209, 125, 38", "246, 191, 56"):
+        assert legacy_token not in web_theme

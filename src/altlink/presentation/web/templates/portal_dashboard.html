@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/media/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -43,7 +43,7 @@
         </p>
         <div class="hero-meta">
           <span class="badge">{{ portal_user.status }}</span>
-          <span class="badge gold">Баланс {{ portal_user.balance_rub }} ₽</span>
+          <span class="badge highlight">Баланс {{ portal_user.balance_rub }} ₽</span>
           <span class="badge warning">
             {{ portal_subscription.plan.name if portal_subscription else 'Подписка не активна' }}
           </span>
@@ -160,7 +160,7 @@
           <article class="panel plan-card{% if group.family == portal_current_plan_family %} selected{% endif %}">
             <div class="split">
               <h3>{{ group.title }}</h3>
-              <span class="badge{% if group.family == portal_current_plan_family %} gold{% endif %}">
+              <span class="badge{% if group.family == portal_current_plan_family %} highlight{% endif %}">
                 {% if group.family == portal_current_plan_family %}Выбрано сейчас • {% endif %}до {{ group.device_limit or '—' }} устройств
               </span>
             </div>
@@ -198,7 +198,7 @@
       <article class="panel balance-showcase stack">
         <div class="split">
           <h2>Баланс</h2>
-          <span class="badge gold">Через бота</span>
+          <span class="badge highlight">Через бота</span>
         </div>
         <div class="balance-amount">{{ portal_user.balance_rub }} ₽</div>
         <p class="muted">

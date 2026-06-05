@@ -3,7 +3,7 @@
 <section class="grid-three">
   {% for plan in plans %}
   <article class="panel plan-card">
-    <div class="badge {{ 'gold' if plan.is_trial else '' }}">{{ 'Тест' if plan.is_trial else 'Платный тариф' }}</div>
+    <div class="badge {{ 'highlight' if plan.is_trial else '' }}">{{ 'Тест' if plan.is_trial else 'Платный тариф' }}</div>
     <h2>{{ plan.name }}</h2>
     <div class="plan-price">{{ plan.price_rub }} ₽</div>
     <div class="muted">Период: {{ plan.period_days }} дней</div>

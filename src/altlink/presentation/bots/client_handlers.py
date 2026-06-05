@@ -4,7 +4,7 @@ import html
 import logging
 from decimal import Decimal, InvalidOperation
 import re
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus, unquote, urlparse
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
@@ -1276,7 +1276,8 @@ def vless_keys_file_content(keys: list[str]) -> bytes:
         "",
     ]
     for index, key in enumerate(keys, start=1):
-        lines.extend([f"{index}.", key, ""])
+        config_name = unquote(urlparse(key).fragment).strip() or f"Конфиг {index}"
+        lines.extend([f"{index}. Название конфига: {config_name}", f"Ключ: {key}", ""])
     return "\n".join(lines).encode("utf-8")
 
 

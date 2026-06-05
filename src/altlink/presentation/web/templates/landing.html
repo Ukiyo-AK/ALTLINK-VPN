@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/media/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -32,7 +32,7 @@
 
     <section class="landing-hero panel" style="position: relative; min-height: 29rem; padding-right: clamp(1.4rem, 3vw, 2rem); overflow: hidden; isolation: isolate;">
       <div class="landing-copy" style="max-width: min(58rem, 92%);">
-        <span class="badge gold">Быстро. Стабильно. По честной цене.</span>
+        <span class="badge highlight">Быстро. Стабильно. По честной цене.</span>
         <h1>ALTLINK</h1>
         <p class="muted">
           Быстрый и стабильный ускоритель без сложных настроек. 
@@ -79,7 +79,7 @@
           opacity: 0.115;
           pointer-events: none;
           background: url('/media/logo without background.png') right center / contain no-repeat;
-          filter: blur(0.35px) saturate(0.82) drop-shadow(0 14px 22px rgba(13, 143, 119, 0.08));
+          filter: blur(0.35px) saturate(0.88) drop-shadow(0 14px 22px rgba(8, 127, 131, 0.1));
         "></div>
 
     </section>
@@ -94,7 +94,7 @@
         </p>
       </article>
       <article class="panel stack">
-        <span class="badge gold">Стабильность</span>
+        <span class="badge highlight">Стабильность</span>
         <h3>Подключение, на которое можно рассчитывать</h3>
         <p class="muted">
           Даже если нужно сменить тариф, пополнить баланс или заново импортировать конфиг,
@@ -160,7 +160,7 @@
     <section class="panel stack">
       <div class="split">
         <h2>Тарифы</h2>
-        <span class="badge gold">С выбором срока внутри тарифа</span>
+        <span class="badge highlight">С выбором срока внутри тарифа</span>
       </div>
       <div class="grid-two">
         {% for group in portal_plan_groups %}
