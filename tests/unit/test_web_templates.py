@@ -101,19 +101,58 @@ def test_portal_and_admin_user_templates_show_hwid_devices():
     assert "devices_error" in admin
 
 
+def test_portal_dashboard_has_mobile_section_navigation():
+    portal = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
+
+    assert 'class="portal-section-nav"' in portal
+    for section_id in (
+        "portal-overview",
+        "portal-devices",
+        "portal-plans",
+        "portal-balance",
+        "portal-link",
+        "portal-servers",
+        "portal-payments",
+    ):
+        assert f'href="#{section_id}"' in portal
+        assert f'id="{section_id}"' in portal
+
+
+def test_admin_dashboard_has_mobile_section_navigation():
+    dashboard = (TEMPLATE_ROOT / "dashboard.html").read_text(encoding="utf-8")
+
+    assert 'class="dashboard-section-nav"' in dashboard
+    for section_id in (
+        "dashboard-overview",
+        "dashboard-statuses",
+        "dashboard-servers",
+        "dashboard-plans",
+        "dashboard-lists",
+    ):
+        assert f'href="#{section_id}"' in dashboard
+        assert f'id="{section_id}"' in dashboard
+
+
 def test_web_theme_does_not_use_legacy_yellow_palette():
     style = Path("src/altlink/presentation/web/static/style.css").read_text(encoding="utf-8")
     dashboard = (TEMPLATE_ROOT / "dashboard.html").read_text(encoding="utf-8")
-    web_theme = f"{style}\n{dashboard}".lower()
+    landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
+    web_theme = f"{style}\n{dashboard}\n{landing}".lower()
 
     for legacy_token in (
         "gold",
-        "background.png",
+        "/media/background.png",
         "#c79b2f",
         "#d17d26",
+        "#087f83",
+        "#d95f59",
         "199, 155, 47",
         "209, 125, 38",
         "217, 95, 89",
+        "8, 127, 131",
+        "5, 127, 140",
+        "217, 244, 241",
+        "214, 245, 245",
         "246, 191, 56",
     ):
         assert legacy_token not in web_theme

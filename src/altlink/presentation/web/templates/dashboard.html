@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="cards">
+<nav class="dashboard-section-nav" aria-label="Разделы админской панели">
+  <a href="#dashboard-overview">Обзор</a>
+  <a href="#dashboard-statuses">Статусы</a>
+  <a href="#dashboard-servers">Серверы</a>
+  <a href="#dashboard-plans">Тарифы</a>
+  <a href="#dashboard-lists">Списки</a>
+</nav>
+
+<section class="cards dashboard-section" id="dashboard-overview" data-section-title="Обзор">
   <article class="card"><div class="muted">Активные</div><strong>{{ overview.active_users }}</strong></article>
   <article class="card"><div class="muted">Без продления</div><strong>{{ overview.renewal_disabled_users }}</strong></article>
   <article class="card"><div class="muted">Заблокированные</div><strong>{{ overview.blocked_users }}</strong></article>
@@ -9,7 +17,7 @@
   <article class="card"><div class="muted">Трафик</div><strong>{{ '%.2f'|format(overview.total_traffic_bytes / 1024**3) }} ГБ</strong></article>
 </section>
 
-<section class="grid-two">
+<section class="grid-two dashboard-section" id="dashboard-statuses" data-section-title="Статусы">
   <article class="panel chart-box">
     <div class="split">
       <h2>Статусы пользователей</h2>
@@ -27,7 +35,7 @@
   </article>
 </section>
 
-<section class="grid-two">
+<section class="grid-two dashboard-section" id="dashboard-servers" data-section-title="Серверы">
   <article class="panel chart-box">
     <div class="split">
       <h2>Загрузка серверов</h2>
@@ -45,7 +53,7 @@
   </article>
 </section>
 
-<section class="grid-two">
+<section class="grid-two dashboard-section" id="dashboard-plans" data-section-title="Тарифы">
   <article class="panel chart-box">
     <div class="split">
       <h2>Соотношение Start / Pro</h2>
@@ -72,7 +80,7 @@
   </article>
 </section>
 
-<section class="grid-two">
+<section class="grid-two dashboard-section" id="dashboard-lists" data-section-title="Списки">
   <article class="panel">
     <h2>Топ по трафику</h2>
     <table class="table">
@@ -122,7 +130,7 @@
       labels: charts.user_statuses.labels,
       datasets: [{
         data: charts.user_statuses.values,
-        backgroundColor: ["#087f83", "#315fa4", "#b73e5c", "#67a9c4", "#78929b"]
+        backgroundColor: ["#0876b8", "#4257c8", "#a93677", "#4aa7ff", "#587589"]
       }]
     },
     options: { responsive: true, maintainAspectRatio: false }
@@ -135,8 +143,8 @@
       datasets: [{
         label: "Пополнения, ₽",
         data: charts.payments.values,
-        borderColor: "#087f83",
-        backgroundColor: "rgba(8, 127, 131, 0.14)",
+        borderColor: "#0876b8",
+        backgroundColor: "rgba(8, 118, 184, 0.14)",
         fill: true,
         tension: 0.35
       }]
@@ -152,9 +160,9 @@
         label: "Онлайн-нагрузка, %",
         data: charts.server_loads.values,
         backgroundColor: charts.server_loads.types.map((type) => {
-          if (type === "ten_gbit") return "#315fa4";
-          if (type === "whitelist") return "#d95f59";
-          return "#087f83";
+          if (type === "ten_gbit") return "#4257c8";
+          if (type === "whitelist") return "#405fe6";
+          return "#0876b8";
         })
       }]
     },
@@ -167,7 +175,7 @@
       labels: charts.server_types.labels,
       datasets: [{
         data: charts.server_types.values,
-        backgroundColor: ["rgba(47, 95, 184, 0.82)", "rgba(112, 134, 220, 0.78)", "rgba(5, 127, 140, 0.82)"]
+        backgroundColor: ["rgba(8, 118, 184, 0.82)", "rgba(66, 87, 200, 0.78)", "rgba(64, 95, 230, 0.72)"]
       }]
     },
     options: { responsive: true, maintainAspectRatio: false }
@@ -179,8 +187,8 @@
       labels: charts.plan_mix.labels,
       datasets: [{
         data: charts.plan_mix.values,
-        backgroundColor: ["rgba(49, 95, 164, 0.88)", "rgba(8, 127, 131, 0.82)"],
-        borderColor: ["rgba(49, 95, 164, 1)", "rgba(8, 127, 131, 1)"],
+        backgroundColor: ["rgba(66, 87, 200, 0.86)", "rgba(8, 118, 184, 0.82)"],
+        borderColor: ["rgba(66, 87, 200, 1)", "rgba(8, 118, 184, 1)"],
         borderWidth: 1
       }]
     },

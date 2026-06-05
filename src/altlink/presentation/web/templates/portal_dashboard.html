@@ -33,7 +33,17 @@
     <div class="alert {{ flash.level }}">{{ flash.message }}</div>
     {% endif %}
 
-    <section class="hero">
+    <nav class="portal-section-nav" aria-label="Разделы личного кабинета">
+      <a href="#portal-overview">Обзор</a>
+      <a href="#portal-devices">Устройства</a>
+      <a href="#portal-plans">Тарифы</a>
+      <a href="#portal-balance">Баланс</a>
+      <a href="#portal-link">Ссылка</a>
+      <a href="#portal-servers">Серверы</a>
+      <a href="#portal-payments">Платежи</a>
+    </nav>
+
+    <section class="hero portal-section portal-overview-section" id="portal-overview" data-section-title="Обзор">
       <article class="hero-panel">
         <span class="badge">ALTLINK</span>
         <h1>{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}</h1>
@@ -72,34 +82,36 @@
     </section>
     {% endif %}
 
-    <section class="cards">
-      <article class="card">
-        <div class="muted">Следующее списание</div>
-        <strong>{{ portal_subscription.next_billing_at.strftime('%d.%m %H:%M') if portal_subscription else '—' }}</strong>
-      </article>
-      <article class="card">
-        <div class="muted">Автопродление</div>
-        <strong>
-          {% if portal_subscription and portal_subscription.plan and not portal_subscription.plan.is_trial %}
-            {{ 'Включено' if portal_subscription.auto_renew else 'Отключено' }}
-          {% else %}
-            —
-          {% endif %}
-        </strong>
-      </article>
-      <article class="card">
-        <div class="muted">Лимит устройств</div>
-        <strong>{{ portal_subscription.plan.device_limit if portal_subscription and portal_subscription.plan else '—' }}</strong>
-      </article>
-      {% if portal_show_usage_details %}
-      <article class="card">
-        <div class="muted">Белые списки</div>
-        <strong>{{ '%.2f'|format((portal_subscription.whitelist_traffic_used_bytes if portal_subscription else 0) / 1024**3) }} ГБ</strong>
-      </article>
-      {% endif %}
+    <section class="portal-section portal-stats-section" id="portal-stats" data-section-title="Коротко">
+      <div class="cards">
+        <article class="card">
+          <div class="muted">Следующее списание</div>
+          <strong>{{ portal_subscription.next_billing_at.strftime('%d.%m %H:%M') if portal_subscription else '—' }}</strong>
+        </article>
+        <article class="card">
+          <div class="muted">Автопродление</div>
+          <strong>
+            {% if portal_subscription and portal_subscription.plan and not portal_subscription.plan.is_trial %}
+              {{ 'Включено' if portal_subscription.auto_renew else 'Отключено' }}
+            {% else %}
+              —
+            {% endif %}
+          </strong>
+        </article>
+        <article class="card">
+          <div class="muted">Лимит устройств</div>
+          <strong>{{ portal_subscription.plan.device_limit if portal_subscription and portal_subscription.plan else '—' }}</strong>
+        </article>
+        {% if portal_show_usage_details %}
+        <article class="card">
+          <div class="muted">Белые списки</div>
+          <strong>{{ '%.2f'|format((portal_subscription.whitelist_traffic_used_bytes if portal_subscription else 0) / 1024**3) }} ГБ</strong>
+        </article>
+        {% endif %}
+      </div>
     </section>
 
-    <section class="panel stack device-panel">
+    <section class="panel stack device-panel portal-section" id="portal-devices" data-section-title="Устройства">
       <div class="split">
         <h2>Мои устройства</h2>
         <span class="badge">{{ portal_devices|length }} зарегистрировано</span>
@@ -136,7 +148,7 @@
     </section>
 
     <section class="portal-grid">
-      <article class="panel stack">
+      <article class="panel stack portal-section" id="portal-plans" data-section-title="Тарифы">
         <div class="split">
           <h2>Тарифы и тест</h2>
           <span class="badge">2 дня trial</span>
@@ -195,7 +207,7 @@
         </div>
       </article>
 
-      <article class="panel balance-showcase stack">
+      <article class="panel balance-showcase stack portal-section" id="portal-balance" data-section-title="Баланс">
         <div class="split">
           <h2>Баланс</h2>
           <span class="badge highlight">Через бота</span>
@@ -220,7 +232,7 @@
     </section>
 
     <section class="grid-two">
-      <article class="panel stack">
+      <article class="panel stack portal-section" id="portal-link" data-section-title="Ссылка">
         <div class="split">
           <h2>Ваша персональная ссылка</h2>
           <span class="badge">Синхронизировано с ботом</span>
@@ -253,7 +265,7 @@
         {% endif %}
       </article>
 
-      <article class="panel stack portal-server-panel">
+      <article class="panel stack portal-server-panel portal-section" id="portal-servers" data-section-title="Серверы">
         <div class="split">
           <h2>Доступные серверы</h2>
           <span class="badge warning">Локальная матрица доступа</span>
@@ -322,7 +334,7 @@
       </article>
     </section>
 
-    <section class="panel">
+    <section class="panel portal-section" id="portal-payments" data-section-title="Платежи">
       <div class="split">
         <h2>История платежей</h2>
         <a href="{{ portal_url }}" class="button ghost compact">Обновить</a>
