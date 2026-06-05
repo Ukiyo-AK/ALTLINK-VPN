@@ -33,17 +33,18 @@
     <div class="alert {{ flash.level }}">{{ flash.message }}</div>
     {% endif %}
 
-    <nav class="portal-section-nav" aria-label="Разделы личного кабинета">
-      <a href="#portal-overview">Обзор</a>
-      <a href="#portal-devices">Устройства</a>
-      <a href="#portal-plans">Тарифы</a>
-      <a href="#portal-balance">Баланс</a>
-      <a href="#portal-link">Ссылка</a>
-      <a href="#portal-servers">Серверы</a>
-      <a href="#portal-payments">Платежи</a>
+    <nav class="portal-section-nav" aria-label="Разделы личного кабинета" data-portal-page-nav>
+      <span class="portal-section-nav-title">Меню кабинета</span>
+      <a href="#portal-overview" data-portal-page-link="overview">Обзор</a>
+      <a href="#portal-devices" data-portal-page-link="devices">Устройства</a>
+      <a href="#portal-plans" data-portal-page-link="plans">Тарифы</a>
+      <a href="#portal-balance" data-portal-page-link="balance">Баланс</a>
+      <a href="#portal-link" data-portal-page-link="link">Ссылка</a>
+      <a href="#portal-servers" data-portal-page-link="servers">Серверы</a>
+      <a href="#portal-payments" data-portal-page-link="payments">Платежи</a>
     </nav>
 
-    <section class="hero portal-section portal-overview-section" id="portal-overview" data-section-title="Обзор">
+    <section class="hero portal-section portal-overview-section" id="portal-overview" data-section-title="Обзор" data-portal-page="overview">
       <article class="hero-panel">
         <span class="badge">ALTLINK</span>
         <h1>{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}</h1>
@@ -67,7 +68,7 @@
     </section>
 
     {% if not portal_channel_ok %}
-    <section class="panel status-lock stack">
+    <section class="panel status-lock stack portal-section" data-portal-page="overview" data-section-title="Канал">
       <h2>Нужно подписаться на Telegram-канал</h2>
       <p class="muted">
         До подписки на официальный канал тестовый период, тарифы и конфиги будут заблокированы
@@ -82,7 +83,7 @@
     </section>
     {% endif %}
 
-    <section class="portal-section portal-stats-section" id="portal-stats" data-section-title="Коротко">
+    <section class="portal-section portal-stats-section" id="portal-stats" data-section-title="Коротко" data-portal-page="overview">
       <div class="cards">
         <article class="card">
           <div class="muted">Следующее списание</div>
@@ -111,7 +112,7 @@
       </div>
     </section>
 
-    <section class="panel stack device-panel portal-section" id="portal-devices" data-section-title="Устройства">
+    <section class="panel stack device-panel portal-section" id="portal-devices" data-section-title="Устройства" data-portal-page="devices">
       <div class="split">
         <h2>Мои устройства</h2>
         <span class="badge">{{ portal_devices|length }} зарегистрировано</span>
@@ -147,8 +148,8 @@
       {% endif %}
     </section>
 
-    <section class="portal-grid">
-      <article class="panel stack portal-section" id="portal-plans" data-section-title="Тарифы">
+    <section class="portal-grid portal-page-group">
+      <article class="panel stack portal-section" id="portal-plans" data-section-title="Тарифы" data-portal-page="plans">
         <div class="split">
           <h2>Тарифы и тест</h2>
           <span class="badge">2 дня trial</span>
@@ -207,7 +208,7 @@
         </div>
       </article>
 
-      <article class="panel balance-showcase stack portal-section" id="portal-balance" data-section-title="Баланс">
+      <article class="panel balance-showcase stack portal-section" id="portal-balance" data-section-title="Баланс" data-portal-page="balance">
         <div class="split">
           <h2>Баланс</h2>
           <span class="badge highlight">Через бота</span>
@@ -231,8 +232,8 @@
       </article>
     </section>
 
-    <section class="grid-two">
-      <article class="panel stack portal-section" id="portal-link" data-section-title="Ссылка">
+    <section class="grid-two portal-page-group">
+      <article class="panel stack portal-section" id="portal-link" data-section-title="Ссылка" data-portal-page="link">
         <div class="split">
           <h2>Ваша персональная ссылка</h2>
           <span class="badge">Синхронизировано с ботом</span>
@@ -265,7 +266,7 @@
         {% endif %}
       </article>
 
-      <article class="panel stack portal-server-panel portal-section" id="portal-servers" data-section-title="Серверы">
+      <article class="panel stack portal-server-panel portal-section" id="portal-servers" data-section-title="Серверы" data-portal-page="servers">
         <div class="split">
           <h2>Доступные серверы</h2>
           <span class="badge warning">Локальная матрица доступа</span>
@@ -334,7 +335,7 @@
       </article>
     </section>
 
-    <section class="panel portal-section" id="portal-payments" data-section-title="Платежи">
+    <section class="panel portal-section" id="portal-payments" data-section-title="Платежи" data-portal-page="payments">
       <div class="split">
         <h2>История платежей</h2>
         <a href="{{ portal_url }}" class="button ghost compact">Обновить</a>
@@ -358,6 +359,88 @@
   </div>
 
   <script>
+    (() => {
+      const shell = document.querySelector(".portal-shell");
+      const nav = document.querySelector("[data-portal-page-nav]");
+      const links = Array.from(document.querySelectorAll("[data-portal-page-link]"));
+      const sections = Array.from(document.querySelectorAll("[data-portal-page]"));
+      const groups = Array.from(document.querySelectorAll(".portal-page-group"));
+      const mobileQuery = window.matchMedia("(max-width: 980px)");
+
+      if (!shell || !nav || !links.length || !sections.length) {
+        return;
+      }
+
+      const defaultPage = "overview";
+      const knownPages = new Set(links.map((link) => link.dataset.portalPageLink));
+
+      const pageFromHash = () => {
+        const currentHash = window.location.hash;
+        const currentLink = links.find((link) => link.getAttribute("href") === currentHash);
+        return currentLink?.dataset.portalPageLink || defaultPage;
+      };
+
+      const setGroupsVisibility = () => {
+        groups.forEach((group) => {
+          const hasVisibleSection = Array.from(group.querySelectorAll("[data-portal-page]"))
+            .some((section) => !section.classList.contains("is-portal-page-hidden"));
+          group.classList.toggle("is-portal-page-hidden", !hasVisibleSection);
+        });
+      };
+
+      const activatePage = (page, options = {}) => {
+        const activePage = knownPages.has(page) ? page : defaultPage;
+
+        if (!mobileQuery.matches) {
+          shell.classList.remove("is-mobile-paged");
+          sections.forEach((section) => {
+            section.classList.remove("is-portal-page-hidden", "is-active-page");
+          });
+          groups.forEach((group) => group.classList.remove("is-portal-page-hidden"));
+          links.forEach((link) => link.classList.remove("is-active"));
+          return;
+        }
+
+        shell.classList.add("is-mobile-paged");
+        sections.forEach((section) => {
+          const isActive = section.dataset.portalPage === activePage;
+          section.classList.toggle("is-portal-page-hidden", !isActive);
+          section.classList.toggle("is-active-page", isActive);
+        });
+        setGroupsVisibility();
+        links.forEach((link) => {
+          link.classList.toggle("is-active", link.dataset.portalPageLink === activePage);
+        });
+
+        if (options.updateHash) {
+          const target = links.find((link) => link.dataset.portalPageLink === activePage);
+          const href = target?.getAttribute("href");
+          if (href && window.location.hash !== href) {
+            history.pushState(null, "", href);
+          }
+        }
+
+        if (options.scrollTop) {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }
+      };
+
+      links.forEach((link) => {
+        link.addEventListener("click", (event) => {
+          if (!mobileQuery.matches) {
+            return;
+          }
+          event.preventDefault();
+          activatePage(link.dataset.portalPageLink, { updateHash: true, scrollTop: true });
+        });
+      });
+
+      const handleModeChange = () => activatePage(pageFromHash());
+      mobileQuery.addEventListener?.("change", handleModeChange);
+      window.addEventListener("hashchange", () => activatePage(pageFromHash(), { scrollTop: true }));
+      activatePage(pageFromHash());
+    })();
+
     (() => {
       const copyRoots = Array.from(document.querySelectorAll("[data-copy-root]"));
 

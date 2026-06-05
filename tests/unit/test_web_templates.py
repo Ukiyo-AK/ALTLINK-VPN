@@ -105,17 +105,29 @@ def test_portal_dashboard_has_mobile_section_navigation():
     portal = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
 
     assert 'class="portal-section-nav"' in portal
-    for section_id in (
-        "portal-overview",
-        "portal-devices",
-        "portal-plans",
-        "portal-balance",
-        "portal-link",
-        "portal-servers",
-        "portal-payments",
+    assert "data-portal-page-nav" in portal
+    for page, section_id in (
+        ("overview", "portal-overview"),
+        ("devices", "portal-devices"),
+        ("plans", "portal-plans"),
+        ("balance", "portal-balance"),
+        ("link", "portal-link"),
+        ("servers", "portal-servers"),
+        ("payments", "portal-payments"),
     ):
+        assert f'data-portal-page-link="{page}"' in portal
+        assert f'data-portal-page="{page}"' in portal
         assert f'href="#{section_id}"' in portal
         assert f'id="{section_id}"' in portal
+    assert "is-mobile-paged" in portal
+    assert "is-portal-page-hidden" in portal
+
+
+def test_landing_template_keeps_homepage_copy_compact():
+    landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
+
+    assert "landing-story" not in landing
+    assert "Что получает пользователь" not in landing
 
 
 def test_admin_dashboard_has_mobile_section_navigation():
@@ -145,6 +157,7 @@ def test_web_theme_does_not_use_legacy_yellow_palette():
         "#c79b2f",
         "#d17d26",
         "#087f83",
+        "#0876b8",
         "#d95f59",
         "199, 155, 47",
         "209, 125, 38",

@@ -130,7 +130,7 @@
       labels: charts.user_statuses.labels,
       datasets: [{
         data: charts.user_statuses.values,
-        backgroundColor: ["#0876b8", "#4257c8", "#a93677", "#4aa7ff", "#587589"]
+        backgroundColor: ["#07947f", "#35b89f", "#a93677", "#7acdb8", "#5c7771"]
       }]
     },
     options: { responsive: true, maintainAspectRatio: false }
@@ -143,8 +143,8 @@
       datasets: [{
         label: "Пополнения, ₽",
         data: charts.payments.values,
-        borderColor: "#0876b8",
-        backgroundColor: "rgba(8, 118, 184, 0.14)",
+        borderColor: "#07947f",
+        backgroundColor: "rgba(7, 148, 127, 0.14)",
         fill: true,
         tension: 0.35
       }]
@@ -160,9 +160,9 @@
         label: "Онлайн-нагрузка, %",
         data: charts.server_loads.values,
         backgroundColor: charts.server_loads.types.map((type) => {
-          if (type === "ten_gbit") return "#4257c8";
-          if (type === "whitelist") return "#405fe6";
-          return "#0876b8";
+          if (type === "ten_gbit") return "#35b89f";
+          if (type === "whitelist") return "#2e7a95";
+          return "#07947f";
         })
       }]
     },
@@ -175,7 +175,7 @@
       labels: charts.server_types.labels,
       datasets: [{
         data: charts.server_types.values,
-        backgroundColor: ["rgba(8, 118, 184, 0.82)", "rgba(66, 87, 200, 0.78)", "rgba(64, 95, 230, 0.72)"]
+        backgroundColor: ["rgba(7, 148, 127, 0.84)", "rgba(53, 184, 159, 0.76)", "rgba(46, 122, 149, 0.58)"]
       }]
     },
     options: { responsive: true, maintainAspectRatio: false }
@@ -187,8 +187,8 @@
       labels: charts.plan_mix.labels,
       datasets: [{
         data: charts.plan_mix.values,
-        backgroundColor: ["rgba(66, 87, 200, 0.86)", "rgba(8, 118, 184, 0.82)"],
-        borderColor: ["rgba(66, 87, 200, 1)", "rgba(8, 118, 184, 1)"],
+        backgroundColor: ["rgba(7, 148, 127, 0.84)", "rgba(53, 184, 159, 0.74)"],
+        borderColor: ["rgba(7, 148, 127, 1)", "rgba(53, 184, 159, 1)"],
         borderWidth: 1
       }]
     },
