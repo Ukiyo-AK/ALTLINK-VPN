@@ -106,5 +106,14 @@ def test_web_theme_does_not_use_legacy_yellow_palette():
     dashboard = (TEMPLATE_ROOT / "dashboard.html").read_text(encoding="utf-8")
     web_theme = f"{style}\n{dashboard}".lower()
 
-    for legacy_token in ("gold", "#c79b2f", "#d17d26", "199, 155, 47", "209, 125, 38", "246, 191, 56"):
+    for legacy_token in (
+        "gold",
+        "background.png",
+        "#c79b2f",
+        "#d17d26",
+        "199, 155, 47",
+        "209, 125, 38",
+        "217, 95, 89",
+        "246, 191, 56",
+    ):
         assert legacy_token not in web_theme
