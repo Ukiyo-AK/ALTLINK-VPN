@@ -21,17 +21,17 @@
         </div>
       </a>
       <div class="landing-topbar-actions">
-        <a class="button ghost compact landing-cabinet-button" href="{{ portal_login_url }}">Войти</a>
+        <a class="button ghost compact landing-cabinet-button" href="{{ portal_login_url }}">{{ landing_account_button_label }}</a>
       </div>
     </header>
 
     <section class="landing-hero panel">
       <div class="landing-copy">
-        <span class="badge highlight">ALTLINK ускоряет каждый день</span>
-        <h1>Интернет без лишних настроек.</h1>
+        <span class="badge highlight">Быстро, приватно, без сложной настройки</span>
+        <h1>ALTLINK — быстрый и конфиденциальный доступ к сети!</h1>
         <p class="muted">
-          Подключайтесь за пару минут, выбирайте понятный тариф и управляйте доступом там,
-          где удобно: на сайте или в Telegram.
+          Нажмите одну кнопку, получите ссылку и подключитесь через удобное приложение.
+          Кабинет и Telegram-бот помогут с тарифом, балансом и поддержкой.
         </p>
         <div class="landing-feature-list">
           <span class="badge">2 дня тест</span>
@@ -41,28 +41,89 @@
       </div>
       <div class="landing-hero-glow" aria-hidden="true"></div>
       <div class="landing-actions landing-actions-bottom">
-        <a class="button" href="{{ portal_login_url }}">Подключить</a>
+        <a class="button" href="{{ portal_login_url }}">{% if landing_portal_authenticated %}Открыть кабинет{% else %}Подключить{% endif %}</a>
         {% if client_bot_url %}
         <a class="button ghost" href="{{ client_bot_url }}" target="_blank" rel="noreferrer">Telegram bot</a>
         {% endif %}
       </div>
     </section>
 
-    <section class="panel stack landing-latency landing-locations">
+    <section class="landing-section landing-benefits">
+      <div class="landing-section-head">
+        <span class="badge">Почему удобно</span>
+        <h2>Сервис, который не заставляет разбираться в настройках</h2>
+      </div>
+      <div class="landing-feature-grid">
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon">⚡</span>
+          <h3>Быстро</h3>
+          <p class="muted">Подключение занимает пару минут: ссылка, приложение, готово.</p>
+        </article>
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon">🔒</span>
+          <h3>Конфиденциально</h3>
+          <p class="muted">Данные используются для работы сервиса, безопасности и поддержки.</p>
+        </article>
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon">🌿</span>
+          <h3>Стабильно</h3>
+          <p class="muted">Локации и пинг видны заранее, а управление доступом всегда под рукой.</p>
+        </article>
+        <article class="landing-feature-card">
+          <span class="landing-feature-icon">💬</span>
+          <h3>Поддержка</h3>
+          <p class="muted">Если что-то не получилось, можно написать в поддержку и быстро разобраться.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="landing-section landing-steps">
+      <div class="landing-section-head">
+        <span class="badge">Как начать</span>
+        <h2>4 шага до подключения</h2>
+      </div>
+      <div class="landing-step-grid">
+        <article class="landing-step-card">
+          <span>1</span>
+          <h3>Нажмите «Подключить»</h3>
+          <p class="muted">Войдите через Telegram и откройте личный кабинет.</p>
+        </article>
+        <article class="landing-step-card">
+          <span>2</span>
+          <h3>Запустите тест или выберите тариф</h3>
+          <p class="muted">Можно начать с пробного периода и проверить качество.</p>
+        </article>
+        <article class="landing-step-card">
+          <span>3</span>
+          <h3>Скопируйте ссылку</h3>
+          <p class="muted">Ссылка доступна в кабинете и в Telegram-боте.</p>
+        </article>
+        <article class="landing-step-card">
+          <span>4</span>
+          <h3>Импортируйте в приложение</h3>
+          <p class="muted">Подойдет v2raytun для Android, Happ для iOS и Throne для Windows.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="landing-section landing-latency landing-locations">
       <div class="split landing-latency-head">
-        <div class="stack compact">
+        <div class="landing-section-head">
           <span class="badge">Локации</span>
-          <h2>Серверы по странам</h2>
-          <p class="muted">Выбирайте ближайшую локацию или проверьте задержку из своего браузера.</p>
+          <h2>Страны и проверка пинга</h2>
+          <p class="muted">Карточки показывают страны, доступные в сервисе. Пинг можно обновить прямо из браузера.</p>
         </div>
         <button class="button compact" type="button" id="latency-button">Проверить пинг</button>
       </div>
-      <div class="landing-latency-card" id="latency-card">
-        <strong id="latency-value">{{ landing_latency_best_label }}</strong>
+      <div class="landing-latency-summary" id="latency-card">
+        <div>
+          <span class="muted">Лучший пинг</span>
+          <strong id="latency-value">{{ landing_latency_best_label }}</strong>
+        </div>
         <div class="muted" id="latency-hint">{{ landing_latency_initial_hint }}</div>
-        <div class="landing-latency-list" id="latency-list">
+        <div class="landing-location-grid" id="latency-list">
           {% for item in landing_location_items %}
-          <div class="landing-latency-item{% if item.display_state == 'error' %} is-error{% endif %}">
+          <article class="landing-latency-item{% if item.display_state == 'error' %} is-error{% endif %}">
             <span class="landing-location-name">
               <span class="landing-country-flag" aria-hidden="true">{{ item.country_flag }}</span>
               <span>
@@ -71,9 +132,9 @@
               </span>
             </span>
             <strong>{{ item.display_label }}</strong>
-          </div>
+          </article>
           {% else %}
-          <div class="landing-latency-item">
+          <article class="landing-latency-item">
             <span class="landing-location-name">
               <span class="landing-country-flag" aria-hidden="true">🌐</span>
               <span>
@@ -82,25 +143,35 @@
               </span>
             </span>
             <strong>—</strong>
-          </div>
+          </article>
           {% endfor %}
         </div>
       </div>
       <p class="muted latency-disclaimer">{{ latency_disclaimer }}</p>
     </section>
 
-    <section class="panel stack landing-tariffs">
-      <div class="split">
+    <section class="landing-section landing-tariffs">
+      <div class="landing-section-head">
+        <span class="badge highlight">Тарифы</span>
         <h2>Тарифы</h2>
-        <span class="badge highlight">Короткий старт</span>
+        <p class="muted">Start подойдет для короткого старта, Pro — основной тариф для ежедневного использования.</p>
       </div>
-      <div class="grid-two">
+      <div class="landing-plan-grid">
         {% for group in portal_plan_groups %}
-        <article class="panel plan-card">
+        <article class="landing-plan-card{% if group.family == 'unlimited' %} is-featured{% endif %}">
           <div class="split">
             <h3>{{ group.title }}</h3>
-            <span class="badge">до {{ group.device_limit or '—' }} устройств</span>
+            <span class="badge{% if group.family == 'unlimited' %} highlight{% endif %}">
+              {% if group.family == 'unlimited' %}Рекомендуем{% else %}до {{ group.device_limit or '—' }} устройств{% endif %}
+            </span>
           </div>
+          <p class="muted">
+            {% if group.family == 'unlimited' %}
+              Для постоянного использования, большего запаса и спокойного подключения каждый день.
+            {% else %}
+              Для быстрого старта, теста качества и коротких периодов оплаты.
+            {% endif %}
+          </p>
           <div class="landing-periods">
             {% for period in group.periods %}
             <div class="plan-period landing-plan-period">
@@ -111,9 +182,37 @@
             </div>
             {% endfor %}
           </div>
+          <a class="button{% if group.family != 'unlimited' %} ghost{% endif %} full" href="{{ portal_login_url }}">Выбрать {{ group.title }}</a>
         </article>
         {% endfor %}
       </div>
+    </section>
+
+    <section class="landing-section landing-help">
+      <div class="landing-section-head">
+        <span class="badge">Помощь</span>
+        <h2>Если что-то не получилось, мы рядом</h2>
+      </div>
+      <div class="landing-help-card">
+        <p class="muted">Есть инструкция по подключению, Telegram-бот и поддержка. Не нужно угадывать, куда нажимать: начните с кнопки ниже, а если возникнет вопрос — напишите нам.</p>
+        <div class="landing-actions">
+          <a class="button ghost" href="{{ connection_help_url }}">Инструкция</a>
+          {% if support_username %}
+          <span class="badge">Поддержка {{ support_username }}</span>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <section class="landing-section landing-privacy">
+      <div class="landing-section-head">
+        <span class="badge">Конфиденциальность</span>
+        <h2>Ваши данные не продаются третьим лицам</h2>
+      </div>
+      <p class="muted">
+        Мы не продаём данные пользователей третьим лицам. Технические данные используются для работы сервиса,
+        безопасности, поддержки и обработки подписок.
+      </p>
     </section>
 
     <footer class="landing-footer">
@@ -198,7 +297,7 @@
       const renderList = (items) => {
         const locations = groupLocations(items);
         list.innerHTML = locations.map((item) => `
-          <div class="landing-latency-item${item.display_state === "error" ? " is-error" : ""}">
+          <article class="landing-latency-item${item.display_state === "error" ? " is-error" : ""}">
             <span class="landing-location-name">
               <span class="landing-country-flag" aria-hidden="true">${escapeHtml(item.country_flag)}</span>
               <span>
@@ -207,7 +306,7 @@
               </span>
             </span>
             <strong>${escapeHtml(item.display_label)}</strong>
-          </div>
+          </article>
         `).join("");
       };
 

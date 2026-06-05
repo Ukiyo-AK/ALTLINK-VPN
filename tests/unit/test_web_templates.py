@@ -127,12 +127,20 @@ def test_portal_dashboard_has_mobile_section_navigation():
 def test_landing_template_keeps_homepage_copy_compact():
     landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
 
+    assert "ALTLINK — быстрый и конфиденциальный доступ к сети!" in landing
     assert "landing-story" not in landing
     assert "Что получает пользователь" not in landing
+    assert "landing-feature-card" in landing
+    assert "landing-step-card" in landing
+    assert "landing-location-grid" in landing
+    assert "landing-latency-list" not in landing
+    assert "landing-plan-card{% if group.family == 'unlimited' %} is-featured{% endif %}" in landing
+    assert "{{ landing_account_button_label }}" in landing
     assert "Соглашение" in landing
     assert "Конфиденциальность" in landing
+    assert "Мы не продаём данные пользователей третьим лицам" in landing
     assert "© 2026 ALTLINK" in landing
-    assert ">Подключить<" in landing
+    assert "Подключить" in landing
     assert ">Telegram bot<" in landing
     assert "landing_location_items" in landing
     assert "country_flag" in landing

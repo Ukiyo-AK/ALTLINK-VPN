@@ -329,13 +329,14 @@ async def resolve_admin(request: Request, hub):
 
 
 async def resolve_portal_user(request: Request, hub):
-    portal_user_id = request.session.get("portal_user_id")
+    session = getattr(request, "session", {})
+    portal_user_id = session.get("portal_user_id")
     if not portal_user_id:
         return None
     try:
         return await hub.accounts.get_user(portal_user_id)
     except Exception:
-        request.session.pop("portal_user_id", None)
+        session.pop("portal_user_id", None)
         return None
 
 
@@ -428,7 +429,28 @@ def load_document_text(kind: str) -> str:
         if available:
             return "Документ пока не опубликован. Проверьте названия файлов в папке document."
         return "Документ пока не опубликован."
-    return path.read_text(encoding="utf-8-sig").strip()
+    return strip_document_title(path.read_text(encoding="utf-8-sig")).strip()
+
+
+def strip_document_title(markdown_text: str) -> str:
+    lines = markdown_text.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if line.lstrip().startswith("# "):
+            without_title = "\n".join(lines[index + 1 :]).strip()
+            return without_title or markdown_text.strip()
+        return markdown_text.strip()
+    return markdown_text.strip()
+
+
+def document_excerpt_text(markdown_text: str) -> str:
+    for line in markdown_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped in {"---", "***"}:
+            continue
+        return re.sub(r"^[#>\-\*\s]+", "", stripped).strip()
+    return ""
 
 
 async def probe_server_latency(server, *, timeout_seconds: float = 2.5) -> dict:
@@ -607,7 +629,10 @@ async def landing_page(request: Request):
         plans = await hub.dashboard.list_plans()
         servers = await hub.catalog.list_servers()
         server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
+        portal_user = await resolve_portal_user(request, hub)
     settings = request.app.state.settings
+    portal_authenticated = portal_user is not None
+    portal_login_url = "/portal" if portal_authenticated else "/portal/login?autostart=1"
     landing_latency_items = build_landing_latency_items(servers, server_latency_state)
     landing_location_items = build_landing_location_items(landing_latency_items)
     landing_latency_values = [
@@ -626,7 +651,9 @@ async def landing_page(request: Request):
         "landing.html",
         title="ALTLINK",
         portal_plan_groups=group_portal_plans(plans),
-        portal_login_url="/portal/login?autostart=1",
+        portal_login_url=portal_login_url,
+        landing_portal_authenticated=portal_authenticated,
+        landing_account_button_label="Личный кабинет" if portal_authenticated else "Войти",
         connection_help_url=f"{settings.backend_public_url.rstrip('/')}/help/connect",
         agreement_page_url=f"{settings.backend_public_url.rstrip('/')}/legal/agreement",
         privacy_page_url=f"{settings.backend_public_url.rstrip('/')}/legal/privacy",
@@ -727,7 +754,7 @@ async def agreement_page(request: Request):
         "legal_agreement.html",
         title="Пользовательское соглашение",
         document_html=markdown_to_html(document_text),
-        document_excerpt=document_text.splitlines()[0] if document_text else "",
+        document_excerpt=document_excerpt_text(document_text),
     )
 
 
@@ -739,7 +766,7 @@ async def privacy_page(request: Request):
         "legal_privacy.html",
         title="Политика конфиденциальности",
         document_html=markdown_to_html(document_text),
-        document_excerpt=document_text.splitlines()[0] if document_text else "",
+        document_excerpt=document_excerpt_text(document_text),
     )
 
 

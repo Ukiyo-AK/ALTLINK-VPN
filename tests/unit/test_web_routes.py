@@ -570,6 +570,8 @@ async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
 
     assert response is rendered["context"]
     assert rendered["template_name"] == "landing.html"
+    assert rendered["context"]["landing_portal_authenticated"] is False
+    assert rendered["context"]["landing_account_button_label"] == "Войти"
     assert rendered["context"]["landing_latency_best_label"] == "73 мс"
     assert rendered["context"]["landing_latency_checked_at"] == "2026-05-22T12:00:00+00:00"
     assert rendered["context"]["landing_latency_items"] == [
@@ -598,6 +600,57 @@ async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
             "server_count": 1,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_landing_page_uses_cabinet_button_for_authenticated_portal_user(monkeypatch):
+    rendered: dict[str, object] = {}
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    async def fake_scalar(_query):
+        return None
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            dashboard=SimpleNamespace(list_plans=AsyncMock(return_value=[])),
+            catalog=SimpleNamespace(list_servers=AsyncMock(return_value=[])),
+            accounts=SimpleNamespace(get_user=AsyncMock(return_value=SimpleNamespace(id="user-1"))),
+            session=SimpleNamespace(scalar=fake_scalar),
+        )
+
+    request = SimpleNamespace(
+        session={"portal_user_id": "user-1"},
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                container=SimpleNamespace(hub=fake_hub),
+                settings=SimpleNamespace(
+                    backend_public_url="https://altlink.online",
+                    client_bot_name="@altlink_bot",
+                    support_username="@altlink_support",
+                ),
+            )
+        ),
+    )
+
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.landing_page(request)
+
+    assert response is rendered["context"]
+    assert rendered["context"]["portal_login_url"] == "/portal"
+    assert rendered["context"]["landing_portal_authenticated"] is True
+    assert rendered["context"]["landing_account_button_label"] == "Личный кабинет"
+
+
+def test_strip_document_title_removes_duplicate_first_h1():
+    markdown = "# Пользовательское соглашение Altlink VPN\n\n## Раздел\n\nТекст"
+
+    assert web_routes.strip_document_title(markdown) == "## Раздел\n\nТекст"
 
 
 @pytest.mark.asyncio
