@@ -20,109 +20,68 @@
           <div class="muted">Быстрый ускоритель с простым подключением</div>
         </div>
       </a>
-      <div class="landing-nav">
-        <a href="{{ connection_help_url }}">Подключение</a>
-        <a href="{{ agreement_page_url }}">Соглашение</a>
-        <a href="{{ privacy_page_url }}">Конфиденциальность</a>
-      </div>
       <div class="landing-topbar-actions">
-        <a class="button compact landing-cabinet-button" href="{{ portal_login_url }}">Личный кабинет</a>
+        <a class="button ghost compact landing-cabinet-button" href="{{ portal_login_url }}">Войти</a>
       </div>
     </header>
 
-    <section class="landing-hero panel" style="position: relative; min-height: 29rem; padding-right: clamp(1.4rem, 3vw, 2rem); overflow: hidden; isolation: isolate;">
-      <div class="landing-copy" style="max-width: min(58rem, 92%);">
-        <span class="badge highlight">Быстро. Стабильно. По честной цене.</span>
-        <h1>ALTLINK</h1>
+    <section class="landing-hero panel">
+      <div class="landing-copy">
+        <span class="badge highlight">ALTLINK ускоряет каждый день</span>
+        <h1>Интернет без лишних настроек.</h1>
         <p class="muted">
-          Фирменный ускоритель для стабильного подключения каждый день:
-          короткий старт, понятные тарифы и управление через сайт или Telegram.
+          Подключайтесь за пару минут, выбирайте понятный тариф и управляйте доступом там,
+          где удобно: на сайте или в Telegram.
         </p>
-        <div class="landing-actions">
-          <a class="button" href="{{ portal_login_url }}">Открыть личный кабинет</a>
-          {% if client_bot_url %}
-          <a class="button ghost" href="{{ client_bot_url }}" target="_blank" rel="noreferrer">Открыть Telegram-бота</a>
-          {% endif %}
-        </div>
         <div class="landing-feature-list">
+          <span class="badge">2 дня тест</span>
           <span class="badge">от 25 ₽ в неделю</span>
           <span class="badge">подключение по ссылке и QR</span>
-          <span class="badge">кабинет и бот синхронно</span>
-        </div>
-        <div class="landing-metrics">
-          <article class="card">
-            <div class="muted">Тариф Start</div>
-            <strong>25 ₽ / неделя</strong>
-          </article>
-          <article class="card">
-            <div class="muted">Тариф Pro</div>
-            <strong>199 ₽ / месяц</strong>
-          </article>
-          <article class="card">
-            <div class="muted">Поддержка</div>
-            <strong class="landing-support-handle">{{ support_username or '@support_placeholder' }}</strong>
-          </article>
         </div>
       </div>
-      <div
-        class="landing-hero-mark"
-        aria-hidden="true"
-        style="
-          position: absolute;
-          top: 50%;
-          right: -18rem;
-          width: min(66rem, 96vw);
-          height: min(66rem, 245%);
-          transform: translateY(-50%);
-          z-index: 0;
-          opacity: 0.115;
-          pointer-events: none;
-          background: url('/media/logo without background.png') right center / contain no-repeat;
-          filter: blur(0.35px) saturate(0.92) drop-shadow(0 14px 22px rgba(7, 148, 127, 0.12));
-        "></div>
-
+      <div class="landing-hero-glow" aria-hidden="true"></div>
+      <div class="landing-actions landing-actions-bottom">
+        <a class="button" href="{{ portal_login_url }}">Подключить</a>
+        {% if client_bot_url %}
+        <a class="button ghost" href="{{ client_bot_url }}" target="_blank" rel="noreferrer">Telegram bot</a>
+        {% endif %}
+      </div>
     </section>
 
-    <section class="grid-three landing-benefits">
-      <article class="panel stack">
-        <span class="badge">Скорость</span>
-        <h3>Быстрые основные серверы</h3>
-        <p class="muted">
-          Для повседневной работы, браузера и стриминга без ощущения тяжёлого подключения.
-        </p>
-      </article>
-      <article class="panel stack">
-        <span class="badge highlight">Стабильность</span>
-        <h3>Подключение, на которое можно рассчитывать</h3>
-        <p class="muted">
-          Тариф, баланс и ссылка всегда под рукой в кабинете и Telegram-боте.
-        </p>
-      </article>
-      <article class="panel stack">
-        <span class="badge warning">Цена</span>
-        <h3>Низкий вход и понятные тарифы</h3>
-        <p class="muted">
-          Можно начать с короткого периода и перейти на постоянный формат позже.
-        </p>
-      </article>
-    </section>
-
-    <section class="panel stack landing-latency">
+    <section class="panel stack landing-latency landing-locations">
       <div class="split landing-latency-head">
         <div class="stack compact">
-          <span class="badge">Проверка задержки</span>
-          <h2>Измерьте отклик от {{ latency_target_label }}</h2>
+          <span class="badge">Локации</span>
+          <h2>Серверы по странам</h2>
+          <p class="muted">Выбирайте ближайшую локацию или проверьте задержку из своего браузера.</p>
         </div>
-        <button class="button" type="button" id="latency-button">Проверить задержку</button>
+        <button class="button compact" type="button" id="latency-button">Проверить пинг</button>
       </div>
       <div class="landing-latency-card" id="latency-card">
         <strong id="latency-value">{{ landing_latency_best_label }}</strong>
         <div class="muted" id="latency-hint">{{ landing_latency_initial_hint }}</div>
         <div class="landing-latency-list" id="latency-list">
-          {% for item in landing_latency_items %}
+          {% for item in landing_location_items %}
           <div class="landing-latency-item{% if item.display_state == 'error' %} is-error{% endif %}">
-            <span>{{ item.name }} · {{ item.country_code }}</span>
+            <span class="landing-location-name">
+              <span class="landing-country-flag" aria-hidden="true">{{ item.country_flag }}</span>
+              <span>
+                <strong>{{ item.country_name }}</strong>
+                <small>{{ item.country_code }}{% if item.server_count and item.server_count > 1 %} · серверов: {{ item.server_count }}{% endif %}</small>
+              </span>
+            </span>
             <strong>{{ item.display_label }}</strong>
+          </div>
+          {% else %}
+          <div class="landing-latency-item">
+            <span class="landing-location-name">
+              <span class="landing-country-flag" aria-hidden="true">🌐</span>
+              <span>
+                <strong>Локации скоро появятся</strong>
+                <small>ALTLINK</small>
+              </span>
+            </span>
+            <strong>—</strong>
           </div>
           {% endfor %}
         </div>
@@ -130,10 +89,10 @@
       <p class="muted latency-disclaimer">{{ latency_disclaimer }}</p>
     </section>
 
-    <section class="panel stack">
+    <section class="panel stack landing-tariffs">
       <div class="split">
         <h2>Тарифы</h2>
-        <span class="badge highlight">С выбором срока внутри тарифа</span>
+        <span class="badge highlight">Короткий старт</span>
       </div>
       <div class="grid-two">
         {% for group in portal_plan_groups %}
@@ -142,13 +101,11 @@
             <h3>{{ group.title }}</h3>
             <span class="badge">до {{ group.device_limit or '—' }} устройств</span>
           </div>
-          <p>{{ group.description }}</p>
-          <div class="stack compact">
+          <div class="landing-periods">
             {% for period in group.periods %}
             <div class="plan-period landing-plan-period">
               <div>
                 <strong>{{ period.label }}</strong>
-                <div class="muted">{{ period.caption }}</div>
               </div>
               <div class="plan-period-price">{{ period.price_rub }} ₽</div>
             </div>
@@ -158,6 +115,20 @@
         {% endfor %}
       </div>
     </section>
+
+    <footer class="landing-footer">
+      <div>
+        <strong>© 2026 ALTLINK</strong>
+        {% if support_username %}
+        <div class="muted">Поддержка: <span class="landing-support-handle">{{ support_username }}</span></div>
+        {% endif %}
+      </div>
+      <nav class="landing-footer-links" aria-label="Документы">
+        <a href="{{ connection_help_url }}">Подключение</a>
+        <a href="{{ agreement_page_url }}">Соглашение</a>
+        <a href="{{ privacy_page_url }}">Конфиденциальность</a>
+      </nav>
+    </footer>
   </div>
 
   <script>
@@ -182,11 +153,60 @@
           .filter((entry) => entry[0])
       );
 
+      const escapeHtml = (value) => String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+
+      const groupLocations = (items) => {
+        const locations = new Map();
+
+        items.forEach((item) => {
+          const code = String(item.country_code || "").toUpperCase();
+          const key = code || item.server_id || item.name;
+          if (!key) {
+            return;
+          }
+
+          const current = locations.get(key);
+          const latency = typeof item.latency_ms === "number" ? item.latency_ms : null;
+          const shouldReplace = !current
+            || (latency !== null && (typeof current.latency_ms !== "number" || latency < current.latency_ms));
+
+          if (shouldReplace) {
+            locations.set(key, {
+              country_code: code,
+              country_name: item.country_name || code || "Локация",
+              country_flag: item.country_flag || "🌐",
+              latency_ms: latency,
+              display_label: item.display_label || "Не измерен",
+              display_state: item.display_state || "muted",
+              server_count: current ? (current.server_count || 1) + 1 : 1,
+            });
+            return;
+          }
+
+          current.server_count = (current.server_count || 1) + 1;
+        });
+
+        return Array.from(locations.values())
+          .sort((left, right) => String(left.country_name).localeCompare(String(right.country_name), "ru"));
+      };
+
       const renderList = (items) => {
-        list.innerHTML = items.map((item) => `
+        const locations = groupLocations(items);
+        list.innerHTML = locations.map((item) => `
           <div class="landing-latency-item${item.display_state === "error" ? " is-error" : ""}">
-            <span>${item.name} · ${item.country_code}</span>
-            <strong>${item.display_label}</strong>
+            <span class="landing-location-name">
+              <span class="landing-country-flag" aria-hidden="true">${escapeHtml(item.country_flag)}</span>
+              <span>
+                <strong>${escapeHtml(item.country_name)}</strong>
+                <small>${escapeHtml(item.country_code)}${item.server_count > 1 ? ` · серверов: ${item.server_count}` : ""}</small>
+              </span>
+            </span>
+            <strong>${escapeHtml(item.display_label)}</strong>
           </div>
         `).join("");
       };
@@ -205,8 +225,8 @@
         value.textContent = bestLatencyLabel(fallbackProbes);
         hint.textContent = message || (
           fallbackCheckedAt
-            ? "Показываем последние сохранённые значения по серверам. Кнопка ниже обновит замер из вашего браузера."
-            : "Показываем последние сохранённые значения по серверам."
+            ? "Показываем последние сохранённые значения по локациям. Кнопка ниже обновит замер из вашего браузера."
+            : "Показываем последние сохранённые значения по локациям."
         );
         renderList(fallbackProbes);
         card.classList.remove("is-error");
@@ -273,7 +293,7 @@
       button.addEventListener("click", async () => {
         button.disabled = true;
         value.textContent = "…";
-        hint.textContent = "Измеряем задержку от вашего браузера до нод ALTLINK.";
+        hint.textContent = "Измеряем задержку от вашего браузера до локаций ALTLINK.";
         card.classList.remove("is-error");
         try {
           const response = await fetch(`${endpoint}?ts=${Date.now()}&include_local=1`, {
@@ -300,6 +320,8 @@
                 server_id: target.server_id,
                 name: target.name,
                 country_code: target.country_code,
+                country_name: target.country_name,
+                country_flag: target.country_flag,
                 latency_ms: measured.latency_ms,
                 display_label: `${measured.latency_ms} мс`,
                 display_state: "ready",
@@ -313,6 +335,8 @@
               server_id: target.server_id,
               name: target.name,
               country_code: target.country_code,
+              country_name: target.country_name,
+              country_flag: target.country_flag,
               latency_ms: null,
               display_label: "Недоступно",
               display_state: "error",
@@ -325,15 +349,15 @@
             return (!measured || !measured.reachable || typeof measured.latency_ms !== "number") && fallbackByServerId.has(item.server_id);
           });
           hint.textContent = !mergedItems.length
-            ? "Сейчас нет доступных серверов для замера."
+            ? "Сейчас нет доступных локаций для замера."
             : fallbackUsed
-              ? "Часть серверов обновлена из вашего браузера, а недоступные замеры показаны по последней серверной проверке."
-              : `Пинг измерен из вашего браузера для ${mergedItems.length} серверов.`;
+              ? "Часть локаций обновлена из вашего браузера, а недоступные замеры показаны по последней серверной проверке."
+              : `Пинг измерен из вашего браузера для ${groupLocations(mergedItems).length} локаций.`;
           renderList(mergedItems);
         } catch (error) {
           if (!restoreMonitoringState(`Не удалось обновить замер из браузера. Показываем последние сохранённые значения. ${disclaimer}`)) {
             value.textContent = "—";
-            hint.textContent = `Не удалось получить данные по зарубежным серверам. Попробуйте ещё раз. ${disclaimer}`;
+            hint.textContent = `Не удалось получить данные по локациям. Попробуйте ещё раз. ${disclaimer}`;
             list.innerHTML = "";
             card.classList.add("is-error");
           }

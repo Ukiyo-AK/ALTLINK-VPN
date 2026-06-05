@@ -29,11 +29,12 @@ def test_web_templates_use_relative_asset_paths(template_name: str):
     assert 'src="/media/logo.png"' in content
 
 
-def test_landing_hero_background_uses_relative_media_path():
+def test_landing_hero_avoids_heavy_background_logo():
     content = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
 
     assert "url('{{ url_for('media', path='logo without background.png') }}')" not in content
-    assert "url('/media/logo without background.png')" in content
+    assert "url('/media/logo without background.png')" not in content
+    assert "landing-hero-glow" in content
 
 
 def test_portal_login_template_uses_bot_confirm_flow_instead_of_widget():
@@ -128,6 +129,14 @@ def test_landing_template_keeps_homepage_copy_compact():
 
     assert "landing-story" not in landing
     assert "Что получает пользователь" not in landing
+    assert "Соглашение" in landing
+    assert "Конфиденциальность" in landing
+    assert "© 2026 ALTLINK" in landing
+    assert ">Подключить<" in landing
+    assert ">Telegram bot<" in landing
+    assert "landing_location_items" in landing
+    assert "country_flag" in landing
+    assert "country_name" in landing
 
 
 def test_admin_dashboard_has_mobile_section_navigation():

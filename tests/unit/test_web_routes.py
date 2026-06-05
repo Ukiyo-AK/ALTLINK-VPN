@@ -577,12 +577,25 @@ async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
             "server_id": "server-1",
             "name": "Whitelist NL",
             "country_code": "NL",
+            "country_name": "Нидерланды",
+            "country_flag": "🇳🇱",
             "reachable": True,
             "latency_ms": 73,
             "display_label": "73 мс",
             "display_state": "ready",
             "probe_target_host": "wl.altlink.online",
             "checked_at": "2026-05-22T12:00:00+00:00",
+        }
+    ]
+    assert rendered["context"]["landing_location_items"] == [
+        {
+            "country_code": "NL",
+            "country_name": "Нидерланды",
+            "country_flag": "🇳🇱",
+            "latency_ms": 73,
+            "display_label": "73 мс",
+            "display_state": "ready",
+            "server_count": 1,
         }
     ]
 

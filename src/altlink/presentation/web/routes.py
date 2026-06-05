@@ -51,6 +51,34 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
+COUNTRY_NAMES_RU = {
+    "AM": "Армения",
+    "AT": "Австрия",
+    "BY": "Беларусь",
+    "CH": "Швейцария",
+    "CZ": "Чехия",
+    "DE": "Германия",
+    "EE": "Эстония",
+    "ES": "Испания",
+    "FI": "Финляндия",
+    "FR": "Франция",
+    "GB": "Великобритания",
+    "GE": "Грузия",
+    "HK": "Гонконг",
+    "JP": "Япония",
+    "KZ": "Казахстан",
+    "LT": "Литва",
+    "LV": "Латвия",
+    "NL": "Нидерланды",
+    "NO": "Норвегия",
+    "PL": "Польша",
+    "RU": "Россия",
+    "SE": "Швеция",
+    "SG": "Сингапур",
+    "TR": "Турция",
+    "UA": "Украина",
+    "US": "США",
+}
 
 
 async def sync_dashboard_traffic_if_possible(container) -> None:
@@ -125,6 +153,56 @@ def landing_latency_label(latency: dict | None) -> tuple[str, str]:
     return "Недоступно", "error"
 
 
+def country_flag(country_code: str | None) -> str:
+    code = (country_code or "").strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return "🌐"
+    return "".join(chr(ord(char) - ord("A") + 0x1F1E6) for char in code)
+
+
+def country_name(country_code: str | None) -> str:
+    code = (country_code or "").strip().upper()
+    return COUNTRY_NAMES_RU.get(code) or code or "Локация"
+
+
+def build_landing_location_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    locations: dict[str, dict[str, object]] = {}
+
+    for item in items:
+        code = str(item.get("country_code") or "").upper()
+        key = code or str(item.get("server_id") or item.get("name") or "")
+        if not key:
+            continue
+
+        latency_ms = item.get("latency_ms")
+        current = locations.get(key)
+        should_replace = current is None
+        if current is not None and isinstance(latency_ms, int | float):
+            current_latency = current.get("latency_ms")
+            should_replace = not isinstance(current_latency, int | float) or latency_ms < current_latency
+
+        if should_replace:
+            locations[key] = {
+                "country_code": code,
+                "country_name": str(item.get("country_name") or country_name(code)),
+                "country_flag": str(item.get("country_flag") or country_flag(code)),
+                "latency_ms": latency_ms if isinstance(latency_ms, int | float) else None,
+                "display_label": item.get("display_label") or "Не измерен",
+                "display_state": item.get("display_state") or "muted",
+                "server_count": 1 if current is None else int(current.get("server_count", 1)) + 1,
+            }
+        else:
+            locations[key]["server_count"] = int(locations[key].get("server_count", 1)) + 1
+
+    return sorted(
+        locations.values(),
+        key=lambda item: (
+            item.get("country_name", ""),
+            item.get("country_code", ""),
+        ),
+    )
+
+
 def build_landing_latency_items(servers, latency_state: dict[str, dict]) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     for server in servers or []:
@@ -133,11 +211,14 @@ def build_landing_latency_items(servers, latency_state: dict[str, dict]) -> list
         latency = latency_state.get(getattr(server, "id", "")) if isinstance(latency_state, dict) else None
         label, state = landing_latency_label(latency)
         latency_ms = latency.get("latency_ms") if isinstance(latency, dict) else None
+        country_code = (getattr(server, "country_code", "") or "").upper()
         items.append(
             {
                 "server_id": getattr(server, "id", None),
                 "name": getattr(server, "name", None),
-                "country_code": (getattr(server, "country_code", "") or "").upper(),
+                "country_code": country_code,
+                "country_name": country_name(country_code),
+                "country_flag": country_flag(country_code),
                 "reachable": bool(latency.get("reachable")) if isinstance(latency, dict) else False,
                 "latency_ms": latency_ms if isinstance(latency_ms, int | float) else None,
                 "display_label": label,
@@ -528,6 +609,7 @@ async def landing_page(request: Request):
         server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
     settings = request.app.state.settings
     landing_latency_items = build_landing_latency_items(servers, server_latency_state)
+    landing_location_items = build_landing_location_items(landing_latency_items)
     landing_latency_values = [
         item["latency_ms"]
         for item in landing_latency_items
@@ -535,7 +617,7 @@ async def landing_page(request: Request):
     ]
     landing_latency_best_label = f"{round(min(landing_latency_values))} мс" if landing_latency_values else "—"
     landing_latency_initial_hint = (
-        "Показываем последние сохранённые значения по серверам. Кнопка ниже обновит замер из вашего браузера."
+        "Показываем последние сохранённые значения по локациям. Кнопка ниже обновит замер из вашего браузера."
         if landing_latency_items
         else "Нажмите кнопку, чтобы запустить измерение."
     )
@@ -554,6 +636,7 @@ async def landing_page(request: Request):
         latency_target_label=latency_target_label(),
         latency_disclaimer=latency_disclaimer_text(),
         landing_latency_items=landing_latency_items,
+        landing_location_items=landing_location_items,
         landing_latency_checked_at=server_latency_checked_at,
         landing_latency_best_label=landing_latency_best_label,
         landing_latency_initial_hint=landing_latency_initial_hint,
@@ -587,6 +670,8 @@ async def latency_probe(request: Request) -> JSONResponse:
             "name": getattr(server, "name", None),
             "address": getattr(server, "address", None),
             "country_code": (getattr(server, "country_code", "") or "").upper(),
+            "country_name": country_name(getattr(server, "country_code", None)),
+            "country_flag": country_flag(getattr(server, "country_code", None)),
             "is_connected": bool(getattr(server, "is_connected", False)),
             "probe_scheme": settings.latency_probe_scheme,
             "probe_port": settings.latency_probe_port,
