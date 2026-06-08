@@ -165,6 +165,23 @@ def country_name(country_code: str | None) -> str:
     return COUNTRY_NAMES_RU.get(code) or code or "Локация"
 
 
+def format_rub_amount(value) -> str:
+    amount = Decimal(str(value))
+    if amount == amount.to_integral_value():
+        return str(int(amount))
+    return f"{amount.normalize():f}".rstrip("0").rstrip(".")
+
+
+def latency_quality_label(latency_ms) -> str:
+    if not isinstance(latency_ms, int | float):
+        return "Проверьте пинг"
+    if latency_ms <= 40:
+        return "Лучший отклик"
+    if latency_ms <= 110:
+        return "Быстро"
+    return "Дальняя локация"
+
+
 def build_landing_location_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
     locations: dict[str, dict[str, object]] = {}
 
@@ -189,6 +206,7 @@ def build_landing_location_items(items: list[dict[str, object]]) -> list[dict[st
                 "latency_ms": latency_ms if isinstance(latency_ms, int | float) else None,
                 "display_label": item.get("display_label") or "Не измерен",
                 "display_state": item.get("display_state") or "muted",
+                "quality_label": latency_quality_label(latency_ms),
                 "server_count": 1 if current is None else int(current.get("server_count", 1)) + 1,
             }
         else:
@@ -386,6 +404,7 @@ def group_portal_plans(plans) -> list[dict]:
                 "label": "На неделю" if plan.period_days <= 7 else "На месяц",
                 "caption": "Гибкое продление" if plan.period_days <= 7 else "Основной формат",
                 "price_rub": plan.price_rub,
+                "price_label": format_rub_amount(plan.price_rub),
                 "plan_code": getattr(plan.code, "value", plan.code),
                 "period_days": plan.period_days,
             }
@@ -633,6 +652,8 @@ async def landing_page(request: Request):
     settings = request.app.state.settings
     portal_authenticated = portal_user is not None
     portal_login_url = "/portal" if portal_authenticated else "/portal/login?autostart=1"
+    paid_device_limits = [plan.device_limit for plan in plans if not plan.is_trial and plan.device_limit]
+    landing_max_device_limit = max(paid_device_limits) if paid_device_limits else None
     landing_latency_items = build_landing_latency_items(servers, server_latency_state)
     landing_location_items = build_landing_location_items(landing_latency_items)
     landing_latency_values = [
@@ -641,16 +662,13 @@ async def landing_page(request: Request):
         if isinstance(item.get("latency_ms"), int | float)
     ]
     landing_latency_best_label = f"{round(min(landing_latency_values))} мс" if landing_latency_values else "—"
-    landing_latency_initial_hint = (
-        "Показываем последние сохранённые значения по локациям. Кнопка ниже обновит замер из вашего браузера."
-        if landing_latency_items
-        else "Нажмите кнопку, чтобы запустить измерение."
-    )
+    landing_latency_initial_hint = "Проверьте задержку до серверов ALTLINK прямо из браузера. Чем ниже пинг, тем быстрее отклик."
     return render(
         request,
         "landing.html",
         title="ALTLINK",
         portal_plan_groups=group_portal_plans(plans),
+        landing_max_device_limit=landing_max_device_limit,
         portal_login_url=portal_login_url,
         landing_portal_authenticated=portal_authenticated,
         landing_account_button_label="Личный кабинет" if portal_authenticated else "Войти",

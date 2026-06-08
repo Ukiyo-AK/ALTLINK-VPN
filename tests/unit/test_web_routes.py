@@ -76,6 +76,8 @@ def test_group_portal_plans_merges_monthly_and_weekly_variants():
         PlanCode.UNLIMITED.value,
         PlanCode.UNLIMITED_WEEKLY.value,
     ]
+    assert [period["price_label"] for period in groups[0]["periods"]] == ["69", "25"]
+    assert [period["price_label"] for period in groups[1]["periods"]] == ["199", "65"]
 
 
 def test_group_portal_plans_keeps_device_limit_on_group():
@@ -94,6 +96,7 @@ def test_group_portal_plans_keeps_device_limit_on_group():
                     "label": "На месяц",
                     "caption": "Основной формат",
                     "price_rub": Decimal("199"),
+                    "price_label": "199",
                     "plan_code": PlanCode.UNLIMITED.value,
                     "period_days": 30,
                 }
@@ -535,7 +538,20 @@ async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
     @asynccontextmanager
     async def fake_hub():
         yield SimpleNamespace(
-            dashboard=SimpleNamespace(list_plans=AsyncMock(return_value=[])),
+            dashboard=SimpleNamespace(
+                list_plans=AsyncMock(
+                    return_value=[
+                        plan(
+                            PlanCode.UNLIMITED,
+                            sort_order=20,
+                            price_rub="199.00",
+                            period_days=30,
+                            description="unlimited",
+                            device_limit=8,
+                        )
+                    ]
+                )
+            ),
             catalog=SimpleNamespace(
                 list_servers=AsyncMock(
                     return_value=[
@@ -572,6 +588,8 @@ async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
     assert rendered["template_name"] == "landing.html"
     assert rendered["context"]["landing_portal_authenticated"] is False
     assert rendered["context"]["landing_account_button_label"] == "Войти"
+    assert rendered["context"]["landing_max_device_limit"] == 8
+    assert rendered["context"]["portal_plan_groups"][0]["periods"][0]["price_label"] == "199"
     assert rendered["context"]["landing_latency_best_label"] == "73 мс"
     assert rendered["context"]["landing_latency_checked_at"] == "2026-05-22T12:00:00+00:00"
     assert rendered["context"]["landing_latency_items"] == [
@@ -597,6 +615,7 @@ async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
             "latency_ms": 73,
             "display_label": "73 мс",
             "display_state": "ready",
+            "quality_label": "Быстро",
             "server_count": 1,
         }
     ]
