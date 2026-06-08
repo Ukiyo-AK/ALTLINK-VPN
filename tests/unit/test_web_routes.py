@@ -105,6 +105,17 @@ def test_group_portal_plans_keeps_device_limit_on_group():
     ]
 
 
+def test_latency_quality_label_uses_positive_landing_scale():
+    assert web_routes.latency_quality_label(None) == "Проверьте пинг"
+    assert web_routes.latency_quality_label(7) == "Лучший отклик"
+    assert web_routes.latency_quality_label(30) == "Лучший отклик"
+    assert web_routes.latency_quality_label(40) == "Быстрое соединение"
+    assert web_routes.latency_quality_label(71) == "Стабильное соединение"
+    assert web_routes.latency_quality_label(121) == "Подходит для повседневных задач"
+    assert web_routes.latency_quality_label(250) == "Дальняя локация"
+    assert web_routes.latency_quality_label(301) == "Временно высокая задержка"
+
+
 def test_resolve_document_path_falls_back_to_matching_markdown_name(monkeypatch, tmp_path: Path):
     docs = tmp_path / "document"
     docs.mkdir()
@@ -586,8 +597,10 @@ async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
 
     assert response is rendered["context"]
     assert rendered["template_name"] == "landing.html"
+    assert rendered["context"]["title"] == "ALTLINK VPN — быстрый и конфиденциальный доступ"
     assert rendered["context"]["landing_portal_authenticated"] is False
     assert rendered["context"]["landing_account_button_label"] == "Войти"
+    assert rendered["context"]["support_url"] == "https://t.me/altlink_support"
     assert rendered["context"]["landing_max_device_limit"] == 8
     assert rendered["context"]["portal_plan_groups"][0]["periods"][0]["price_label"] == "199"
     assert rendered["context"]["landing_latency_best_label"] == "73 мс"
@@ -615,7 +628,7 @@ async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
             "latency_ms": 73,
             "display_label": "73 мс",
             "display_state": "ready",
-            "quality_label": "Быстро",
+            "quality_label": "Стабильное соединение",
             "server_count": 1,
         }
     ]

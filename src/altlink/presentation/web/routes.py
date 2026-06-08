@@ -175,11 +175,17 @@ def format_rub_amount(value) -> str:
 def latency_quality_label(latency_ms) -> str:
     if not isinstance(latency_ms, int | float):
         return "Проверьте пинг"
-    if latency_ms <= 40:
+    if latency_ms <= 30:
         return "Лучший отклик"
-    if latency_ms <= 110:
-        return "Быстро"
-    return "Дальняя локация"
+    if latency_ms <= 70:
+        return "Быстрое соединение"
+    if latency_ms <= 120:
+        return "Стабильное соединение"
+    if latency_ms <= 200:
+        return "Подходит для повседневных задач"
+    if latency_ms <= 300:
+        return "Дальняя локация"
+    return "Временно высокая задержка"
 
 
 def build_landing_location_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -663,10 +669,12 @@ async def landing_page(request: Request):
     ]
     landing_latency_best_label = f"{round(min(landing_latency_values))} мс" if landing_latency_values else "—"
     landing_latency_initial_hint = "Проверьте задержку до серверов ALTLINK прямо из браузера. Чем ниже пинг, тем быстрее отклик."
+    support_username = settings.support_username or "@altlink_support"
+    support_url = "https://t.me/altlink_support"
     return render(
         request,
         "landing.html",
-        title="ALTLINK",
+        title="ALTLINK VPN — быстрый и конфиденциальный доступ",
         portal_plan_groups=group_portal_plans(plans),
         landing_max_device_limit=landing_max_device_limit,
         portal_login_url=portal_login_url,
@@ -676,7 +684,8 @@ async def landing_page(request: Request):
         agreement_page_url=f"{settings.backend_public_url.rstrip('/')}/legal/agreement",
         privacy_page_url=f"{settings.backend_public_url.rstrip('/')}/legal/privacy",
         client_bot_url=f"https://t.me/{settings.client_bot_name.lstrip('@')}" if settings.client_bot_name else None,
-        support_username=settings.support_username,
+        support_username=support_username,
+        support_url=support_url,
         latency_api_url="/api/latency",
         latency_target_label=latency_target_label(),
         latency_disclaimer=latency_disclaimer_text(),

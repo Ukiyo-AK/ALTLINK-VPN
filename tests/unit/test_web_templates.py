@@ -127,10 +127,14 @@ def test_portal_dashboard_has_mobile_section_navigation():
 def test_landing_template_keeps_homepage_copy_compact():
     landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
 
+    assert "<title>{{ title }}</title>" in landing
+    assert '<body class="landing-page">' in landing
     assert "Быстрый и конфиденциальный доступ к сети" in landing
     assert "ALTLINK — быстрый и конфиденциальный доступ к сети!" not in landing
     assert "2 дня теста" in landing
     assert "ссылка и QR-код" in landing
+    assert "Подойдут v2raytun, Happ, Throne, Hiddify, Streisand или другое совместимое приложение." in landing
+    assert "Happ для iOS" not in landing
     assert "landing_max_device_limit" in landing
     assert "price_label" in landing
     assert "landing-story" not in landing
@@ -144,13 +148,24 @@ def test_landing_template_keeps_homepage_copy_compact():
     assert "{{ landing_account_button_label }}" in landing
     assert "Соглашение" in landing
     assert "Конфиденциальность" in landing
+    assert "Конфиденциальность без громких обещаний" in landing
     assert "Мы не продаём данные пользователей третьим лицам" in landing
+    assert "Технические данные используются только для работы сервиса" in landing
+    assert "полная анонимность" not in landing.lower()
+    assert "мы ничего не храним" not in landing.lower()
+    assert "абсолютная безопасность" not in landing.lower()
     assert "© 2026 ALTLINK" in landing
     assert "Подключить" in landing
     assert ">Telegram bot<" in landing
+    assert "Открыть инструкцию" in landing
+    assert "Написать в поддержку" in landing
+    assert 'href="{{ support_url }}"' in landing
     assert "landing_location_items" in landing
     assert "country_flag" in landing
     assert "country_name" in landing
+    assert "Быстрое соединение" in landing
+    assert "Стабильное соединение" in landing
+    assert "Временно высокая задержка" in landing
 
 
 def test_admin_dashboard_has_mobile_section_navigation():
