@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,11 +8,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+  {% include "_theme_bootstrap.html" %}
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="portal-shell">
-    <header class="portal-topbar">
+    <header class="portal-topbar portal-compact-topbar">
       <div class="brand" style="margin: 0;">
         <img class="brand-logo" src="/media/logo.png" alt="ALTLINK">
         <div>
@@ -20,12 +21,20 @@
           <div class="muted">Личный кабинет</div>
         </div>
       </div>
-      <div class="toolbar" style="gap: 0.65rem;">
-        <a class="button ghost compact" href="/">Главная</a>
-        <form method="post" action="/portal/logout">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit" class="button ghost compact">Выйти</button>
-        </form>
+      <div class="portal-topbar-controls">
+        <div class="theme-switcher" aria-label="Тема">
+          <span>Тема</span>
+          <button type="button" data-theme-choice="light" aria-pressed="true">☀️ Светлая</button>
+          <button type="button" data-theme-choice="dark" aria-pressed="false">🌙 Тёмная</button>
+          <button type="button" data-theme-choice="system" aria-pressed="false">💻 Системная</button>
+        </div>
+        <div class="toolbar portal-actions" style="gap: 0.65rem;">
+          <a class="button ghost compact" href="/">Главная</a>
+          <form method="post" action="/portal/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit" class="button ghost compact">Выйти</button>
+          </form>
+        </div>
       </div>
     </header>
 
@@ -34,7 +43,6 @@
     {% endif %}
 
     <nav class="portal-section-nav" aria-label="Разделы личного кабинета" data-portal-page-nav>
-      <span class="portal-section-nav-title">Меню кабинета</span>
       <a href="#portal-overview" data-portal-page-link="overview">Обзор</a>
       <a href="#portal-devices" data-portal-page-link="devices">Устройства</a>
       <a href="#portal-plans" data-portal-page-link="plans">Тарифы</a>
@@ -47,14 +55,14 @@
     <section class="hero portal-section portal-overview-section" id="portal-overview" data-section-title="Обзор" data-portal-page="overview">
       <article class="hero-panel">
         <span class="badge">ALTLINK</span>
-        <h1>{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}</h1>
+        <h1 class="portal-username">{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}</h1>
         <p class="muted">
           Сайт и бот работают с одним Telegram-аккаунтом, поэтому изменения по тарифу, балансу,
           тесту и доступным серверам появляются синхронно.
         </p>
         <div class="hero-meta">
-          <span class="badge">{{ portal_user.status }}</span>
-          <span class="badge highlight">Баланс {{ portal_user.balance_rub }} ₽</span>
+          <span class="badge">{{ portal_user.status|user_status }}</span>
+          <span class="badge highlight">Баланс {{ portal_user.balance_rub|rub }} ₽</span>
           <span class="badge warning">
             {{ portal_subscription.plan.name if portal_subscription else 'Подписка не активна' }}
           </span>
@@ -85,6 +93,14 @@
 
     <section class="portal-section portal-stats-section" id="portal-stats" data-section-title="Коротко" data-portal-page="overview">
       <div class="cards">
+        <article class="card">
+          <div class="muted">Баланс</div>
+          <strong>{{ portal_user.balance_rub|rub }} ₽</strong>
+        </article>
+        <article class="card">
+          <div class="muted">Тариф</div>
+          <strong>{{ portal_subscription.plan.name if portal_subscription else '—' }}</strong>
+        </article>
         <article class="card">
           <div class="muted">Следующее списание</div>
           <strong>{{ portal_subscription.next_billing_at.strftime('%d.%m %H:%M') if portal_subscription else '—' }}</strong>
@@ -123,7 +139,7 @@
       {% if portal_devices_error %}
       <div class="alert danger">{{ portal_devices_error }}</div>
       {% else %}
-      <table class="table">
+      <table class="table responsive-table portal-device-table">
         <thead><tr><th>Устройство</th><th>Клиент</th><th>Последнее подключение</th><th>Дата создания</th><th></th></tr></thead>
         <tbody>
           {% for device in portal_devices %}
@@ -192,7 +208,7 @@
                     {% endif %}
                   </div>
                 </div>
-                <div class="plan-period-price">{{ period.price_rub }} ₽</div>
+                <div class="plan-period-price">{{ period.price_label }} ₽</div>
                 <button
                   type="submit"
                   class="button compact{% if period.plan_code == portal_current_plan_code %} ghost{% endif %}"
@@ -213,7 +229,7 @@
           <h2>Баланс</h2>
           <span class="badge highlight">Через бота</span>
         </div>
-        <div class="balance-amount">{{ portal_user.balance_rub }} ₽</div>
+        <div class="balance-amount">{{ portal_user.balance_rub|rub }} ₽</div>
         <p class="muted">
           Пополнение через сайт пока скрыто. Для быстрых сумм, промокодов и реферальных бонусов
           используйте клиентский бот.
@@ -226,7 +242,7 @@
         </div>
         {% if portal_show_usage_details %}
         <div class="balance-note">
-          Начисление за белые списки к продлению: {{ whitelist_cost_rub }} ₽
+          Начисление за белые списки к продлению: {{ whitelist_cost_rub|rub }} ₽
         </div>
         {% endif %}
       </article>
@@ -241,27 +257,33 @@
         {% if portal_subscription_payload %}
         <div class="stack compact copy-link-card" data-copy-root data-copy-text="{{ portal_subscription_payload }}">
           <div
-            class="codeblock copy-codeblock"
+            class="codeblock copy-codeblock subscription-link-preview"
             data-copy-target
             role="button"
             tabindex="0"
             aria-label="Скопировать ссылку"
             title="Нажмите, чтобы скопировать"
-          >{{ portal_subscription_payload }}</div>
-          <div class="toolbar copy-link-toolbar">
-            <a class="button ghost compact" href="{{ connection_help_url }}">Помощь по подключению</a>
+          >
+            <span>{{ portal_subscription_payload[:28] }}{% if portal_subscription_payload|length > 44 %}…{{ portal_subscription_payload[-12:] }}{% endif %}</span>
           </div>
-          <p class="muted copy-link-hint" data-copy-hint>Нажмите на ссылку, чтобы скопировать её.</p>
+          <div class="toolbar copy-link-toolbar">
+            <button class="button compact" type="button" data-copy-button>Скопировать</button>
+            {% if portal_qr_data_uri %}
+            <button class="button ghost compact" type="button" data-qr-toggle>QR-код</button>
+            {% endif %}
+            <a class="button ghost compact" href="{{ connection_help_url }}">Открыть инструкцию</a>
+          </div>
+          <p class="muted copy-link-hint" data-copy-hint>Ссылка скрыта от лишней длины, кнопка скопирует полный адрес.</p>
+          {% if portal_qr_data_uri %}
+          <div class="qr-box copy-link-qr" data-qr-panel hidden>
+            <img src="{{ portal_qr_data_uri }}" alt="QR-код">
+          </div>
+          {% endif %}
         </div>
         {% else %}
         <p class="muted">Ссылка появится после активации теста или тарифа.</p>
         <div class="toolbar">
           <a class="button ghost compact" href="{{ connection_help_url }}">Помощь по подключению</a>
-        </div>
-        {% endif %}
-        {% if portal_qr_data_uri %}
-        <div class="qr-box">
-          <img src="{{ portal_qr_data_uri }}" alt="QR-код">
         </div>
         {% endif %}
       </article>
@@ -271,7 +293,7 @@
           <h2>Доступные серверы</h2>
           <span class="badge warning">Локальная матрица доступа</span>
         </div>
-        <table class="table portal-server-table" id="portal-server-table">
+        <table class="table responsive-table portal-server-table" id="portal-server-table">
           <thead><tr><th>Сервер</th><th>Тип</th><th>Статус</th><th>Пинг</th></tr></thead>
           <tbody>
             {% for access in portal_servers if access.server %}
@@ -340,12 +362,12 @@
         <h2>История платежей</h2>
         <a href="{{ portal_url }}" class="button ghost compact">Обновить</a>
       </div>
-      <table class="table">
+      <table class="table responsive-table portal-payments-table">
         <thead><tr><th>Сумма</th><th>Статус</th><th>Комментарий</th><th>Дата</th></tr></thead>
         <tbody>
           {% for payment in portal_payments %}
           <tr>
-            <td>{{ payment.amount_rub }} ₽</td>
+            <td>{{ payment.amount_rub|rub }} ₽</td>
             <td>{{ payment.status }}</td>
             <td>{{ payment.admin_comment or payment.user_comment or '—' }}</td>
             <td>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
@@ -471,8 +493,12 @@
       copyRoots.forEach((root) => {
         const payload = root.dataset.copyText;
         const target = root.querySelector("[data-copy-target]");
+        const button = root.querySelector("[data-copy-button]");
+        const qrToggle = root.querySelector("[data-qr-toggle]");
+        const qrPanel = root.querySelector("[data-qr-panel]");
         const hint = root.querySelector("[data-copy-hint]");
         const originalHintText = hint?.textContent || "";
+        const originalButtonText = button?.textContent || "";
         let restoreTimer = null;
 
         if (!payload || !target) {
@@ -481,6 +507,10 @@
 
         const restoreState = () => {
           target.classList.remove("is-copied");
+          if (button) {
+            button.textContent = originalButtonText;
+            button.classList.remove("is-copied");
+          }
           if (hint) {
             hint.textContent = originalHintText;
           }
@@ -492,8 +522,16 @@
           }
           if (copied) {
             target.classList.add("is-copied");
+            if (button) {
+              button.textContent = "Скопировано";
+              button.classList.add("is-copied");
+            }
           } else {
             target.classList.remove("is-copied");
+            if (button) {
+              button.textContent = originalButtonText;
+              button.classList.remove("is-copied");
+            }
           }
           if (hint) {
             hint.textContent = hintText;
@@ -513,11 +551,19 @@
         };
 
         target.addEventListener("click", handleCopy);
+        button?.addEventListener("click", handleCopy);
         target.addEventListener("keydown", (event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
             handleCopy();
           }
+        });
+        qrToggle?.addEventListener("click", () => {
+          if (!qrPanel) {
+            return;
+          }
+          qrPanel.hidden = !qrPanel.hidden;
+          qrToggle.classList.toggle("is-active", !qrPanel.hidden);
         });
       });
     })();

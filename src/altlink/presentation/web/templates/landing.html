@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+  {% include "_theme_bootstrap.html" %}
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="landing-page">
@@ -118,53 +119,53 @@
     </section>
 
     <section class="landing-section landing-latency landing-locations">
-      <div class="split landing-latency-head">
+      <div class="landing-latency-toolbar">
         <div class="landing-section-head">
           <span class="badge">Локации</span>
           <h2>Страны и проверка пинга</h2>
-          <p class="muted">Карточки показывают страны, доступные в сервисе. Пинг можно обновить прямо из браузера.</p>
+          <p class="muted">Проверьте задержку до серверов ALTLINK прямо из браузера. Чем ниже пинг, тем быстрее отклик.</p>
         </div>
-        <button class="button compact" type="button" id="latency-button">Проверить пинг</button>
-      </div>
-      <div class="landing-latency-summary" id="latency-card">
-        <div>
-          <span class="muted">Лучший пинг</span>
-          <strong id="latency-value">{{ landing_latency_best_label }}</strong>
-        </div>
-        <div class="muted" id="latency-hint">{{ landing_latency_initial_hint }}</div>
-        <div class="landing-location-grid" id="latency-list">
-          {% for item in landing_location_items %}
-          <article class="landing-latency-item{% if item.display_state == 'error' %} is-error{% endif %}">
-            <span class="landing-location-name">
-              <span class="landing-country-flag flag-{{ item.country_code|lower }}" data-code="{{ item.country_code }}" aria-label="{{ item.country_name }}"></span>
-              <span>
-                <strong>{{ item.country_name }}</strong>
-                <small>{{ item.country_code }}{% if item.server_count and item.server_count > 1 %} · серверов: {{ item.server_count }}{% endif %}</small>
-              </span>
-            </span>
-            <span class="landing-location-metric">
-              <strong>{{ item.display_label }}</strong>
-              <small>{{ item.quality_label }}</small>
-            </span>
-          </article>
-          {% else %}
-          <article class="landing-latency-item">
-            <span class="landing-location-name">
-              <span class="landing-country-flag" data-code="AL" aria-label="ALTLINK"></span>
-              <span>
-                <strong>Локации скоро появятся</strong>
-                <small>ALTLINK</small>
-              </span>
-            </span>
-            <span class="landing-location-metric">
-              <strong>—</strong>
-              <small>Скоро</small>
-            </span>
-          </article>
-          {% endfor %}
+        <div class="landing-latency-actions">
+          <div class="landing-latency-metric" id="latency-card">
+            <span class="muted">Лучший пинг</span>
+            <strong id="latency-value">{{ landing_latency_best_label }}</strong>
+          </div>
+          <button class="button compact" type="button" id="latency-button">Проверить пинг</button>
         </div>
       </div>
-      <p class="muted latency-disclaimer">{{ latency_disclaimer }}</p>
+      <div class="muted landing-latency-hint" id="latency-hint">{{ landing_latency_initial_hint }}</div>
+      <div class="landing-location-carousel" id="latency-list" aria-label="Страны ALTLINK">
+        {% for item in landing_location_items %}
+        <article class="landing-location-card{% if item.display_state == 'error' %} is-error{% endif %}">
+          <div class="landing-location-card-top">
+            <span class="landing-country-flag flag-{{ item.country_code|lower }}" data-code="{{ item.country_code }}" aria-label="{{ item.country_name }}"></span>
+            <span class="landing-location-name">
+              <strong>{{ item.country_name }}</strong>
+              <small>{{ item.country_code }}{% if item.server_count and item.server_count > 1 %} · серверов: {{ item.server_count }}{% endif %}</small>
+            </span>
+          </div>
+          <div class="landing-location-card-bottom">
+            <strong>{{ item.display_label }}</strong>
+            <small>{{ item.quality_label }}</small>
+          </div>
+        </article>
+        {% else %}
+        <article class="landing-location-card">
+          <div class="landing-location-card-top">
+            <span class="landing-country-flag" data-code="AL" aria-label="ALTLINK"></span>
+            <span class="landing-location-name">
+              <strong>Локации скоро появятся</strong>
+              <small>ALTLINK</small>
+            </span>
+          </div>
+          <div class="landing-location-card-bottom">
+            <strong>—</strong>
+            <small>Скоро</small>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      <p class="muted latency-disclaimer">Пинг зависит от вашей сети и маршрута, поэтому значения могут немного меняться.</p>
     </section>
 
     <section class="landing-section landing-tariffs">
@@ -336,18 +337,18 @@
       const renderList = (items) => {
         const locations = groupLocations(items);
         list.innerHTML = locations.map((item) => `
-          <article class="landing-latency-item${item.display_state === "error" ? " is-error" : ""}">
-            <span class="landing-location-name">
+          <article class="landing-location-card${item.display_state === "error" ? " is-error" : ""}">
+            <div class="landing-location-card-top">
               <span class="landing-country-flag flag-${escapeHtml(String(item.country_code || "").toLowerCase())}" data-code="${escapeHtml(item.country_code || "")}" aria-label="${escapeHtml(item.country_name)}"></span>
-              <span>
+              <span class="landing-location-name">
                 <strong>${escapeHtml(item.country_name)}</strong>
                 <small>${escapeHtml(item.country_code)}${item.server_count > 1 ? ` · серверов: ${item.server_count}` : ""}</small>
               </span>
-            </span>
-            <span class="landing-location-metric">
+            </div>
+            <div class="landing-location-card-bottom">
               <strong>${escapeHtml(item.display_label)}</strong>
               <small>${escapeHtml(item.quality_label || qualityLabel(item.latency_ms))}</small>
-            </span>
+            </div>
           </article>
         `).join("");
       };

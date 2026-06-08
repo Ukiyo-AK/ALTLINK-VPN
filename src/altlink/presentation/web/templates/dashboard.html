@@ -13,7 +13,7 @@
   <article class="card"><div class="muted">Без продления</div><strong>{{ overview.renewal_disabled_users }}</strong></article>
   <article class="card"><div class="muted">Заблокированные</div><strong>{{ overview.blocked_users }}</strong></article>
   <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>
-  <article class="card"><div class="muted">Платежи за 30 дней</div><strong>{{ overview.payments_total_rub }} ₽</strong></article>
+  <article class="card"><div class="muted">Платежи за 30 дней</div><strong>{{ overview.payments_total_rub|rub }} ₽</strong></article>
   <article class="card"><div class="muted">Трафик</div><strong>{{ '%.2f'|format(overview.total_traffic_bytes / 1024**3) }} ГБ</strong></article>
 </section>
 
@@ -108,7 +108,7 @@
         {% for item in overview.recent_topups %}
         <tr>
           <td>{{ item.user.username or item.user.telegram_id }}</td>
-          <td>{{ item.amount_rub }} ₽</td>
+          <td>{{ item.amount_rub|rub }} ₽</td>
           <td>{{ item.status }}</td>
           <td>{{ item.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
         </tr>

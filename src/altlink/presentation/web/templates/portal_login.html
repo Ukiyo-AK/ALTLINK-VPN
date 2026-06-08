@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,9 +8,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+  {% include "_theme_bootstrap.html" %}
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="portal-login-page">
   <div class="center-shell">
     <section class="login-card stack">
       <div class="brand">
@@ -26,34 +27,35 @@
       {% endif %}
 
       <div class="stack">
-        <h1>Вход через Telegram</h1>
+        <h1>Вход в личный кабинет</h1>
         <p class="muted">
-          Вход подтверждается прямо в клиентском Telegram-боте. На телефоне достаточно нажать кнопку ниже,
-          а на ПК можно либо открыть Telegram Desktop, либо отсканировать QR код телефоном.
+          Подтвердите вход через Telegram-бота ALTLINK. Это займёт пару секунд.
         </p>
       </div>
 
       {% if telegram_login_enabled and telegram_login_url %}
       <div class="grid-two portal-login-grid">
-        <article class="panel stack portal-login-card">
-          <span class="badge highlight">Телефон</span>
-          <h2>Откройте бота</h2>
+        <article class="panel stack portal-login-card portal-login-primary-card">
+          <span class="badge highlight">Основной способ</span>
+          <h2>Войти через Telegram</h2>
           <p class="muted">
             Нажмите кнопку, перейдите в <code>@{{ telegram_login_bot }}</code> и подтвердите вход.
           </p>
           <a class="button full" href="{{ telegram_login_url }}" id="portal-telegram-open" target="_blank" rel="noreferrer">
-            Открыть Telegram и подтвердить вход
+            Войти через Telegram
           </a>
-          <div class="muted">
-            Если Telegram уже открыт на этом устройстве, подтверждение займёт пару секунд.
-          </div>
+          <ol class="plain-list muted portal-login-steps">
+            <li>Откроется бот ALTLINK.</li>
+            <li>Нажмите подтверждение входа.</li>
+            <li>Сайт сам откроет личный кабинет.</li>
+          </ol>
         </article>
 
         <article class="panel stack portal-login-card portal-login-qr-card">
-          <span class="badge">ПК</span>
-          <h2>Сканируйте QR</h2>
+          <span class="badge">Или отсканируйте QR-код</span>
+          <h2>Для входа с ПК</h2>
           <p class="muted">
-            Откройте камеру телефона или Telegram и отсканируйте код. Он ведёт в того же бота с одноразовой попыткой входа.
+            Откройте камеру телефона или Telegram и отсканируйте код. Он ведёт в того же бота с одноразовой попыткой.
           </p>
           {% if telegram_login_qr_data_url %}
           <img
@@ -68,7 +70,7 @@
         </article>
       </div>
 
-      <div class="panel stack">
+      <div class="panel stack portal-login-status-card">
         <span class="badge warning">Статус входа</span>
         <strong id="portal-login-status">Ожидаем подтверждение в Telegram…</strong>
         <div class="muted" id="portal-login-hint">

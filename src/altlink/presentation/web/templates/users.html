@@ -20,7 +20,7 @@
       <tr>
         <td><a href="/admin/users/{{ user.id }}">{{ user.username or user.telegram_id }}</a></td>
         <td>{{ user.status }}</td>
-        <td>{{ user.balance_rub }} ₽</td>
+        <td>{{ user.balance_rub|rub }} ₽</td>
         <td>{{ user.assigned_server.name if user.assigned_server else '—' }}</td>
         <td>{{ user.last_seen_at.strftime('%d.%m.%Y %H:%M') if user.last_seen_at else '—' }}</td>
       </tr>

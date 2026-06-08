@@ -18,7 +18,7 @@
       {% for item in topups %}
       <tr>
         <td>{{ item.user.username or item.user.telegram_id }}</td>
-        <td>{{ item.amount_rub }} ₽</td>
+        <td>{{ item.amount_rub|rub }} ₽</td>
         <td>{{ item.status }}</td>
         <td>{{ item.admin_comment or item.user_comment or '—' }}</td>
         <td>{{ item.created_at.strftime('%d.%m.%Y %H:%M') }}</td>

@@ -1,0 +1,81 @@
+<script>
+  (() => {
+    const storageKey = "altlink-theme";
+    const modes = new Set(["light", "dark", "system"]);
+    const systemQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+
+    const readPreference = () => {
+      try {
+        const saved = window.localStorage.getItem(storageKey);
+        return modes.has(saved) ? saved : "light";
+      } catch (error) {
+        return "light";
+      }
+    };
+
+    const resolvedTheme = (preference) => {
+      if (preference === "dark") {
+        return "dark";
+      }
+      if (preference === "system" && systemQuery?.matches) {
+        return "dark";
+      }
+      return "light";
+    };
+
+    const applyTheme = (preference) => {
+      const safePreference = modes.has(preference) ? preference : "light";
+      const theme = resolvedTheme(safePreference);
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.dataset.themePreference = safePreference;
+      return { preference: safePreference, theme };
+    };
+
+    const savePreference = (preference) => {
+      const safePreference = modes.has(preference) ? preference : "light";
+      try {
+        window.localStorage.setItem(storageKey, safePreference);
+      } catch (error) {
+        // Тема останется активной на текущей странице, даже если storage недоступен.
+      }
+      const state = applyTheme(safePreference);
+      window.dispatchEvent(new CustomEvent("altlink-theme-change", { detail: state }));
+      return state;
+    };
+
+    const syncControls = () => {
+      const preference = readPreference();
+      document.querySelectorAll("[data-theme-choice]").forEach((control) => {
+        const isActive = control.dataset.themeChoice === preference;
+        control.classList.toggle("is-active", isActive);
+        control.setAttribute("aria-pressed", String(isActive));
+      });
+    };
+
+    window.altlinkTheme = {
+      getPreference: readPreference,
+      setPreference: savePreference,
+      apply: applyTheme,
+    };
+
+    applyTheme(readPreference());
+
+    systemQuery?.addEventListener?.("change", () => {
+      if (readPreference() === "system") {
+        const state = applyTheme("system");
+        window.dispatchEvent(new CustomEvent("altlink-theme-change", { detail: state }));
+      }
+      syncControls();
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      syncControls();
+      document.querySelectorAll("[data-theme-choice]").forEach((control) => {
+        control.addEventListener("click", () => {
+          savePreference(control.dataset.themeChoice);
+          syncControls();
+        });
+      });
+    });
+  })();
+</script>

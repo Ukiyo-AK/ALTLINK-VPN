@@ -50,8 +50,10 @@ def test_portal_dashboard_template_supports_one_tap_copy_for_subscription_link()
 
     assert "data-copy-root" in content
     assert "data-copy-target" in content
-    assert "data-copy-button" not in content
-    assert ">Скопировать ссылку<" not in content
+    assert "data-copy-button" in content
+    assert ">Скопировать<" in content
+    assert "data-qr-toggle" in content
+    assert "subscription-link-preview" in content
 
 
 def test_public_templates_keep_personal_account_action_only_where_needed():
@@ -107,6 +109,14 @@ def test_portal_dashboard_has_mobile_section_navigation():
 
     assert 'class="portal-section-nav"' in portal
     assert "data-portal-page-nav" in portal
+    assert "Меню кабинета" not in portal
+    assert "theme-switcher" in portal
+    assert 'data-theme-choice="light"' in portal
+    assert 'data-theme-choice="dark"' in portal
+    assert 'data-theme-choice="system"' in portal
+    assert "responsive-table portal-device-table" in portal
+    assert "responsive-table portal-server-table" in portal
+    assert "responsive-table portal-payments-table" in portal
     for page, section_id in (
         ("overview", "portal-overview"),
         ("devices", "portal-devices"),
@@ -141,7 +151,9 @@ def test_landing_template_keeps_homepage_copy_compact():
     assert "Что получает пользователь" not in landing
     assert "landing-feature-card" in landing
     assert "landing-step-card" in landing
-    assert "landing-location-grid" in landing
+    assert "landing-location-carousel" in landing
+    assert "landing-location-card" in landing
+    assert "landing-location-card-bottom" in landing
     assert "landing-latency-list" not in landing
     assert "landing-plan-card{% if group.family == 'unlimited' %} is-featured{% endif %}" in landing
     assert "landing-plan-devices" in landing
@@ -166,6 +178,22 @@ def test_landing_template_keeps_homepage_copy_compact():
     assert "Быстрое соединение" in landing
     assert "Стабильное соединение" in landing
     assert "Временно высокая задержка" in landing
+
+
+def test_theme_bootstrap_defaults_to_light_and_uses_data_theme():
+    partial = (TEMPLATE_ROOT / "_theme_bootstrap.html").read_text(encoding="utf-8")
+    style = Path("src/altlink/presentation/web/static/style.css").read_text(encoding="utf-8")
+
+    for template_name in ASSET_TEMPLATES:
+        content = (TEMPLATE_ROOT / template_name).read_text(encoding="utf-8")
+        assert 'data-theme="light"' in content
+        assert '{% include "_theme_bootstrap.html" %}' in content
+
+    assert "altlink-theme" in partial
+    assert 'return modes.has(saved) ? saved : "light";' in partial
+    assert 'document.documentElement.dataset.theme = theme;' in partial
+    assert "prefers-color-scheme" in partial
+    assert "@media (prefers-color-scheme: dark)" not in style
 
 
 def test_admin_dashboard_has_mobile_section_navigation():

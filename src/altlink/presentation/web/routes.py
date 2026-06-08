@@ -172,6 +172,20 @@ def format_rub_amount(value) -> str:
     return f"{amount.normalize():f}".rstrip("0").rstrip(".")
 
 
+def user_status_label(value) -> str:
+    status = getattr(value, "value", value)
+    return {
+        "new": "Новый",
+        "active": "Активен",
+        "blocked": "Заблокирован",
+        "deleted": "Удалён",
+    }.get(str(status), str(status))
+
+
+templates.env.filters["rub"] = format_rub_amount
+templates.env.filters["user_status"] = user_status_label
+
+
 def latency_quality_label(latency_ms) -> str:
     if not isinstance(latency_ms, int | float):
         return "Проверьте пинг"

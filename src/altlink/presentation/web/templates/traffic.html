@@ -10,7 +10,7 @@
         <td>{{ subscription.plan.name if subscription.plan else '—' }}</td>
         <td>{{ '%.2f'|format(subscription.traffic_used_bytes / 1024**3) }} ГБ</td>
         <td>{{ '%.2f'|format(subscription.whitelist_traffic_used_bytes / 1024**3) }} ГБ</td>
-        <td>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes / 1024**3) * whitelist_price_per_gb) }} ₽</td>
+        <td>{{ ((subscription.whitelist_traffic_used_bytes / 1024**3) * whitelist_price_per_gb)|rub }} ₽</td>
       </tr>
       {% else %}
       <tr><td colspan="5" class="muted">Данных по трафику пока нет.</td></tr>

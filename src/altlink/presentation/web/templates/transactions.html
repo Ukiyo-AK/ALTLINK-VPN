@@ -8,7 +8,7 @@
       <tr>
         <td>{{ tx.user.username or tx.user.telegram_id }}</td>
         <td>{{ tx.type }}</td>
-        <td>{{ tx.amount_rub }} ₽</td>
+        <td>{{ tx.amount_rub|rub }} ₽</td>
         <td>{{ tx.description or '—' }}</td>
         <td>{{ tx.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
       </tr>

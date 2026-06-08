@@ -5,10 +5,10 @@
   <article class="panel plan-card">
     <div class="badge {{ 'highlight' if plan.is_trial else '' }}">{{ 'Тест' if plan.is_trial else 'Платный тариф' }}</div>
     <h2>{{ plan.name }}</h2>
-    <div class="plan-price">{{ plan.price_rub }} ₽</div>
+    <div class="plan-price">{{ plan.price_rub|rub }} ₽</div>
     <div class="muted">Период: {{ plan.period_days }} дней</div>
     {% if not plan.is_trial %}
-    <div class="muted">Суточное списание: {{ '%.2f'|format(plan.price_rub / plan.period_days) }} ₽</div>
+    <div class="muted">Суточное списание: {{ (plan.price_rub / plan.period_days)|rub }} ₽</div>
     {% endif %}
     <p>{{ plan.description or '—' }}</p>
   </article>

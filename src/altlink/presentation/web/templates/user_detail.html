@@ -9,14 +9,14 @@
       <div><dt>Telegram ID</dt><dd>{{ user.telegram_id }}</dd></div>
       <div><dt>Username</dt><dd>{{ user.username or '—' }}</dd></div>
       <div><dt>Статус</dt><dd>{{ user.status }}</dd></div>
-      <div><dt>Баланс</dt><dd>{{ user.balance_rub }} ₽</dd></div>
+      <div><dt>Баланс</dt><dd>{{ user.balance_rub|rub }} ₽</dd></div>
       <div><dt>Назначенный 10 Гбит сервер</dt><dd>{{ user.assigned_server.name if user.assigned_server else '—' }}</dd></div>
       <div><dt>Тариф</dt><dd>{{ subscription.plan.name if subscription else '—' }}</dd></div>
       <div><dt>Следующее списание</dt><dd>{{ subscription.next_billing_at if subscription else '—' }}</dd></div>
       <div><dt>Автопродление</dt><dd>{{ 'включено' if subscription and subscription.auto_renew else 'отключено' }}</dd></div>
       <div><dt>Лимит устройств</dt><dd>{{ subscription.plan.device_limit if subscription and subscription.plan else '—' }}</dd></div>
       <div><dt>Whitelist трафик</dt><dd>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes if subscription else 0) / 1024**3) }} ГБ</dd></div>
-      <div><dt>Начисление за whitelist</dt><dd>{{ whitelist_cost_rub }} ₽</dd></div>
+      <div><dt>Начисление за whitelist</dt><dd>{{ whitelist_cost_rub|rub }} ₽</dd></div>
     </dl>
   </article>
 
@@ -52,7 +52,7 @@
         <span>Применить тариф</span>
         <select name="plan_code">
           {% for plan in plans if not plan.is_trial %}
-          <option value="{{ plan.code.value }}">{{ plan.name }} • {{ plan.price_rub }} ₽</option>
+          <option value="{{ plan.code.value }}">{{ plan.name }} • {{ plan.price_rub|rub }} ₽</option>
           {% endfor %}
         </select>
       </label>
@@ -118,7 +118,7 @@
       <tbody>
         {% for topup in card.topups %}
         <tr>
-          <td>{{ topup.amount_rub }} ₽</td>
+          <td>{{ topup.amount_rub|rub }} ₽</td>
           <td>{{ topup.status }}</td>
           <td>{{ topup.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
         </tr>
@@ -138,7 +138,7 @@
       {% for tx in card.transactions %}
       <tr>
         <td>{{ tx.type }}</td>
-        <td>{{ tx.amount_rub }} ₽</td>
+        <td>{{ tx.amount_rub|rub }} ₽</td>
         <td>{{ tx.description or '—' }}</td>
         <td>{{ tx.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
       </tr>
