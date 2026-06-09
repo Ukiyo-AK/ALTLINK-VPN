@@ -9,53 +9,57 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
   {% include "_theme_bootstrap.html" %}
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
 <body class="portal-login-page">
   <div class="center-shell">
-    <section class="login-card stack">
-      <div class="brand">
-        <img class="brand-logo" src="/media/logo.png" alt="ALTLINK">
-        <div>
-          <strong>ALTLINK</strong>
-          <div class="muted">Пользовательский кабинет</div>
-        </div>
-      </div>
+    <section class="login-card portal-login-shell">
+      <div class="portal-login-layout">
+        <div class="portal-login-main stack">
+          <div class="brand">
+            <img class="brand-logo" src="/media/logo.png" alt="ALTLINK">
+            <div>
+              <strong>ALTLINK</strong>
+              <div class="muted">Пользовательский кабинет</div>
+            </div>
+          </div>
 
-      {% if flash %}
-      <div class="alert {{ flash.level }}">{{ flash.message }}</div>
-      {% endif %}
+          {% if flash %}
+          <div class="alert {{ flash.level }}">{{ flash.message }}</div>
+          {% endif %}
 
-      <div class="stack">
-        <h1>Вход в личный кабинет</h1>
-        <p class="muted">
-          Подтвердите вход через Telegram-бота ALTLINK. Это займёт пару секунд.
-        </p>
-      </div>
+          <span class="badge highlight">Telegram-вход</span>
+          <div class="stack compact">
+            <h1>Вход в личный кабинет</h1>
+            <p class="muted">
+              Подтвердите вход через Telegram-бота ALTLINK. Это займёт несколько секунд.
+            </p>
+          </div>
 
-      {% if telegram_login_enabled and telegram_login_url %}
-      <div class="grid-two portal-login-grid">
-        <article class="panel stack portal-login-card portal-login-primary-card">
-          <span class="badge highlight">Основной способ</span>
-          <h2>Войти через Telegram</h2>
-          <p class="muted">
-            Нажмите кнопку, перейдите в <code>@{{ telegram_login_bot }}</code> и подтвердите вход.
-          </p>
-          <a class="button full" href="{{ telegram_login_url }}" id="portal-telegram-open" target="_blank" rel="noreferrer">
+          {% if telegram_login_enabled and telegram_login_url %}
+          <a class="button full portal-login-cta" href="{{ telegram_login_url }}" id="portal-telegram-open" target="_blank" rel="noreferrer">
             Войти через Telegram
           </a>
-          <ol class="plain-list muted portal-login-steps">
-            <li>Откроется бот ALTLINK.</li>
-            <li>Нажмите подтверждение входа.</li>
-            <li>Сайт сам откроет личный кабинет.</li>
-          </ol>
-        </article>
+          <div class="panel stack portal-login-status-card">
+            <strong id="portal-login-status">Ожидаем подтверждение в Telegram…</strong>
+            <div class="muted" id="portal-login-hint">
+              После подтверждения сайт сам откроет личный кабинет.
+            </div>
+            <a class="button ghost compact" href="/portal/login" id="portal-login-reload" style="display: none;">Создать новую попытку</a>
+          </div>
+          {% else %}
+          <div class="alert warning">
+            {{ telegram_login_issue }}
+          </div>
+          {% endif %}
+        </div>
 
-        <article class="panel stack portal-login-card portal-login-qr-card">
+        {% if telegram_login_enabled and telegram_login_url %}
+        <aside class="portal-login-qr-card">
           <span class="badge">Или отсканируйте QR-код</span>
-          <h2>Для входа с ПК</h2>
+          <h2>Вход с ПК</h2>
           <p class="muted">
-            Откройте камеру телефона или Telegram и отсканируйте код. Он ведёт в того же бота с одноразовой попыткой.
+            Откройте Telegram на телефоне, отсканируйте QR-код и подтвердите вход в боте.
           </p>
           {% if telegram_login_qr_data_url %}
           <img
@@ -67,22 +71,14 @@
           <a class="button ghost full" href="{{ telegram_login_url }}" target="_blank" rel="noreferrer">
             Открыть Telegram Desktop
           </a>
-        </article>
+          <ol class="plain-list muted portal-login-steps">
+            <li>Откройте Telegram на телефоне.</li>
+            <li>Отсканируйте QR-код.</li>
+            <li>Подтвердите вход в боте.</li>
+          </ol>
+        </aside>
+        {% endif %}
       </div>
-
-      <div class="panel stack portal-login-status-card">
-        <span class="badge warning">Статус входа</span>
-        <strong id="portal-login-status">Ожидаем подтверждение в Telegram…</strong>
-        <div class="muted" id="portal-login-hint">
-          После подтверждения сайт сам завершит вход и откроет личный кабинет.
-        </div>
-        <a class="button ghost compact" href="/portal/login" id="portal-login-reload" style="display: none;">Создать новую попытку входа</a>
-      </div>
-      {% else %}
-      <div class="alert warning">
-        {{ telegram_login_issue }}
-      </div>
-      {% endif %}
 
       {% if dev_login_enabled %}
       <form method="post" action="/portal/dev-login" class="panel stack">
@@ -100,7 +96,7 @@
       </form>
       {% endif %}
 
-      <div class="muted">
+      <div class="muted portal-login-footnote">
         После входа вы сможете запустить тестовый период, пополнить баланс, выбрать тариф
         и получить конфиги прямо в браузере.
       </div>

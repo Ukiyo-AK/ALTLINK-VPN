@@ -51,6 +51,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
+ASSET_VERSION = "20260609-portal-polish"
 COUNTRY_NAMES_RU = {
     "AM": "Армения",
     "AT": "Австрия",
@@ -182,8 +183,34 @@ def user_status_label(value) -> str:
     }.get(str(status), str(status))
 
 
+def payment_status_label(value) -> str:
+    status = getattr(value, "value", value)
+    return {
+        "succeeded": "Оплачен",
+        "paid": "Оплачен",
+        "pending": "Ожидает оплаты",
+        "waiting_for_capture": "Ожидает подтверждения",
+        "canceled": "Отменён",
+        "cancelled": "Отменён",
+        "rejected": "Отклонён",
+        "expired": "Истёк",
+    }.get(str(status), "Неизвестный статус")
+
+
+def access_status_label(value) -> str:
+    status = getattr(value, "value", value)
+    return {
+        "active": "Активен",
+        "inactive": "Неактивен",
+        "disabled": "Отключён",
+        "maintenance": "Обслуживание",
+    }.get(str(status), "Статус неизвестен")
+
+
 templates.env.filters["rub"] = format_rub_amount
 templates.env.filters["user_status"] = user_status_label
+templates.env.filters["payment_status"] = payment_status_label
+templates.env.filters["access_status"] = access_status_label
 
 
 def latency_quality_label(latency_ms) -> str:
@@ -279,15 +306,20 @@ def pop_flash(request: Request) -> dict | None:
 
 
 def render(request: Request, template_name: str, **context):
-    return templates.TemplateResponse(
+    response = templates.TemplateResponse(
         request=request,
         name=template_name,
         context={
+            "asset_version": ASSET_VERSION,
             "csrf_token": get_csrf_token(request),
             "flash": pop_flash(request),
             **context,
         },
     )
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 def login_redirect() -> RedirectResponse:

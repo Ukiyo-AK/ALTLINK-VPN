@@ -41,6 +41,19 @@ class SimpleRateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class CacheControlMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        elif response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -57,6 +70,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key, same_site="lax")
     app.add_middleware(SimpleRateLimitMiddleware)
+    app.add_middleware(CacheControlMiddleware)
 
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static_dir), name="static")

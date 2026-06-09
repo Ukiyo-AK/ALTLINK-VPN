@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
   {% include "_theme_bootstrap.html" %}
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
 <body class="landing-page">
   <div class="landing-shell">
@@ -134,36 +134,40 @@
         </div>
       </div>
       <div class="muted landing-latency-hint" id="latency-hint">{{ landing_latency_initial_hint }}</div>
-      <div class="landing-location-carousel" id="latency-list" aria-label="Страны ALTLINK">
-        {% for item in landing_location_items %}
-        <article class="landing-location-card{% if item.display_state == 'error' %} is-error{% endif %}">
-          <div class="landing-location-card-top">
-            <span class="landing-country-flag flag-{{ item.country_code|lower }}" data-code="{{ item.country_code }}" aria-label="{{ item.country_name }}"></span>
-            <span class="landing-location-name">
-              <strong>{{ item.country_name }}</strong>
-              <small>{{ item.country_code }}{% if item.server_count and item.server_count > 1 %} · серверов: {{ item.server_count }}{% endif %}</small>
-            </span>
-          </div>
-          <div class="landing-location-card-bottom">
-            <strong>{{ item.display_label }}</strong>
-            <small>{{ item.quality_label }}</small>
-          </div>
-        </article>
-        {% else %}
-        <article class="landing-location-card">
-          <div class="landing-location-card-top">
-            <span class="landing-country-flag" data-code="AL" aria-label="ALTLINK"></span>
-            <span class="landing-location-name">
-              <strong>Локации скоро появятся</strong>
-              <small>ALTLINK</small>
-            </span>
-          </div>
-          <div class="landing-location-card-bottom">
-            <strong>—</strong>
-            <small>Скоро</small>
-          </div>
-        </article>
-        {% endfor %}
+      <div class="landing-location-carousel-shell" data-carousel-shell>
+        <button class="landing-carousel-button is-prev" type="button" data-scroll-prev aria-label="Прокрутить локации влево">‹</button>
+        <div class="landing-location-carousel" id="latency-list" aria-label="Страны ALTLINK" data-horizontal-scroll tabindex="0">
+          {% for item in landing_location_items %}
+          <article class="landing-location-card{% if item.display_state == 'error' %} is-error{% endif %}">
+            <div class="landing-location-card-top">
+              <span class="landing-country-flag flag-{{ item.country_code|lower }}" data-code="{{ item.country_code }}" aria-label="{{ item.country_name }}"></span>
+              <span class="landing-location-name">
+                <strong>{{ item.country_name }}</strong>
+                <small>{{ item.country_code }}{% if item.server_count and item.server_count > 1 %} · серверов: {{ item.server_count }}{% endif %}</small>
+              </span>
+            </div>
+            <div class="landing-location-card-bottom">
+              <strong>{{ item.display_label }}</strong>
+              <small>{{ item.quality_label }}</small>
+            </div>
+          </article>
+          {% else %}
+          <article class="landing-location-card">
+            <div class="landing-location-card-top">
+              <span class="landing-country-flag" data-code="AL" aria-label="ALTLINK"></span>
+              <span class="landing-location-name">
+                <strong>Локации скоро появятся</strong>
+                <small>ALTLINK</small>
+              </span>
+            </div>
+            <div class="landing-location-card-bottom">
+              <strong>—</strong>
+              <small>Скоро</small>
+            </div>
+          </article>
+          {% endfor %}
+        </div>
+        <button class="landing-carousel-button is-next" type="button" data-scroll-next aria-label="Прокрутить локации вправо">›</button>
       </div>
       <p class="muted latency-disclaimer">Пинг зависит от вашей сети и маршрута, поэтому значения могут немного меняться.</p>
     </section>
@@ -254,6 +258,9 @@
       const hint = document.getElementById("latency-hint");
       const card = document.getElementById("latency-card");
       const list = document.getElementById("latency-list");
+      const carouselShell = document.querySelector("[data-carousel-shell]");
+      const prevButton = document.querySelector("[data-scroll-prev]");
+      const nextButton = document.querySelector("[data-scroll-next]");
       const endpoint = {{ latency_api_url | tojson }};
       const disclaimer = {{ latency_disclaimer | tojson }};
       const fallbackProbes = {{ landing_latency_items | tojson }};
@@ -360,6 +367,71 @@
         return values.length ? `${Math.min(...values)} мс` : "н/д";
       };
 
+      const scrollAmount = () => {
+        const cardNode = list.querySelector(".landing-location-card");
+        return cardNode ? Math.round(cardNode.getBoundingClientRect().width * 1.35) : 320;
+      };
+
+      const updateCarouselState = () => {
+        if (!carouselShell) {
+          return;
+        }
+        const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
+        const atStart = list.scrollLeft <= 2;
+        const atEnd = list.scrollLeft >= maxScroll - 2;
+        carouselShell.classList.toggle("is-at-start", atStart);
+        carouselShell.classList.toggle("is-at-end", atEnd);
+        if (prevButton) {
+          prevButton.disabled = atStart;
+        }
+        if (nextButton) {
+          nextButton.disabled = atEnd;
+        }
+      };
+
+      const scrollCarousel = (direction) => {
+        list.scrollBy({ left: direction * scrollAmount(), behavior: "smooth" });
+      };
+
+      prevButton?.addEventListener("click", () => scrollCarousel(-1));
+      nextButton?.addEventListener("click", () => scrollCarousel(1));
+      list.addEventListener("scroll", updateCarouselState, { passive: true });
+      window.addEventListener("resize", updateCarouselState);
+      list.addEventListener("wheel", (event) => {
+        if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+          return;
+        }
+        event.preventDefault();
+        list.scrollLeft += event.deltaY;
+      }, { passive: false });
+
+      let isDragging = false;
+      let dragStartX = 0;
+      let dragStartScroll = 0;
+      list.addEventListener("pointerdown", (event) => {
+        if (event.pointerType === "touch") {
+          return;
+        }
+        isDragging = true;
+        dragStartX = event.clientX;
+        dragStartScroll = list.scrollLeft;
+        list.classList.add("is-dragging");
+        list.setPointerCapture?.(event.pointerId);
+      });
+      list.addEventListener("pointermove", (event) => {
+        if (!isDragging) {
+          return;
+        }
+        event.preventDefault();
+        list.scrollLeft = dragStartScroll - (event.clientX - dragStartX);
+      });
+      const stopDragging = () => {
+        isDragging = false;
+        list.classList.remove("is-dragging");
+      };
+      list.addEventListener("pointerup", stopDragging);
+      list.addEventListener("pointercancel", stopDragging);
+
       const restoreMonitoringState = (message) => {
         if (!fallbackProbes.length) {
           return false;
@@ -371,6 +443,7 @@
             : "Проверьте задержку до серверов ALTLINK прямо из браузера. Чем ниже пинг, тем быстрее отклик."
         );
         renderList(fallbackProbes);
+        updateCarouselState();
         card.classList.remove("is-error");
         return true;
       };
@@ -498,6 +571,7 @@
               ? "Пинг обновлён для доступных локаций. Чем ниже значение, тем быстрее отклик."
               : `Пинг измерен из вашего браузера для ${groupLocations(mergedItems).length} локаций.`;
           renderList(mergedItems);
+          updateCarouselState();
         } catch (error) {
           if (!restoreMonitoringState(`Не удалось обновить пинг прямо сейчас. Показываем доступные значения. ${disclaimer}`)) {
             value.textContent = "—";
@@ -511,6 +585,7 @@
       });
 
       restoreMonitoringState();
+      updateCarouselState();
     })();
   </script>
 </body>

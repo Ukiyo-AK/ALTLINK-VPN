@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
   {% include "_theme_bootstrap.html" %}
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
 <body>
   <div class="portal-shell">
@@ -305,7 +305,7 @@
                 {% if access.server.server_type.value == 'whitelist' %}Белые списки{% endif %}
                 {% if access.server.server_type.value == 'regular' %}Обычный сервер{% endif %}
               </td>
-              <td>{{ access.status }}</td>
+              <td>{{ access.status|access_status }}</td>
               <td>
                 <span
                   class="server-latency-chip {% if latency %}{% if latency.reachable and latency.latency_ms is not none %}server-latency-chip-ready{% elif latency.reachable %}server-latency-chip-muted{% else %}server-latency-chip-error{% endif %}{% else %}server-latency-chip-pending{% endif %}"
@@ -363,17 +363,16 @@
         <a href="{{ portal_url }}" class="button ghost compact">Обновить</a>
       </div>
       <table class="table responsive-table portal-payments-table">
-        <thead><tr><th>Сумма</th><th>Статус</th><th>Комментарий</th><th>Дата</th></tr></thead>
+        <thead><tr><th>Сумма</th><th>Статус</th><th>Дата</th></tr></thead>
         <tbody>
           {% for payment in portal_payments %}
           <tr>
             <td>{{ payment.amount_rub|rub }} ₽</td>
-            <td>{{ payment.status }}</td>
-            <td>{{ payment.admin_comment or payment.user_comment or '—' }}</td>
+            <td>{{ payment.status|payment_status }}</td>
             <td>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="4" class="muted">Платежей пока нет.</td></tr>
+          <tr><td colspan="3" class="muted">Платежей пока нет.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -395,6 +394,14 @@
 
       const defaultPage = "overview";
       const knownPages = new Set(links.map((link) => link.dataset.portalPageLink));
+      const scrollActiveTabIntoView = () => {
+        const activeTab = links.find((link) => link.classList.contains("is-active"));
+        activeTab?.scrollIntoView({
+          behavior: "smooth",
+          inline: "center",
+          block: "nearest",
+        });
+      };
 
       const pageFromHash = () => {
         const currentHash = window.location.hash;
@@ -433,6 +440,7 @@
         links.forEach((link) => {
           link.classList.toggle("is-active", link.dataset.portalPageLink === activePage);
         });
+        scrollActiveTabIntoView();
 
         if (options.updateHash) {
           const target = links.find((link) => link.dataset.portalPageLink === activePage);

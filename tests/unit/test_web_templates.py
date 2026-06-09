@@ -25,7 +25,7 @@ def test_web_templates_use_relative_asset_paths(template_name: str):
     assert "{{ url_for('static', path='style.css') }}" not in content
     assert "{{ url_for('media', path='logo.png') }}" not in content
     assert 'rel="icon"' in content
-    assert 'href="/static/style.css"' in content
+    assert 'href="/static/style.css?v={{ asset_version }}"' in content
     assert 'src="/media/logo.png"' in content
 
 
@@ -41,14 +41,18 @@ def test_portal_login_template_uses_bot_confirm_flow_instead_of_widget():
     content = (TEMPLATE_ROOT / "portal_login.html").read_text(encoding="utf-8")
 
     assert "telegram-widget.js" not in content
+    assert "portal-login-layout" in content
+    assert "portal-login-main" in content
     assert "portal-login-status" in content
     assert "portal-login-qr-image" in content
+    assert "portal-login-reload" in content
 
 
 def test_portal_dashboard_template_supports_one_tap_copy_for_subscription_link():
     content = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
 
     assert "data-copy-root" in content
+    assert "data-copy-text" in content
     assert "data-copy-target" in content
     assert "data-copy-button" in content
     assert ">Скопировать<" in content
@@ -117,6 +121,12 @@ def test_portal_dashboard_has_mobile_section_navigation():
     assert "responsive-table portal-device-table" in portal
     assert "responsive-table portal-server-table" in portal
     assert "responsive-table portal-payments-table" in portal
+    assert "scrollActiveTabIntoView" in portal
+    assert "scrollIntoView" in portal
+    assert "access_status" in portal
+    assert "payment_status" in portal
+    assert "admin_comment" not in portal
+    assert "user_comment" not in portal
     for page, section_id in (
         ("overview", "portal-overview"),
         ("devices", "portal-devices"),
@@ -152,6 +162,12 @@ def test_landing_template_keeps_homepage_copy_compact():
     assert "landing-feature-card" in landing
     assert "landing-step-card" in landing
     assert "landing-location-carousel" in landing
+    assert "landing-location-carousel-shell" in landing
+    assert "data-horizontal-scroll" in landing
+    assert "data-scroll-prev" in landing
+    assert "data-scroll-next" in landing
+    assert "scrollBy" in landing
+    assert 'addEventListener("wheel"' in landing
     assert "landing-location-card" in landing
     assert "landing-location-card-bottom" in landing
     assert "landing-latency-list" not in landing

@@ -116,6 +116,48 @@ def test_latency_quality_label_uses_positive_landing_scale():
     assert web_routes.latency_quality_label(301) == "Временно высокая задержка"
 
 
+def test_portal_user_facing_status_labels_are_translated():
+    assert web_routes.payment_status_label("succeeded") == "Оплачен"
+    assert web_routes.payment_status_label("paid") == "Оплачен"
+    assert web_routes.payment_status_label("pending") == "Ожидает оплаты"
+    assert web_routes.payment_status_label("waiting_for_capture") == "Ожидает подтверждения"
+    assert web_routes.payment_status_label("canceled") == "Отменён"
+    assert web_routes.payment_status_label("cancelled") == "Отменён"
+    assert web_routes.payment_status_label("rejected") == "Отклонён"
+    assert web_routes.payment_status_label("expired") == "Истёк"
+    assert web_routes.payment_status_label("unknown") == "Неизвестный статус"
+    assert web_routes.access_status_label("active") == "Активен"
+    assert web_routes.access_status_label("inactive") == "Неактивен"
+    assert web_routes.access_status_label("disabled") == "Отключён"
+    assert web_routes.access_status_label("maintenance") == "Обслуживание"
+    assert web_routes.access_status_label("unknown") == "Статус неизвестен"
+
+
+def test_render_injects_asset_version_and_disables_html_cache(monkeypatch):
+    captured: dict[str, object] = {}
+    response = SimpleNamespace(headers={})
+
+    class DummyTemplates:
+        def TemplateResponse(self, *, request, name: str, context: dict):
+            captured["request"] = request
+            captured["template_name"] = name
+            captured["context"] = context
+            return response
+
+    request = SimpleNamespace(session={})
+    monkeypatch.setattr(web_routes, "templates", DummyTemplates())
+
+    result = web_routes.render(request, "landing.html", title="ALTLINK")
+
+    assert result is response
+    assert captured["template_name"] == "landing.html"
+    assert captured["context"]["asset_version"] == web_routes.ASSET_VERSION
+    assert captured["context"]["title"] == "ALTLINK"
+    assert response.headers["Cache-Control"] == "no-cache, no-store, must-revalidate"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"
+
+
 def test_resolve_document_path_falls_back_to_matching_markdown_name(monkeypatch, tmp_path: Path):
     docs = tmp_path / "document"
     docs.mkdir()
