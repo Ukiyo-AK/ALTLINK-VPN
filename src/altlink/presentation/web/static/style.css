@@ -4279,3 +4279,235 @@ html[data-theme="dark"] .portal-section-nav a {
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 980px) {
+  .portal-app-page .portal-brand-logo-desktop {
+    display: block;
+  }
+
+  .portal-app-page .portal-brand-logo-mobile {
+    display: none;
+  }
+
+  .portal-app-page .portal-mobile-home {
+    gap: 0.82rem;
+  }
+
+  .portal-mobile-balance-card {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    padding: 1rem 0.9rem 0.95rem;
+    text-align: center;
+    border: 1px solid rgba(7, 148, 127, 0.15);
+    border-radius: 1.35rem;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.72), rgba(232, 249, 243, 0.56));
+    box-shadow: 0 16px 36px rgba(5, 89, 72, 0.08);
+  }
+
+  [data-theme="dark"] .portal-mobile-balance-card {
+    background: linear-gradient(145deg, rgba(17, 38, 34, 0.84), rgba(8, 28, 25, 0.7));
+    border-color: rgba(116, 245, 211, 0.17);
+  }
+
+  .portal-mobile-balance-card::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    right: -2rem;
+    top: -2.4rem;
+    width: min(56vw, 15rem);
+    aspect-ratio: 1;
+    background: url("/media/altlink%20icon.svg") center / contain no-repeat;
+    opacity: 0.1;
+    transform: rotate(-8deg);
+    pointer-events: none;
+  }
+
+  [data-theme="dark"] .portal-mobile-balance-card::before {
+    opacity: 0.13;
+    filter: saturate(1.15) brightness(1.22);
+  }
+
+  .portal-mobile-balance-card > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .portal-mobile-balance {
+    text-align: center;
+  }
+
+  .portal-mobile-plan-summary {
+    display: inline-grid;
+    gap: 0.18rem;
+    margin-top: 0.72rem;
+    padding: 0.62rem 0.9rem;
+    border: 1px solid rgba(7, 148, 127, 0.16);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.58);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  }
+
+  [data-theme="dark"] .portal-mobile-plan-summary {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(116, 245, 211, 0.16);
+  }
+
+  .portal-mobile-plan-line {
+    margin-top: 0;
+    text-align: center;
+  }
+
+  .portal-mobile-device-line {
+    text-align: center;
+  }
+
+  .portal-mobile-referral-card {
+    gap: 0.62rem;
+    padding: 0.82rem;
+    border-radius: 1.05rem;
+  }
+
+  .portal-mobile-referral-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.72rem;
+  }
+
+  .portal-mobile-referral-icon {
+    width: 2.45rem;
+    min-width: 2.45rem;
+    height: 2.45rem;
+    display: grid;
+    place-items: center;
+    border-radius: 0.9rem;
+    background: linear-gradient(135deg, rgba(7, 148, 127, 0.18), rgba(53, 184, 159, 0.12));
+    color: var(--accent-strong);
+  }
+
+  .portal-mobile-referral-icon svg {
+    width: 1.34rem;
+    height: 1.34rem;
+  }
+
+  .portal-mobile-referral-link {
+    padding: 0.6rem 0.72rem;
+  }
+
+  .portal-mobile-referral-stats span {
+    padding: 0.54rem 0.62rem;
+    border: 1px solid rgba(7, 148, 127, 0.12);
+    background: rgba(7, 148, 127, 0.06);
+  }
+
+  .portal-mobile-settings-card h2 {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.48rem;
+  }
+
+  .portal-mobile-settings-row {
+    justify-content: flex-start;
+  }
+
+  .portal-mobile-settings-row > span:nth-last-child(2) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .portal-mobile-row-icon,
+  .portal-mobile-section-icon {
+    display: inline-grid;
+    place-items: center;
+    color: var(--accent-strong);
+  }
+
+  .portal-mobile-row-icon {
+    width: 2.25rem;
+    min-width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.82rem;
+    background: rgba(7, 148, 127, 0.09);
+  }
+
+  .portal-mobile-section-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+
+  .portal-mobile-row-icon svg {
+    width: 1.13rem;
+    height: 1.13rem;
+  }
+
+  .portal-mobile-section-icon svg {
+    width: 1.08rem;
+    height: 1.08rem;
+  }
+
+  .portal-app-page .portal-server-panel {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .portal-app-page .portal-server-panel::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 1rem;
+    width: 2.4rem;
+    height: 8rem;
+    background: linear-gradient(90deg, transparent, var(--surface));
+    pointer-events: none;
+    opacity: 0.86;
+  }
+
+  .portal-app-page .portal-server-table {
+    display: block !important;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .portal-app-page .portal-server-table tbody {
+    display: flex !important;
+    width: 100%;
+    max-width: 100%;
+    gap: 0.72rem;
+    overflow-x: auto !important;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    padding: 0.1rem 1.55rem 0.5rem 0.08rem;
+    scroll-snap-type: x proximity;
+    scrollbar-width: none;
+  }
+
+  .portal-app-page .portal-server-table tbody::-webkit-scrollbar {
+    display: none;
+  }
+
+  .portal-app-page .portal-server-table tr {
+    flex: 0 0 clamp(15.6rem, 72vw, 18.4rem) !important;
+    width: clamp(15.6rem, 72vw, 18.4rem);
+    max-width: 18.4rem;
+    scroll-snap-align: start;
+  }
+}
+
+@media (max-width: 430px) {
+  .portal-mobile-plan-summary {
+    width: min(100%, 18rem);
+    border-radius: 1.1rem;
+  }
+
+  .portal-mobile-referral-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .portal-app-page .portal-server-table tr {
+    flex-basis: min(74vw, 17.5rem) !important;
+    width: min(74vw, 17.5rem);
+  }
+}

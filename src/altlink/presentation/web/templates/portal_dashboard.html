@@ -16,7 +16,6 @@
     <header class="portal-topbar portal-app-topbar">
       <a class="brand portal-brand" href="/portal" aria-label="ALTLINK">
         <img class="brand-logo portal-brand-logo-desktop" src="/media/logo.png" alt="ALTLINK">
-        <img class="brand-logo portal-brand-logo-mobile" src="/media/altlink%20icon.svg" alt="ALTLINK">
         <div>
           <strong>ALTLINK</strong>
           <div class="muted">Личный кабинет</div>
@@ -90,12 +89,13 @@
         <section class="portal-mobile-home">
           <div class="portal-mobile-balance-card">
             <div class="portal-mobile-balance">{{ portal_user.balance_rub|rub }} ₽</div>
+            <div class="portal-mobile-plan-summary">
             <div class="portal-mobile-plan-line">
               {% if portal_subscription and portal_subscription.plan %}
                 {% if portal_subscription.plan.is_trial %}
                   Тестовый период · {{ portal_subscription.plan.period_days }} дня
                 {% else %}
-                  {{ portal_subscription.plan.name }} · {% if portal_subscription.plan.period_days >= 28 %}ежемесячно{% elif portal_subscription.plan.period_days <= 7 %}еженедельно{% else %}{{ portal_subscription.plan.period_days }} дн.{% endif %}
+                  {% if portal_current_plan_family == 'unlimited' %}Pro{% elif portal_current_plan_family == '10gbit' %}Start{% else %}{{ portal_subscription.plan.name }}{% endif %} · {% if portal_subscription.plan.period_days >= 28 %}ежемесячно{% elif portal_subscription.plan.period_days <= 7 %}еженедельно{% else %}{{ portal_subscription.plan.period_days }} дн.{% endif %}
                 {% endif %}
               {% else %}
                 Подписка закончилась
@@ -107,6 +107,7 @@
               {% else %}
                 выберите тариф для подключения
               {% endif %}
+            </div>
             </div>
           </div>
 
@@ -144,9 +145,14 @@
           </div>
 
           <article class="portal-mobile-referral-card">
-            <div>
+            <div class="portal-mobile-referral-head">
+              <span class="portal-mobile-referral-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M7.5 4a3 3 0 0 1 2.6 1.5L12 8.7l1.9-3.2A3 3 0 1 1 18 9.5h1A2 2 0 0 1 21 11.5V14h-8V9.5h-2V14H3v-2.5a2 2 0 0 1 2-2h1A3 3 0 0 1 7.5 4Zm0 2A1 1 0 1 0 8 7.9l1.4 0L8.4 6.4A1 1 0 0 0 7.5 6ZM16.5 6a1 1 0 0 0-.9.5l-.9 1.5H16a1 1 0 1 0 .5-2ZM4 16h7v5H6a2 2 0 0 1-2-2v-3Zm9 5v-5h7v3a2 2 0 0 1-2 2h-5Z" fill="currentColor"/></svg>
+              </span>
+              <div>
               <h2>Реферальная программа</h2>
               <p>Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который оплатит тариф.</p>
+              </div>
             </div>
             {% if portal_referral_link %}
             <div class="portal-mobile-referral-link">{{ portal_referral_link }}</div>
@@ -164,9 +170,9 @@
                 <div class="visually-hidden" data-copy-target tabindex="-1">{{ portal_referral_link or '' }}</div>
                 <span class="visually-hidden" data-copy-hint></span>
               </div>
-              <button type="button" class="button full portal-mobile-action-button" data-modal-open="portal-share-modal">
+              <button type="button" class="button full portal-mobile-action-button" data-share-referral data-share-url="{{ portal_referral_link or '' }}" data-share-fallback-modal="portal-share-modal">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 16.1c-.8 0-1.5.3-2 .8L8.9 12.8a4 4 0 0 0 0-1.6L16 7.1A3 3 0 1 0 15 5l-7.1 4.1a3 3 0 1 0 0 5.8L15 19a3 3 0 1 0 3-2.9Z" fill="currentColor"/></svg>
-                <span>Поделиться VPN</span>
+                <span data-button-label>Поделиться VPN</span>
               </button>
             </div>
           </article>
@@ -592,6 +598,7 @@
       <section class="portal-page portal-mobile-settings-page is-portal-page-hidden" id="portal-settings" data-portal-page="settings">
         <section class="panel portal-mobile-settings-card">
           <button type="button" class="portal-mobile-settings-row" data-modal-open="portal-subscription-settings-modal">
+            <span class="portal-mobile-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2 20 5.6v6.2c0 5-3.4 8.7-8 10.2-4.6-1.5-8-5.2-8-10.2V5.6L12 2Zm3.8 7.3a1 1 0 0 0-1.4 0L11 12.7l-1.4-1.4a1 1 0 0 0-1.4 1.4l2.1 2.1a1 1 0 0 0 1.4 0l4.1-4.1a1 1 0 0 0 0-1.4Z" fill="currentColor"/></svg></span>
             <span>
               <strong>Настроить подписку</strong>
               <small>Ссылка, VLESS-ключи, инструкция и перевыпуск</small>
@@ -601,8 +608,9 @@
         </section>
 
         <section class="panel portal-mobile-settings-card">
-          <h2>Аккаунт</h2>
+          <h2><span class="portal-mobile-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0 1 1 0 0 1-1 1H6a1 1 0 0 1-1-1Z" fill="currentColor"/></svg></span>Аккаунт</h2>
           <button type="button" class="portal-mobile-settings-row" data-modal-open="portal-devices-modal">
+            <span class="portal-mobile-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-4v2h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v9h10V6H7Z" fill="currentColor"/></svg></span>
             <span>
               <strong>Мои устройства</strong>
               <small>{{ portal_devices|length }} зарегистрировано</small>
@@ -610,6 +618,7 @@
             <span aria-hidden="true">›</span>
           </button>
           <button type="button" class="portal-mobile-settings-row" data-modal-open="portal-payments-modal">
+            <span class="portal-mobile-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1.5.9L16 18.5l-2.5 1.4a1 1 0 0 1-1 0L10 18.5l-2.5 1.4A1 1 0 0 1 6 19V5a1 1 0 0 1 1-1Zm3 5a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2H8Zm0 4a1 1 0 1 0 0 2h5a1 1 0 1 0 0-2H8Z" fill="currentColor"/></svg></span>
             <span>
               <strong>История платежей</strong>
               <small>Сумма, статус и дата</small>
@@ -619,23 +628,27 @@
         </section>
 
         <section class="panel portal-mobile-settings-card">
-          <h2>Информация</h2>
+          <h2><span class="portal-mobile-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-1 8a1 1 0 1 1 2 0v7a1 1 0 1 1-2 0v-7Zm1-4a1.25 1.25 0 1 1 0 2.5A1.25 1.25 0 0 1 12 6Z" fill="currentColor"/></svg></span>Информация</h2>
           <a class="portal-mobile-settings-row" href="{{ agreement_page_url }}">
+            <span class="portal-mobile-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v13H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm6 2v4h4l-4-4ZM8 13a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2H8Zm0 4a1 1 0 1 0 0 2h5a1 1 0 1 0 0-2H8Z" fill="currentColor"/></svg></span>
             <span><strong>Пользовательское соглашение</strong></span>
             <span aria-hidden="true">›</span>
           </a>
           <a class="portal-mobile-settings-row" href="{{ privacy_page_url }}">
+            <span class="portal-mobile-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2 20 5.6v6.2c0 5-3.4 8.7-8 10.2-4.6-1.5-8-5.2-8-10.2V5.6L12 2Zm0 5a3 3 0 0 0-1 5.8V16a1 1 0 1 0 2 0v-3.2A3 3 0 0 0 12 7Z" fill="currentColor"/></svg></span>
             <span><strong>Политика конфиденциальности</strong></span>
             <span aria-hidden="true">›</span>
           </a>
           {% if support_url %}
           <a class="portal-mobile-settings-row" href="{{ support_url }}" target="_blank" rel="noreferrer">
+            <span class="portal-mobile-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v5a4 4 0 0 1-4 4h-4.6L7 19.4V15a4 4 0 0 1-3-3.9V6Zm5 2a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2H9Z" fill="currentColor"/></svg></span>
             <span><strong>Поддержка в Telegram</strong></span>
             <span aria-hidden="true">›</span>
           </a>
           {% endif %}
           {% if required_channel_url %}
           <a class="portal-mobile-settings-row" href="{{ required_channel_url }}" target="_blank" rel="noreferrer">
+            <span class="portal-mobile-row-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 4.5a1.2 1.2 0 0 0-1.5-1.1L3.8 9.5a1.2 1.2 0 0 0 .1 2.3l4.1 1.3 1.6 5.1a1.2 1.2 0 0 0 2.1.4l2.3-2.8 4.1 3.1a1.2 1.2 0 0 0 1.9-.7L21 4.5ZM9.2 12.3l7.1-4.4-5.4 6.2-.5 2-1.2-3.8Z" fill="currentColor"/></svg></span>
             <span><strong>Канал ALTLINK</strong></span>
             <span aria-hidden="true">›</span>
           </a>
@@ -643,7 +656,7 @@
         </section>
 
         <section class="panel portal-mobile-settings-card">
-          <h2>Интерфейс</h2>
+          <h2><span class="portal-mobile-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a1 1 0 0 1 1 1v1.1a7 7 0 0 1 2.2.9l.8-.8a1 1 0 0 1 1.4 1.4l-.8.8a7 7 0 0 1 .9 2.2H20a1 1 0 1 1 0 2h-1.5a7 7 0 0 1-.9 2.2l.8.8a1 1 0 0 1-1.4 1.4l-.8-.8a7 7 0 0 1-2.2.9V20a1 1 0 1 1-2 0v-1.5a7 7 0 0 1-2.2-.9l-.8.8a1 1 0 1 1-1.4-1.4l.8-.8a7 7 0 0 1-.9-2.2H4a1 1 0 1 1 0-2h1.5a7 7 0 0 1 .9-2.2l-.8-.8A1 1 0 0 1 7 5.2l.8.8A7 7 0 0 1 10 5.1V4a1 1 0 0 1 1-1h1Zm0 5a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" fill="currentColor"/></svg></span>Интерфейс</h2>
           <div class="theme-switcher portal-mobile-theme-switcher" aria-label="Тема">
             <button type="button" data-theme-choice="light" aria-pressed="false">Светлая</button>
             <button type="button" data-theme-choice="dark" aria-pressed="false">Тёмная</button>
@@ -653,7 +666,10 @@
 
         <form method="post" action="/portal/logout">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit" class="button danger full">Выйти</button>
+          <button type="submit" class="button danger full">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4a2 2 0 0 1 2-2h5a1 1 0 1 1 0 2H7v16h5a1 1 0 1 1 0 2H7a2 2 0 0 1-2-2V4Zm11.3 4.3a1 1 0 0 1 1.4 0l3 3a1 1 0 0 1 0 1.4l-3 3a1 1 0 0 1-1.4-1.4l1.3-1.3H11a1 1 0 1 1 0-2h6.6l-1.3-1.3a1 1 0 0 1 0-1.4Z" fill="currentColor"/></svg>
+            <span>Выйти</span>
+          </button>
         </form>
       </section>
     </main>
@@ -1119,6 +1135,7 @@
         const buttonLabel = button.querySelector("[data-button-label]");
         const originalText = buttonLabel?.textContent || button.textContent;
         const shareUrl = button.dataset.shareUrl || "";
+        const fallbackModalId = button.dataset.shareFallbackModal || "";
         const setTemporaryText = (text) => {
           if (buttonLabel) {
             buttonLabel.textContent = text;
@@ -1132,6 +1149,13 @@
               button.textContent = originalText;
             }
           }, 1800);
+        };
+        const openFallbackModal = () => {
+          const modal = fallbackModalId ? document.getElementById(fallbackModalId) : null;
+          if (!modal) return false;
+          modal.classList.add("is-open");
+          modal.setAttribute("aria-hidden", "false");
+          return true;
         };
 
         button.addEventListener("click", async () => {
@@ -1148,15 +1172,19 @@
               });
               return;
             }
-            await window.altlinkCopyText?.(shareUrl);
-            setTemporaryText("Ссылка скопирована");
+            if (!openFallbackModal()) {
+              await window.altlinkCopyText?.(shareUrl);
+              setTemporaryText("Ссылка скопирована");
+            }
           } catch (error) {
             if (error?.name !== "AbortError") {
-              try {
-                await window.altlinkCopyText?.(shareUrl);
-                setTemporaryText("Ссылка скопирована");
-              } catch (copyError) {
-                setTemporaryText("Не удалось отправить");
+              if (!openFallbackModal()) {
+                try {
+                  await window.altlinkCopyText?.(shareUrl);
+                  setTemporaryText("Ссылка скопирована");
+                } catch (copyError) {
+                  setTemporaryText("Не удалось отправить");
+                }
               }
             }
           }
