@@ -86,6 +86,57 @@
         </section>
         {% endif %}
 
+        <section class="portal-mobile-home stack">
+          <article class="panel portal-mobile-balance-card">
+            <div class="portal-mobile-balance">{{ portal_user.balance_rub|rub }} ₽</div>
+            <div class="portal-mobile-plan-line">
+              {% if portal_subscription and portal_subscription.plan %}
+                {% if portal_subscription.plan.is_trial %}
+                  Тестовый период · {{ portal_subscription.plan.period_days }} дня
+                {% else %}
+                  {{ portal_subscription.plan.name }} · {% if portal_subscription.plan.period_days >= 28 %}ежемесячно{% elif portal_subscription.plan.period_days <= 7 %}еженедельно{% else %}{{ portal_subscription.plan.period_days }} дн.{% endif %}
+                {% endif %}
+              {% else %}
+                Подписка закончилась
+              {% endif %}
+            </div>
+            <div class="portal-mobile-device-line">
+              {% if portal_subscription and portal_subscription.plan %}
+                до {{ portal_subscription.plan.device_limit }} устройств
+              {% else %}
+                выберите тариф для подключения
+              {% endif %}
+            </div>
+          </article>
+
+          {% if portal_trial_available %}
+          <article class="panel portal-mobile-trial-card stack">
+            <h2>Активируйте бесплатный пробный период на 2 дня</h2>
+            <div class="portal-mobile-benefits">
+              <span>безлимитный трафик</span>
+              <span>доступ ко всем серверам</span>
+            </div>
+            <form method="post" action="/portal/trial">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="button full" {% if not portal_channel_ok %}disabled{% endif %}>Активировать бесплатно</button>
+            </form>
+          </article>
+          {% endif %}
+
+          {% if portal_subscription_payload %}
+          <article class="panel stack copy-link-card portal-mobile-connect-card" data-copy-root data-copy-text="{{ portal_subscription_payload }}">
+            <button type="button" class="button full" data-copy-button>Скопировать ссылку на подключение</button>
+            <div class="visually-hidden" data-copy-target tabindex="-1">{{ portal_subscription_payload }}</div>
+            <p class="muted" data-copy-hint>Добавьте ссылку в совместимое приложение.</p>
+          </article>
+          {% endif %}
+
+          <article class="panel stack portal-mobile-referral-teaser">
+            <button type="button" class="button ghost full" data-modal-open="portal-share-modal">Поделиться VPN</button>
+            <p class="muted">Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который оплатит тариф.</p>
+          </article>
+        </section>
+
         <section class="portal-home-grid portal-home-single">
           <article class="panel portal-profile-card">
             <div class="split">
@@ -215,9 +266,12 @@
                 </strong>
               </div>
             </div>
+            <button type="button" class="button full portal-mobile-plan-trigger" data-modal-open="portal-plan-modal">
+              {% if portal_subscription and portal_subscription.plan and not portal_subscription.plan.is_trial %}Изменить тариф{% else %}Выбрать тариф{% endif %}
+            </button>
           </article>
 
-          <article class="panel stack">
+          <article class="panel stack portal-trial-panel">
             <div class="split">
               <h2>Тест</h2>
               <span class="badge">2 дня</span>
@@ -234,7 +288,7 @@
           </article>
         </section>
 
-        <section class="panel stack">
+        <section class="panel stack portal-plan-section">
           <div class="split">
             <h2>Выбор тарифа</h2>
             <span class="badge">Цены без копеек</span>
@@ -499,6 +553,74 @@
           </table>
         </section>
       </section>
+
+      <section class="portal-page portal-mobile-settings-page is-portal-page-hidden" id="portal-settings" data-portal-page="settings">
+        <section class="panel portal-mobile-settings-card">
+          <button type="button" class="portal-mobile-settings-row" data-modal-open="portal-subscription-settings-modal">
+            <span>
+              <strong>Настроить подписку</strong>
+              <small>Ссылка, VLESS-ключи, инструкция и перевыпуск</small>
+            </span>
+            <span aria-hidden="true">›</span>
+          </button>
+        </section>
+
+        <section class="panel portal-mobile-settings-card">
+          <h2>Аккаунт</h2>
+          <button type="button" class="portal-mobile-settings-row" data-modal-open="portal-devices-modal">
+            <span>
+              <strong>Мои устройства</strong>
+              <small>{{ portal_devices|length }} зарегистрировано</small>
+            </span>
+            <span aria-hidden="true">›</span>
+          </button>
+          <button type="button" class="portal-mobile-settings-row" data-modal-open="portal-payments-modal">
+            <span>
+              <strong>История платежей</strong>
+              <small>Сумма, статус и дата</small>
+            </span>
+            <span aria-hidden="true">›</span>
+          </button>
+        </section>
+
+        <section class="panel portal-mobile-settings-card">
+          <h2>Информация</h2>
+          <a class="portal-mobile-settings-row" href="{{ agreement_page_url }}">
+            <span><strong>Пользовательское соглашение</strong></span>
+            <span aria-hidden="true">›</span>
+          </a>
+          <a class="portal-mobile-settings-row" href="{{ privacy_page_url }}">
+            <span><strong>Политика конфиденциальности</strong></span>
+            <span aria-hidden="true">›</span>
+          </a>
+          {% if support_url %}
+          <a class="portal-mobile-settings-row" href="{{ support_url }}" target="_blank" rel="noreferrer">
+            <span><strong>Поддержка в Telegram</strong></span>
+            <span aria-hidden="true">›</span>
+          </a>
+          {% endif %}
+          {% if required_channel_url %}
+          <a class="portal-mobile-settings-row" href="{{ required_channel_url }}" target="_blank" rel="noreferrer">
+            <span><strong>Канал ALTLINK</strong></span>
+            <span aria-hidden="true">›</span>
+          </a>
+          {% endif %}
+        </section>
+
+        <section class="panel portal-mobile-settings-card">
+          <h2>Интерфейс</h2>
+          <div class="theme-switcher portal-mobile-theme-switcher" aria-label="Тема">
+            <button type="button" data-theme-choice="light" aria-pressed="false">Светлая</button>
+            <button type="button" data-theme-choice="dark" aria-pressed="false">Тёмная</button>
+            <button type="button" data-theme-choice="system" aria-pressed="true">Как в системе</button>
+          </div>
+        </section>
+
+        <form method="post" action="/portal/logout">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="button danger full">Выйти</button>
+        </form>
+      </section>
     </main>
 
     <footer class="portal-footer">
@@ -521,11 +643,257 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 20 5.6v6.2c0 5-3.4 8.7-8 10.2-4.6-1.5-8-5.2-8-10.2V5.6L12 2Zm3.7 7.3a1 1 0 0 0-1.4 0L11 12.6l-1.3-1.3a1 1 0 1 0-1.4 1.4l2 2a1 1 0 0 0 1.4 0l4-4a1 1 0 0 0 0-1.4Z" fill="currentColor"/></svg>
       <span>Подписка</span>
     </a>
-    <a class="mobile-bottom-nav__item" href="#portal-balance" data-portal-page-link="balance">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H18a2 2 0 0 1 2 2v2h-3.5a4.5 4.5 0 0 0 0 9H20v1a2 2 0 0 1-2 2H6.5A2.5 2.5 0 0 1 4 17.5v-11Zm12.5 3.5H21v5h-4.5a2.5 2.5 0 0 1 0-5Zm0 2a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z" fill="currentColor"/></svg>
-      <span>Баланс</span>
+    <a class="mobile-bottom-nav__item" href="#portal-settings" data-portal-page-link="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6Zm8.6 3.1-1.8-.5a7.2 7.2 0 0 0-.7-1.7l.9-1.6-1.9-1.9-1.6.9a7.2 7.2 0 0 0-1.7-.7L13.3 4h-2.6l-.5 1.8a7.2 7.2 0 0 0-1.7.7l-1.6-.9L5 7.5l.9 1.6a7.2 7.2 0 0 0-.7 1.7l-1.8.5v2.6l1.8.5c.2.6.4 1.2.7 1.7L5 17.7l1.9 1.9 1.6-.9c.5.3 1.1.5 1.7.7l.5 1.8h2.6l.5-1.8c.6-.2 1.2-.4 1.7-.7l1.6.9 1.9-1.9-.9-1.6c.3-.5.5-1.1.7-1.7l1.8-.5v-2.6Z" fill="currentColor"/></svg>
+      <span>Настройки</span>
     </a>
   </nav>
+
+  <button class="portal-support-fab" type="button" data-modal-open="portal-support-modal" aria-label="Поддержка">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A3.5 3.5 0 0 1 7.5 2h9A3.5 3.5 0 0 1 20 5.5v7A3.5 3.5 0 0 1 16.5 16H12l-4.7 4.2A.8.8 0 0 1 6 19.6V16A3.5 3.5 0 0 1 4 12.5v-7Zm4 2.2a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2H8Zm0 4a1 1 0 1 0 0 2h5.4a1 1 0 1 0 0-2H8Z" fill="currentColor"/></svg>
+  </button>
+
+  <div class="portal-modal portal-mobile-sheet" id="portal-plan-modal" aria-hidden="true">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Выбор тарифа">
+      <div class="split">
+        <h2>Выбор тарифа</h2>
+        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+      </div>
+      <div class="stack compact">
+        {% for group in portal_plan_groups if group.family == 'unlimited' %}
+        <article class="panel plan-card{% if group.family == portal_current_plan_family %} selected{% endif %} is-featured">
+          <div class="split">
+            <h3>{{ group.title }}</h3>
+            <span class="badge highlight">Рекомендуем · до {{ group.device_limit or '—' }} устройств</span>
+          </div>
+          {% for period in group.periods %}
+          <form method="post" action="/portal/plan" class="plan-period tariff-option{% if period.plan_code == portal_current_plan_code %} selected is-selected{% endif %}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="plan_code" value="{{ period.plan_code }}">
+            <div>
+              <strong>{{ period.label }}</strong>
+              <div class="muted">{{ period.caption }}{% if period.plan_code == portal_current_plan_code %} · выбрано{% endif %}</div>
+            </div>
+            <div class="plan-period-price">{{ period.price_label }} ₽</div>
+            <button type="submit" class="button compact{% if period.plan_code == portal_current_plan_code %} ghost{% endif %}" {% if not portal_channel_ok or period.plan_code == portal_current_plan_code %}disabled{% endif %}>
+              {% if period.plan_code == portal_current_plan_code %}Выбрано{% else %}Выбрать{% endif %}
+            </button>
+          </form>
+          {% endfor %}
+        </article>
+        {% endfor %}
+        {% for group in portal_plan_groups if group.family != 'unlimited' %}
+        <article class="panel plan-card{% if group.family == portal_current_plan_family %} selected{% endif %}">
+          <div class="split">
+            <h3>{{ group.title }}</h3>
+            <span class="badge">до {{ group.device_limit or '—' }} устройств</span>
+          </div>
+          {% for period in group.periods %}
+          <form method="post" action="/portal/plan" class="plan-period tariff-option{% if period.plan_code == portal_current_plan_code %} selected is-selected{% endif %}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="plan_code" value="{{ period.plan_code }}">
+            <div>
+              <strong>{{ period.label }}</strong>
+              <div class="muted">{{ period.caption }}{% if period.plan_code == portal_current_plan_code %} · выбрано{% endif %}</div>
+            </div>
+            <div class="plan-period-price">{{ period.price_label }} ₽</div>
+            <button type="submit" class="button compact{% if period.plan_code == portal_current_plan_code %} ghost{% endif %}" {% if not portal_channel_ok or period.plan_code == portal_current_plan_code %}disabled{% endif %}>
+              {% if period.plan_code == portal_current_plan_code %}Выбрано{% else %}Выбрать{% endif %}
+            </button>
+          </form>
+          {% endfor %}
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-modal portal-mobile-sheet" id="portal-share-modal" aria-hidden="true">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Поделиться VPN">
+      <div class="split">
+        <h2>Поделиться VPN</h2>
+        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+      </div>
+      <p class="muted">Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который оплатит тариф.</p>
+      <div class="stack compact">
+        <button type="button" class="button full" data-share-referral data-share-url="{{ portal_referral_link or '' }}">Быстро отправить</button>
+        <div class="copy-link-card" data-copy-root data-copy-text="{{ portal_referral_link or '' }}">
+          <button type="button" class="button ghost full" data-copy-button {% if not portal_referral_link %}disabled{% endif %}>Скопировать ссылку</button>
+          <div class="visually-hidden" data-copy-target tabindex="-1">{{ portal_referral_link or '' }}</div>
+          <p class="muted" data-copy-hint>{% if portal_referral_link %}Реферальная ссылка готова.{% else %}Ссылка будет создана позже.{% endif %}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-modal portal-mobile-sheet" id="portal-support-modal" aria-hidden="true">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card portal-support-sheet" role="dialog" aria-modal="true" aria-label="Поддержка">
+      <div class="split">
+        <h2>Поддержка</h2>
+        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+      </div>
+      <div class="portal-sheet-tabs" role="tablist">
+        <button type="button" class="is-active" data-support-tab="chat">Чат</button>
+        <button type="button" data-support-tab="archive">Архив</button>
+      </div>
+      <div data-support-panel="chat">
+        {% if support_url %}
+        <a class="button full" href="{{ support_url }}" target="_blank" rel="noreferrer">Открыть поддержку в Telegram</a>
+        {% endif %}
+        {% if portal_active_support_request %}
+        <div class="portal-chat-thread portal-mobile-chat-thread">
+          {% for item in portal_active_support_request.messages %}
+          <div class="portal-chat-message{% if item.sender_type == 'admin' %} is-admin{% endif %}">
+            <div class="portal-chat-meta">
+              <span>{{ 'Поддержка' if item.sender_type == 'admin' else 'Вы' }}</span>
+              <time>{{ item.created_at.strftime('%d.%m %H:%M') }}</time>
+            </div>
+            <p>{{ item.message }}</p>
+          </div>
+          {% endfor %}
+        </div>
+        {% if portal_active_support_request.status.value != 'resolved' %}
+        <form method="post" action="/portal/support/{{ portal_active_support_request.id }}/messages" class="portal-chat-reply">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <textarea name="message" rows="3" placeholder="Написать в поддержку..." required></textarea>
+          <button type="submit" class="button compact">Отправить</button>
+        </form>
+        {% endif %}
+        {% else %}
+        <form method="post" action="/portal/support" class="stack portal-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <label>
+            <span>Тема</span>
+            <input type="text" name="topic" maxlength="64" placeholder="Например: не подключается приложение" required>
+          </label>
+          <label>
+            <span>Сообщение</span>
+            <textarea name="message" rows="4" placeholder="Опишите, что произошло." required></textarea>
+          </label>
+          <button type="submit" class="button full">Создать обращение</button>
+        </form>
+        {% endif %}
+      </div>
+      <div class="is-hidden" data-support-panel="archive">
+        <div class="stack compact">
+          {% for request in portal_support_requests if request.status.value == 'resolved' %}
+          <details class="portal-archive-ticket">
+            <summary>
+              <span>
+                <strong>{{ request.topic }}</strong>
+                <small>{{ request.created_at.strftime('%d.%m.%Y') }} · Закрыт</small>
+              </span>
+            </summary>
+            <div class="portal-chat-thread">
+              {% for item in request.messages %}
+              <div class="portal-chat-message{% if item.sender_type == 'admin' %} is-admin{% endif %}">
+                <div class="portal-chat-meta">
+                  <span>{{ 'Поддержка' if item.sender_type == 'admin' else 'Вы' }}</span>
+                  <time>{{ item.created_at.strftime('%d.%m %H:%M') }}</time>
+                </div>
+                <p>{{ item.message }}</p>
+              </div>
+              {% endfor %}
+            </div>
+          </details>
+          {% else %}
+          <p class="muted">Закрытых обращений пока нет.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-modal portal-mobile-sheet" id="portal-subscription-settings-modal" aria-hidden="true">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Настроить подписку">
+      <div class="split">
+        <h2>Настроить подписку</h2>
+        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+      </div>
+      <div class="portal-metrics-grid">
+        <div class="portal-metric">
+          <span>Тариф</span>
+          <strong>{{ portal_subscription.plan.name if portal_subscription and portal_subscription.plan else 'Подписка закончилась' }}</strong>
+        </div>
+        <div class="portal-metric">
+          <span>Списание</span>
+          <strong>{{ portal_subscription.next_billing_at.strftime('%d.%m.%Y') if portal_subscription and portal_subscription.next_billing_at else '—' }}</strong>
+        </div>
+      </div>
+      {% if portal_subscription_payload %}
+      <div class="copy-link-card" data-copy-root data-copy-text="{{ portal_subscription_payload }}">
+        <div class="subscription-link-preview" data-copy-target role="button" tabindex="0">
+          <span>{{ portal_subscription_payload[:30] }}{% if portal_subscription_payload|length > 48 %}…{{ portal_subscription_payload[-12:] }}{% endif %}</span>
+        </div>
+        <button type="button" class="button full" data-copy-button>Скопировать ссылку</button>
+        <p class="muted" data-copy-hint>Кнопка копирует полный адрес.</p>
+      </div>
+      <div class="stack compact">
+        <a class="button ghost full" href="/portal/vless-keys">Скачать VLESS-ключи</a>
+        <a class="button ghost full" href="{{ connection_help_url }}">Открыть инструкцию</a>
+        <form method="post" action="/portal/link/revoke" onsubmit="return confirm('Перевыпустить ссылку? Старая ссылка перестанет работать, её нужно будет заново добавить в приложение.')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="confirm" value="1">
+          <button type="submit" class="button danger full">Перевыпустить ссылку</button>
+        </form>
+      </div>
+      {% else %}
+      <p class="muted">Ссылка появится после активации теста или тарифа.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="portal-modal portal-mobile-sheet" id="portal-devices-modal" aria-hidden="true">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Мои устройства">
+      <div class="split">
+        <h2>Мои устройства</h2>
+        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+      </div>
+      <div class="portal-mobile-list">
+        {% for device in portal_devices %}
+        <article class="portal-mobile-list-card">
+          <strong>{{ device.name }}</strong>
+          <span>{{ device.client }}</span>
+          <span>Последнее подключение: {{ device.last_connected_at.strftime('%d.%m.%Y %H:%M') if device.last_connected_at else '—' }}</span>
+          <span>Создано: {{ device.created_at.strftime('%d.%m.%Y %H:%M') if device.created_at else '—' }}</span>
+          <form method="post" action="/portal/devices/delete" onsubmit="return confirm('Удалить это устройство?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="hwid" value="{{ device.hwid }}">
+            <button type="submit" class="button danger compact">Удалить</button>
+          </form>
+        </article>
+        {% else %}
+        <p class="muted">Устройства появятся после первого подключения через совместимое приложение.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-modal portal-mobile-sheet" id="portal-payments-modal" aria-hidden="true">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="История платежей">
+      <div class="split">
+        <h2>История платежей</h2>
+        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+      </div>
+      <div class="portal-mobile-list">
+        {% for payment in portal_payments %}
+        <article class="portal-mobile-list-card">
+          <strong>{{ payment.amount_rub|rub }} ₽</strong>
+          <span>{{ payment.status|payment_status }}</span>
+          <span>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+        </article>
+        {% else %}
+        <p class="muted">Платежей пока нет.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
 
   {% if portal_qr_data_uri %}
   <div class="portal-modal" id="portal-qr-modal" aria-hidden="true">
@@ -553,9 +921,14 @@
         "#portal-home": "home",
         "#portal-subscription": "subscription",
         "#portal-balance": "balance",
+        "#portal-settings": "settings",
       };
 
-      const pageFromHash = () => hashToPage[window.location.hash] || "home";
+      const isMobilePortal = () => window.matchMedia?.("(max-width: 980px)")?.matches;
+      const pageFromHash = () => {
+        const page = hashToPage[window.location.hash] || "home";
+        return isMobilePortal() && page === "balance" ? "settings" : page;
+      };
       const activate = (page, options = {}) => {
         const active = known.has(page) ? page : "home";
         pages.forEach((section) => {
@@ -613,6 +986,7 @@
         }
         fallbackCopy(text);
       };
+      window.altlinkCopyText = copyText;
 
       document.querySelectorAll("[data-copy-root]").forEach((root) => {
         const payload = root.dataset.copyText;
@@ -650,6 +1024,63 @@
             event.preventDefault();
             handleCopy();
           }
+        });
+      });
+    })();
+
+    (() => {
+      document.querySelectorAll("[data-share-referral]").forEach((button) => {
+        const originalText = button.textContent;
+        const shareUrl = button.dataset.shareUrl || "";
+        const setTemporaryText = (text) => {
+          button.textContent = text;
+          window.setTimeout(() => {
+            button.textContent = originalText;
+          }, 1800);
+        };
+
+        button.addEventListener("click", async () => {
+          if (!shareUrl) {
+            setTemporaryText("Ссылка пока недоступна");
+            return;
+          }
+          try {
+            if (navigator.share) {
+              await navigator.share({
+                title: "ALTLINK VPN",
+                text: "Попробуй ALTLINK VPN",
+                url: shareUrl,
+              });
+              return;
+            }
+            await window.altlinkCopyText?.(shareUrl);
+            setTemporaryText("Ссылка скопирована");
+          } catch (error) {
+            if (error?.name !== "AbortError") {
+              try {
+                await window.altlinkCopyText?.(shareUrl);
+                setTemporaryText("Ссылка скопирована");
+              } catch (copyError) {
+                setTemporaryText("Не удалось отправить");
+              }
+            }
+          }
+        });
+      });
+    })();
+
+    (() => {
+      document.querySelectorAll(".portal-support-sheet").forEach((sheet) => {
+        const tabs = Array.from(sheet.querySelectorAll("[data-support-tab]"));
+        const panels = Array.from(sheet.querySelectorAll("[data-support-panel]"));
+        tabs.forEach((tab) => {
+          tab.addEventListener("click", () => {
+            const target = tab.dataset.supportTab;
+            tabs.forEach((item) => item.classList.toggle("is-active", item === tab));
+            panels.forEach((panel) => {
+              panel.classList.toggle("is-hidden", panel.dataset.supportPanel !== target);
+            });
+          });
         });
       });
     })();

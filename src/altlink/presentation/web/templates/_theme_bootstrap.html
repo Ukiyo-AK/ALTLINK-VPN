@@ -3,13 +3,16 @@
     const storageKey = "altlink-theme";
     const modes = new Set(["light", "dark", "system"]);
     const systemQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    const mobileQuery = window.matchMedia ? window.matchMedia("(max-width: 980px)") : null;
+
+    const defaultPreference = () => (mobileQuery?.matches ? "system" : "light");
 
     const readPreference = () => {
       try {
         const saved = window.localStorage.getItem(storageKey);
-        return modes.has(saved) ? saved : "light";
+        return modes.has(saved) ? saved : defaultPreference();
       } catch (error) {
-        return "light";
+        return defaultPreference();
       }
     };
 
@@ -24,7 +27,7 @@
     };
 
     const applyTheme = (preference) => {
-      const safePreference = modes.has(preference) ? preference : "light";
+      const safePreference = modes.has(preference) ? preference : defaultPreference();
       const theme = resolvedTheme(safePreference);
       document.documentElement.dataset.theme = theme;
       document.documentElement.dataset.themePreference = safePreference;
@@ -32,7 +35,7 @@
     };
 
     const savePreference = (preference) => {
-      const safePreference = modes.has(preference) ? preference : "light";
+      const safePreference = modes.has(preference) ? preference : defaultPreference();
       try {
         window.localStorage.setItem(storageKey, safePreference);
       } catch (error) {

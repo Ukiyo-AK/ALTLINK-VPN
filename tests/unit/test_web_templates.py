@@ -113,6 +113,12 @@ def test_portal_dashboard_has_mobile_section_navigation():
 
     assert "portal-desktop-nav" in portal
     assert "mobile-bottom-nav" in portal
+    assert 'href="#portal-settings"' in portal
+    assert 'data-portal-page-link="settings"' in portal
+    assert 'id="portal-settings"' in portal
+    assert "portal-support-fab" in portal
+    assert "portal-share-modal" in portal
+    assert "portal-plan-modal" in portal
     assert "<svg viewBox=\"0 0 24 24\"" in portal
     assert "data-portal-page-nav" in portal
     assert "Главная" in portal
@@ -213,7 +219,9 @@ def test_theme_bootstrap_defaults_to_light_and_uses_data_theme():
         assert '{% include "_theme_bootstrap.html" %}' in content
 
     assert "altlink-theme" in partial
-    assert 'return modes.has(saved) ? saved : "light";' in partial
+    assert 'const mobileQuery = window.matchMedia ? window.matchMedia("(max-width: 980px)") : null;' in partial
+    assert 'const defaultPreference = () => (mobileQuery?.matches ? "system" : "light");' in partial
+    assert "return modes.has(saved) ? saved : defaultPreference();" in partial
     assert 'document.documentElement.dataset.theme = theme;' in partial
     assert "prefers-color-scheme" in partial
     assert "@media (prefers-color-scheme: dark)" not in style
