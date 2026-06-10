@@ -15,7 +15,8 @@
   <div class="portal-shell portal-app-shell">
     <header class="portal-topbar portal-app-topbar">
       <a class="brand portal-brand" href="/portal" aria-label="ALTLINK">
-        <img class="brand-logo" src="/media/logo.png" alt="ALTLINK">
+        <img class="brand-logo portal-brand-logo-desktop" src="/media/logo.png" alt="ALTLINK">
+        <img class="brand-logo portal-brand-logo-mobile" src="/media/altlink%20icon.svg" alt="ALTLINK">
         <div>
           <strong>ALTLINK</strong>
           <div class="muted">Личный кабинет</div>
@@ -127,22 +128,48 @@
           {% endif %}
 
           <div class="portal-mobile-home-actions">
-          {% if portal_subscription_payload %}
-          <div class="copy-link-card portal-mobile-connect-card" data-copy-root data-copy-text="{{ portal_subscription_payload }}">
-            <button type="button" class="button full portal-mobile-action-button" data-copy-button>
+          <button type="button" class="button full portal-mobile-action-button" data-modal-open="portal-topup-modal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5A3.5 3.5 0 0 1 7.5 4H18a2 2 0 0 1 2 2v2h-3a4 4 0 1 0 0 8h3v2a2 2 0 0 1-2 2H7.5A3.5 3.5 0 0 1 4 16.5v-9Zm13 2.5a2 2 0 1 0 0 4h3v-4h-3Z" fill="currentColor"/></svg>
+            <span>Пополнить</span>
+          </button>
+
+          <div class="copy-link-card portal-mobile-connect-card" data-copy-root data-copy-text="{{ portal_subscription_payload or '' }}">
+            <button type="button" class="button full portal-mobile-action-button" data-copy-button {% if not portal_subscription_payload %}disabled{% endif %}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7.5A3.5 3.5 0 0 1 11.5 4H18a2 2 0 0 1 2 2v10.5A3.5 3.5 0 0 1 16.5 20H10a2 2 0 0 1-2-2V7.5Zm3.5-1.5A1.5 1.5 0 0 0 10 7.5V18h6.5a1.5 1.5 0 0 0 1.5-1.5V6h-6.5ZM4 10a3 3 0 0 1 3-3v2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1v2a3 3 0 0 1-3-3v-7Z" fill="currentColor"/></svg>
-              <span data-button-label>Копировать ссылку</span>
+              <span data-button-label>{% if portal_subscription_payload %}Копировать ссылку{% else %}Ссылка недоступна{% endif %}</span>
             </button>
-            <div class="visually-hidden" data-copy-target tabindex="-1">{{ portal_subscription_payload }}</div>
+            <div class="visually-hidden" data-copy-target tabindex="-1">{{ portal_subscription_payload or '' }}</div>
             <span class="visually-hidden" data-copy-hint></span>
           </div>
-          {% endif %}
-
-          <button type="button" class="button ghost full portal-mobile-action-button" data-modal-open="portal-share-modal">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 16.1c-.8 0-1.5.3-2 .8L8.9 12.8a4 4 0 0 0 0-1.6L16 7.1A3 3 0 1 0 15 5l-7.1 4.1a3 3 0 1 0 0 5.8L15 19a3 3 0 1 0 3-2.9Z" fill="currentColor"/></svg>
-            <span>Поделиться VPN</span>
-          </button>
           </div>
+
+          <article class="portal-mobile-referral-card">
+            <div>
+              <h2>Реферальная программа</h2>
+              <p>Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который оплатит тариф.</p>
+            </div>
+            {% if portal_referral_link %}
+            <div class="portal-mobile-referral-link">{{ portal_referral_link }}</div>
+            {% endif %}
+            <div class="portal-mobile-referral-stats">
+              <span>Приглашено: <strong>{{ portal_referral_count }}</strong></span>
+              <span>Начислено: <strong>{{ portal_referral_earned_total|rub }} ₽</strong></span>
+            </div>
+            <div class="portal-mobile-referral-actions">
+              <div class="copy-link-card" data-copy-root data-copy-text="{{ portal_referral_link or '' }}">
+                <button type="button" class="button ghost full portal-mobile-action-button" data-copy-button {% if not portal_referral_link %}disabled{% endif %}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7.5A3.5 3.5 0 0 1 11.5 4H18a2 2 0 0 1 2 2v10.5A3.5 3.5 0 0 1 16.5 20H10a2 2 0 0 1-2-2V7.5Zm3.5-1.5A1.5 1.5 0 0 0 10 7.5V18h6.5a1.5 1.5 0 0 0 1.5-1.5V6h-6.5ZM4 10a3 3 0 0 1 3-3v2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1v2a3 3 0 0 1-3-3v-7Z" fill="currentColor"/></svg>
+                  <span data-button-label>Скопировать</span>
+                </button>
+                <div class="visually-hidden" data-copy-target tabindex="-1">{{ portal_referral_link or '' }}</div>
+                <span class="visually-hidden" data-copy-hint></span>
+              </div>
+              <button type="button" class="button full portal-mobile-action-button" data-modal-open="portal-share-modal">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 16.1c-.8 0-1.5.3-2 .8L8.9 12.8a4 4 0 0 0 0-1.6L16 7.1A3 3 0 1 0 15 5l-7.1 4.1a3 3 0 1 0 0 5.8L15 19a3 3 0 1 0 3-2.9Z" fill="currentColor"/></svg>
+                <span>Поделиться VPN</span>
+              </button>
+            </div>
+          </article>
         </section>
 
         <section class="portal-home-grid portal-home-single">
@@ -717,6 +744,43 @@
     </div>
   </div>
 
+  <div class="portal-modal portal-mobile-sheet" id="portal-topup-modal" aria-hidden="true">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card portal-topup-sheet" role="dialog" aria-modal="true" aria-label="Пополнить баланс">
+      <div class="split">
+        <div>
+          <h2>Пополнить баланс</h2>
+          <p class="muted">Выберите сумму, добавьте промокод при необходимости и перейдите к оплате.</p>
+        </div>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
+      </div>
+      <div class="portal-topup-amounts" role="group" aria-label="Быстрые суммы">
+        {% for item in portal_topup_links %}
+        <button type="button" class="{% if loop.first %}is-active{% endif %}" data-topup-amount="{{ item.amount }}">{{ item.amount }} ₽</button>
+        {% endfor %}
+      </div>
+      <label class="portal-topup-field">
+        <span>Своя сумма</span>
+        <input type="number" min="50" step="1" inputmode="numeric" data-topup-amount-input value="{{ portal_topup_links[0].amount if portal_topup_links else 100 }}">
+      </label>
+      <div class="portal-topup-promo">
+        <label>
+          <span>Промокод</span>
+          <input type="text" maxlength="64" autocomplete="off" data-topup-promo placeholder="Например, ALT10">
+        </label>
+        <button type="button" class="button ghost compact" data-topup-promo-apply>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h7.2a2 2 0 0 1 1.4.6l5.8 5.8a2 2 0 0 1 0 2.8l-7.2 7.2a2 2 0 0 1-2.8 0L4.6 13.6A2 2 0 0 1 4 12.2V5Zm4 3a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm8.7 2.3a1 1 0 0 0-1.4 0l-5 5 1.4 1.4 5-5a1 1 0 0 0 0-1.4Z" fill="currentColor"/></svg>
+          <span>Применить</span>
+        </button>
+      </div>
+      <p class="muted portal-topup-message" data-topup-message></p>
+      <button type="button" class="button full" data-topup-submit data-csrf-token="{{ csrf_token }}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v1H4V7Zm0 4h16v6a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3v-6Zm3 4a1 1 0 1 0 0 2h4a1 1 0 1 0 0-2H7Z" fill="currentColor"/></svg>
+        <span data-button-label>Перейти к оплате</span>
+      </button>
+    </div>
+  </div>
+
   <div class="portal-modal portal-mobile-sheet" id="portal-share-modal" aria-hidden="true">
     <div class="portal-modal-backdrop" data-modal-close></div>
     <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Поделиться VPN">
@@ -1097,6 +1161,121 @@
             }
           }
         });
+      });
+    })();
+
+    (() => {
+      const sheet = document.querySelector("#portal-topup-modal");
+      if (!sheet) return;
+
+      const amountButtons = Array.from(sheet.querySelectorAll("[data-topup-amount]"));
+      const amountInput = sheet.querySelector("[data-topup-amount-input]");
+      const promoInput = sheet.querySelector("[data-topup-promo]");
+      const promoApplyButton = sheet.querySelector("[data-topup-promo-apply]");
+      const submitButton = sheet.querySelector("[data-topup-submit]");
+      const submitLabel = submitButton?.querySelector("[data-button-label]");
+      const message = sheet.querySelector("[data-topup-message]");
+      const csrfToken = submitButton?.dataset.csrfToken || "";
+      const originalSubmitText = submitLabel?.textContent || "Перейти к оплате";
+
+      const setMessage = (text, type = "") => {
+        if (!message) return;
+        message.textContent = text || "";
+        message.dataset.state = type;
+      };
+
+      const setLoading = (isLoading) => {
+        if (!submitButton) return;
+        submitButton.disabled = isLoading;
+        if (submitLabel) {
+          submitLabel.textContent = isLoading ? "Создаём оплату..." : originalSubmitText;
+        }
+      };
+
+      const selectedAmount = () => Number(amountInput?.value || amountButtons[0]?.dataset.topupAmount || 0);
+
+      amountButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+          amountButtons.forEach((item) => item.classList.toggle("is-active", item === button));
+          if (amountInput) {
+            amountInput.value = button.dataset.topupAmount || "";
+          }
+          setMessage("");
+        });
+      });
+
+      amountInput?.addEventListener("input", () => {
+        amountButtons.forEach((button) => {
+          button.classList.toggle("is-active", Number(button.dataset.topupAmount) === selectedAmount());
+        });
+      });
+
+      promoApplyButton?.addEventListener("click", async () => {
+        const code = (promoInput?.value || "").trim();
+        if (!code) {
+          setMessage("Введите промокод.", "error");
+          return;
+        }
+        promoApplyButton.disabled = true;
+        setMessage("Проверяем промокод...");
+        try {
+          const response = await fetch("/api/promo/apply", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ csrf_token: csrfToken, code }),
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.message || "Промокод не применён.");
+          }
+          if (promoInput) promoInput.dataset.applied = "true";
+          setMessage(payload.message || "Промокод применён.", "success");
+        } catch (error) {
+          setMessage(error.message || "Не удалось применить промокод.", "error");
+        } finally {
+          promoApplyButton.disabled = false;
+        }
+      });
+
+      submitButton?.addEventListener("click", async () => {
+        const amount = selectedAmount();
+        if (!Number.isFinite(amount) || amount <= 0) {
+          setMessage("Введите сумму пополнения.", "error");
+          return;
+        }
+        setLoading(true);
+        setMessage("Создаём платёж...");
+        try {
+          const response = await fetch("/api/payments/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              csrf_token: csrfToken,
+              amount,
+              promo_code: (promoInput?.value || "").trim(),
+              source: "portal_mobile",
+            }),
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.message || "Не удалось создать оплату.");
+          }
+          const confirmationUrl = payload.confirmation_url || payload.payment_url;
+          if (confirmationUrl) {
+            const telegramWebApp = window.Telegram?.WebApp;
+            if (telegramWebApp?.openLink) {
+              telegramWebApp.openLink(confirmationUrl);
+            } else {
+              window.location.href = confirmationUrl;
+            }
+            return;
+          }
+          setMessage(payload.message || "Платёж создан.", "success");
+        } catch (error) {
+          setMessage(error.message || "Не удалось создать оплату.", "error");
+        } finally {
+          setLoading(false);
+        }
       });
     })();
 

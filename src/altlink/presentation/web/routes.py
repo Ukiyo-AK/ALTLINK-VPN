@@ -200,7 +200,16 @@ def user_status_label(value) -> str:
 def payment_status_label(value) -> str:
     status = getattr(value, "value", value)
     raw_status = str(status)
-    if raw_status in {"Зачислено", "Отклонён", "Отменён", "Новый"}:
+    if raw_status in {
+        "Зачислено",
+        "Отклонён",
+        "Отменён",
+        "Новый",
+        "Оплачен",
+        "Ожидает оплаты",
+        "Ожидает подтверждения",
+        "Истёк",
+    }:
         return raw_status
     return {
         "approved": "Зачислено",
@@ -1729,6 +1738,67 @@ async def portal_topup(request: Request):
             return portal_login_redirect()
     set_flash(request, "Пополнение через сайт пока скрыто. Используйте клиентский бот.", "warning")
     return RedirectResponse("/portal", status_code=303)
+
+
+@router.post("/api/payments/create")
+async def portal_payment_create(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    if body.get("csrf_token") != request.session.get("csrf_token"):
+        return JSONResponse({"success": False, "message": "Некорректный CSRF токен."}, status_code=400)
+
+    try:
+        amount = Decimal(str(body.get("amount") or "0"))
+    except Exception:
+        return JSONResponse({"success": False, "message": "Введите корректную сумму."}, status_code=400)
+    if amount <= 0:
+        return JSONResponse({"success": False, "message": "Введите сумму пополнения."}, status_code=400)
+
+    source = str(body.get("source") or "portal").strip()[:32] or "portal"
+    promo_code = str(body.get("promo_code") or "").strip()[:64]
+    comment = source if not promo_code else f"{source}; promo={promo_code}"
+
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return JSONResponse({"success": False, "message": "Нужно войти в кабинет."}, status_code=401)
+        try:
+            checkout = await hub.topups.create_checkout(user.id, amount, comment=comment)
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+
+        if checkout.payment_url:
+            return JSONResponse(
+                {
+                    "success": True,
+                    "payment_id": checkout.request.id,
+                    "confirmation_url": checkout.payment_url,
+                    "payment_url": checkout.payment_url,
+                    "provider": checkout.provider,
+                }
+            )
+        if checkout.auto_completed:
+            return JSONResponse(
+                {
+                    "success": True,
+                    "payment_id": checkout.request.id,
+                    "confirmation_url": None,
+                    "provider": checkout.provider,
+                    "message": f"Баланс пополнен на {format_rub_amount(amount)} ₽.",
+                }
+            )
+        return JSONResponse(
+            {
+                "success": False,
+                "payment_id": checkout.request.id,
+                "confirmation_url": None,
+                "provider": checkout.provider,
+                "message": "Онлайн-оплата сейчас недоступна. Попробуйте позже или используйте бот.",
+            },
+            status_code=409,
+        )
 
 
 @router.post("/api/promo/apply")
