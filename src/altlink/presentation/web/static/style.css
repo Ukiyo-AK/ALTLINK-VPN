@@ -904,6 +904,12 @@ textarea {
 
 .button.full { width: 100%; }
 
+.button svg {
+  flex: 0 0 auto;
+  width: 1.08rem;
+  height: 1.08rem;
+}
+
 .button.compact {
   padding: 0.62rem 0.9rem;
   border-radius: 0.85rem;
@@ -3948,5 +3954,119 @@ html[data-theme="dark"] .portal-section-nav a {
 
   .portal-mobile-balance {
     font-size: clamp(2.25rem, 14vw, 3.4rem);
+  }
+}
+
+@media (max-width: 980px) {
+  .portal-app-page .portal-app-topbar {
+    margin-bottom: 0.35rem;
+  }
+
+  .portal-app-page .portal-brand {
+    max-width: 100%;
+    align-items: center;
+  }
+
+  .portal-app-page .portal-brand .muted {
+    display: none !important;
+  }
+
+  .portal-app-page .portal-brand > div > strong {
+    display: block;
+    font-size: 1rem;
+    line-height: 1;
+    letter-spacing: -0.045em;
+  }
+
+  .portal-app-page #portal-home .portal-page-head h1 {
+    font-size: clamp(3rem, 14vw, 5.1rem);
+    line-height: 0.94;
+    letter-spacing: -0.085em;
+    overflow-wrap: anywhere;
+  }
+
+  .portal-app-page .portal-mobile-home {
+    gap: 0.72rem;
+  }
+
+  .portal-mobile-balance-card {
+    padding: 0.28rem 0 0;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .portal-mobile-balance {
+    font-size: clamp(2.35rem, 11vw, 3.85rem);
+    line-height: 0.98;
+    letter-spacing: -0.075em;
+  }
+
+  .portal-mobile-plan-line {
+    margin-top: 0.55rem;
+  }
+
+  .portal-mobile-home-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.62rem;
+    margin-top: 0.18rem;
+  }
+
+  .portal-mobile-action-button {
+    min-height: 3.25rem;
+    padding: 0.75rem 0.72rem;
+    gap: 0.42rem;
+    border-radius: 1rem;
+    font-size: 0.92rem;
+    font-weight: 900;
+    line-height: 1.1;
+  }
+
+  .portal-mobile-action-button svg {
+    width: 1.12rem;
+    height: 1.12rem;
+  }
+
+  .portal-mobile-action-button span {
+    min-width: 0;
+  }
+
+  .portal-mobile-connect-card,
+  .portal-mobile-referral-teaser,
+  .portal-mobile-trial-card {
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .portal-icon-button {
+    width: 2.55rem;
+    min-width: 2.55rem;
+    height: 2.55rem;
+    min-height: 2.55rem;
+    padding: 0;
+    border-radius: 999px;
+  }
+
+  .portal-icon-button svg {
+    width: 1.16rem;
+    height: 1.16rem;
+  }
+}
+
+@media (max-width: 430px) {
+  .portal-app-page #portal-home .portal-page-head h1 {
+    font-size: clamp(2.7rem, 14vw, 4.35rem);
+  }
+
+  .portal-mobile-balance {
+    font-size: clamp(2.15rem, 11vw, 3.25rem);
+  }
+
+  .portal-mobile-action-button {
+    font-size: 0.85rem;
   }
 }

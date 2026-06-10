@@ -86,8 +86,8 @@
         </section>
         {% endif %}
 
-        <section class="portal-mobile-home stack">
-          <article class="panel portal-mobile-balance-card">
+        <section class="portal-mobile-home">
+          <div class="portal-mobile-balance-card">
             <div class="portal-mobile-balance">{{ portal_user.balance_rub|rub }} ₽</div>
             <div class="portal-mobile-plan-line">
               {% if portal_subscription and portal_subscription.plan %}
@@ -107,10 +107,10 @@
                 выберите тариф для подключения
               {% endif %}
             </div>
-          </article>
+          </div>
 
           {% if portal_trial_available %}
-          <article class="panel portal-mobile-trial-card stack">
+          <article class="portal-mobile-trial-card stack">
             <h2>Активируйте бесплатный пробный период на 2 дня</h2>
             <div class="portal-mobile-benefits">
               <span>безлимитный трафик</span>
@@ -118,23 +118,31 @@
             </div>
             <form method="post" action="/portal/trial">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" class="button full" {% if not portal_channel_ok %}disabled{% endif %}>Активировать бесплатно</button>
+              <button type="submit" class="button full" {% if not portal_channel_ok %}disabled{% endif %}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 20 5.6v6.2c0 5-3.4 8.7-8 10.2-4.6-1.5-8-5.2-8-10.2V5.6L12 2Zm3.8 7.3a1 1 0 0 0-1.4 0L11 12.7l-1.4-1.4a1 1 0 0 0-1.4 1.4l2.1 2.1a1 1 0 0 0 1.4 0l4.1-4.1a1 1 0 0 0 0-1.4Z" fill="currentColor"/></svg>
+                <span>Активировать бесплатно</span>
+              </button>
             </form>
           </article>
           {% endif %}
 
+          <div class="portal-mobile-home-actions">
           {% if portal_subscription_payload %}
-          <article class="panel stack copy-link-card portal-mobile-connect-card" data-copy-root data-copy-text="{{ portal_subscription_payload }}">
-            <button type="button" class="button full" data-copy-button>Скопировать ссылку на подключение</button>
+          <div class="copy-link-card portal-mobile-connect-card" data-copy-root data-copy-text="{{ portal_subscription_payload }}">
+            <button type="button" class="button full portal-mobile-action-button" data-copy-button>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7.5A3.5 3.5 0 0 1 11.5 4H18a2 2 0 0 1 2 2v10.5A3.5 3.5 0 0 1 16.5 20H10a2 2 0 0 1-2-2V7.5Zm3.5-1.5A1.5 1.5 0 0 0 10 7.5V18h6.5a1.5 1.5 0 0 0 1.5-1.5V6h-6.5ZM4 10a3 3 0 0 1 3-3v2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1v2a3 3 0 0 1-3-3v-7Z" fill="currentColor"/></svg>
+              <span data-button-label>Копировать ссылку</span>
+            </button>
             <div class="visually-hidden" data-copy-target tabindex="-1">{{ portal_subscription_payload }}</div>
-            <p class="muted" data-copy-hint>Добавьте ссылку в совместимое приложение.</p>
-          </article>
+            <span class="visually-hidden" data-copy-hint></span>
+          </div>
           {% endif %}
 
-          <article class="panel stack portal-mobile-referral-teaser">
-            <button type="button" class="button ghost full" data-modal-open="portal-share-modal">Поделиться VPN</button>
-            <p class="muted">Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который оплатит тариф.</p>
-          </article>
+          <button type="button" class="button ghost full portal-mobile-action-button" data-modal-open="portal-share-modal">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 16.1c-.8 0-1.5.3-2 .8L8.9 12.8a4 4 0 0 0 0-1.6L16 7.1A3 3 0 1 0 15 5l-7.1 4.1a3 3 0 1 0 0 5.8L15 19a3 3 0 1 0 3-2.9Z" fill="currentColor"/></svg>
+            <span>Поделиться VPN</span>
+          </button>
+          </div>
         </section>
 
         <section class="portal-home-grid portal-home-single">
@@ -658,7 +666,7 @@
     <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Выбор тарифа">
       <div class="split">
         <h2>Выбор тарифа</h2>
-        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
       </div>
       <div class="stack compact">
         {% for group in portal_plan_groups if group.family == 'unlimited' %}
@@ -714,13 +722,19 @@
     <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Поделиться VPN">
       <div class="split">
         <h2>Поделиться VPN</h2>
-        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
       </div>
       <p class="muted">Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который оплатит тариф.</p>
       <div class="stack compact">
-        <button type="button" class="button full" data-share-referral data-share-url="{{ portal_referral_link or '' }}">Быстро отправить</button>
+        <button type="button" class="button full" data-share-referral data-share-url="{{ portal_referral_link or '' }}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.8A3.8 3.8 0 0 1 8.8 9H11V6.4a1 1 0 0 1 1.7-.7l5.6 5.6a1 1 0 0 1 0 1.4l-5.6 5.6a1 1 0 0 1-1.7-.7V15H8.8A1.8 1.8 0 0 0 7 16.8V18a1 1 0 1 1-2 0v-1.2Z" fill="currentColor"/></svg>
+          <span data-button-label>Быстро отправить</span>
+        </button>
         <div class="copy-link-card" data-copy-root data-copy-text="{{ portal_referral_link or '' }}">
-          <button type="button" class="button ghost full" data-copy-button {% if not portal_referral_link %}disabled{% endif %}>Скопировать ссылку</button>
+          <button type="button" class="button ghost full" data-copy-button {% if not portal_referral_link %}disabled{% endif %}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7.5A3.5 3.5 0 0 1 11.5 4H18a2 2 0 0 1 2 2v10.5A3.5 3.5 0 0 1 16.5 20H10a2 2 0 0 1-2-2V7.5Zm3.5-1.5A1.5 1.5 0 0 0 10 7.5V18h6.5a1.5 1.5 0 0 0 1.5-1.5V6h-6.5ZM4 10a3 3 0 0 1 3-3v2a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1v2a3 3 0 0 1-3-3v-7Z" fill="currentColor"/></svg>
+            <span data-button-label>Скопировать ссылку</span>
+          </button>
           <div class="visually-hidden" data-copy-target tabindex="-1">{{ portal_referral_link or '' }}</div>
           <p class="muted" data-copy-hint>{% if portal_referral_link %}Реферальная ссылка готова.{% else %}Ссылка будет создана позже.{% endif %}</p>
         </div>
@@ -733,7 +747,7 @@
     <div class="portal-modal-card portal-support-sheet" role="dialog" aria-modal="true" aria-label="Поддержка">
       <div class="split">
         <h2>Поддержка</h2>
-        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
       </div>
       <div class="portal-sheet-tabs" role="tablist">
         <button type="button" class="is-active" data-support-tab="chat">Чат</button>
@@ -812,7 +826,7 @@
     <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Настроить подписку">
       <div class="split">
         <h2>Настроить подписку</h2>
-        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
       </div>
       <div class="portal-metrics-grid">
         <div class="portal-metric">
@@ -852,7 +866,7 @@
     <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Мои устройства">
       <div class="split">
         <h2>Мои устройства</h2>
-        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
       </div>
       <div class="portal-mobile-list">
         {% for device in portal_devices %}
@@ -879,7 +893,7 @@
     <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="История платежей">
       <div class="split">
         <h2>История платежей</h2>
-        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
       </div>
       <div class="portal-mobile-list">
         {% for payment in portal_payments %}
@@ -901,7 +915,7 @@
     <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="QR-код подписки">
       <div class="split">
         <h2>QR-код</h2>
-        <button class="button ghost compact" type="button" data-modal-close>Закрыть</button>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
       </div>
       <div class="qr-box">
         <img src="{{ portal_qr_data_uri }}" alt="QR-код">
@@ -993,15 +1007,23 @@
         const target = root.querySelector("[data-copy-target]");
         const button = root.querySelector("[data-copy-button]");
         const hint = root.querySelector("[data-copy-hint]");
-        const originalButtonText = button?.textContent || "";
+        const buttonLabel = button?.querySelector("[data-button-label]");
+        const originalButtonText = buttonLabel?.textContent || button?.textContent || "";
         const originalHintText = hint?.textContent || "";
+        const setButtonText = (text) => {
+          if (buttonLabel) {
+            buttonLabel.textContent = text;
+          } else if (button) {
+            button.textContent = text;
+          }
+        };
         if (!payload || !target) {
           return;
         }
 
         const restore = () => {
           target.classList.remove("is-copied");
-          if (button) button.textContent = originalButtonText;
+          if (button) setButtonText(originalButtonText);
           if (hint) hint.textContent = originalHintText;
         };
 
@@ -1009,7 +1031,7 @@
           try {
             await copyText(payload);
             target.classList.add("is-copied");
-            if (button) button.textContent = "Скопировано";
+            if (button) setButtonText("Скопировано");
             if (hint) hint.textContent = "Скопировано в буфер обмена.";
             window.setTimeout(restore, 1800);
           } catch (error) {
@@ -1030,12 +1052,21 @@
 
     (() => {
       document.querySelectorAll("[data-share-referral]").forEach((button) => {
-        const originalText = button.textContent;
+        const buttonLabel = button.querySelector("[data-button-label]");
+        const originalText = buttonLabel?.textContent || button.textContent;
         const shareUrl = button.dataset.shareUrl || "";
         const setTemporaryText = (text) => {
-          button.textContent = text;
+          if (buttonLabel) {
+            buttonLabel.textContent = text;
+          } else {
+            button.textContent = text;
+          }
           window.setTimeout(() => {
-            button.textContent = originalText;
+            if (buttonLabel) {
+              buttonLabel.textContent = originalText;
+            } else {
+              button.textContent = originalText;
+            }
           }, 1800);
         };
 
