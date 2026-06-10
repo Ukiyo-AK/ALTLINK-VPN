@@ -4626,3 +4626,39 @@ html[data-theme="dark"] .portal-section-nav a {
     background: rgba(232, 248, 243, 0.9);
   }
 }
+
+@media (max-width: 980px) {
+  .portal-app-page .portal-app-topbar {
+    min-height: 0 !important;
+    height: auto;
+    padding-block: 0.38rem !important;
+    padding-inline: 0.78rem !important;
+    display: flex;
+    align-items: center !important;
+  }
+
+  .portal-app-page .portal-brand {
+    min-height: 0 !important;
+    height: 3rem;
+    display: inline-flex;
+    align-items: center !important;
+    margin: 0 !important;
+  }
+
+  .portal-app-page .portal-brand-logo-desktop {
+    display: block;
+    align-self: center;
+    width: 3rem;
+    height: 3rem;
+  }
+
+  .portal-app-page .portal-brand > div {
+    display: flex;
+    align-items: center;
+    min-height: 3rem;
+  }
+
+  .portal-app-page .portal-brand > div > strong {
+    font-size: clamp(1.46rem, 6vw, 1.68rem);
+  }
+}
