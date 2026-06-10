@@ -404,12 +404,10 @@
             {% endif %}
           </div>
 
-          <form method="post" action="/portal/link/revoke" class="portal-revoke-form" onsubmit="return confirm('Перевыпустить ссылку? Старая ссылка перестанет работать, её нужно будет заново добавить в приложение.')">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <input type="hidden" name="confirm" value="1">
-            <button type="submit" class="button danger compact">Перевыпустить ссылку</button>
+          <div class="portal-revoke-form">
+            <button type="button" class="button danger compact" data-modal-open="portal-link-revoke-confirm-modal">Перевыпустить ссылку</button>
             <span class="muted">Старая ссылка и старые VLESS-ключи перестанут работать.</span>
-          </form>
+          </div>
           {% else %}
           <p class="muted">Ссылка появится после активации теста или тарифа.</p>
           {% endif %}
@@ -929,17 +927,52 @@
       <div class="stack compact">
         <a class="button ghost full" href="/portal/vless-keys">Скачать VLESS-ключи</a>
         <a class="button ghost full" href="{{ connection_help_url }}">Открыть инструкцию</a>
-        <form method="post" action="/portal/link/revoke" onsubmit="return confirm('Перевыпустить ссылку? Старая ссылка перестанет работать, её нужно будет заново добавить в приложение.')">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <input type="hidden" name="confirm" value="1">
-          <button type="submit" class="button danger full">Перевыпустить ссылку</button>
-        </form>
+        <button type="button" class="button danger full" data-modal-open="portal-link-revoke-confirm-modal">Перевыпустить ссылку</button>
       </div>
       {% else %}
       <p class="muted">Ссылка появится после активации теста или тарифа.</p>
       {% endif %}
     </div>
   </div>
+
+  <div class="portal-modal portal-mobile-sheet" id="portal-link-revoke-confirm-modal" aria-hidden="true">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Подтвердить перевыпуск ссылки">
+      <div class="split">
+        <h2>Перевыпустить ссылку?</h2>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
+      </div>
+      <p class="muted">Старая ссылка перестанет работать, её нужно будет заново добавить в приложение.</p>
+      <div class="toolbar">
+        <form method="post" action="/portal/link/revoke">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="confirm" value="1">
+          <button type="submit" class="button danger full">Перевыпустить</button>
+        </form>
+        <button type="button" class="button ghost full" data-modal-close>Отмена</button>
+      </div>
+    </div>
+  </div>
+
+  {% if portal_link_reissued and portal_subscription_payload %}
+  <div class="portal-modal portal-mobile-sheet is-open" id="portal-link-reissued-modal" aria-hidden="false">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Новая ссылка подписки">
+      <div class="split">
+        <h2>Ссылка перевыпущена</h2>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
+      </div>
+      <p class="muted">Скопируйте новую ссылку и заново добавьте её в приложение. Старая ссылка больше не работает.</p>
+      <div class="copy-link-card" data-copy-root data-copy-text="{{ portal_subscription_payload }}">
+        <div class="subscription-link-preview" data-copy-target role="button" tabindex="0" aria-label="Скопировать новую ссылку">
+          <span>{{ portal_subscription_payload[:32] }}{% if portal_subscription_payload|length > 52 %}…{{ portal_subscription_payload[-14:] }}{% endif %}</span>
+        </div>
+        <button type="button" class="button full" data-copy-button>Скопировать новую ссылку</button>
+        <p class="muted" data-copy-hint>Кнопка копирует полный адрес.</p>
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="portal-modal portal-mobile-sheet" id="portal-devices-modal" aria-hidden="true">
     <div class="portal-modal-backdrop" data-modal-close></div>

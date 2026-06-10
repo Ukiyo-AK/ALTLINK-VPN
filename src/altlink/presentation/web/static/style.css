@@ -2636,6 +2636,31 @@ html[data-theme="dark"] .portal-login-qr-card {
   border-color: rgba(188, 77, 84, 0.22);
 }
 
+html[data-theme="dark"] .server-latency-chip {
+  color: rgba(226, 251, 244, 0.9);
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(116, 245, 211, 0.2);
+}
+
+html[data-theme="dark"] .server-latency-chip-pending,
+html[data-theme="dark"] .server-latency-chip-muted {
+  color: rgba(222, 245, 238, 0.78);
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(116, 245, 211, 0.14);
+}
+
+html[data-theme="dark"] .server-latency-chip-ready {
+  color: #9ff4dc;
+  background: rgba(33, 214, 173, 0.13);
+  border-color: rgba(33, 214, 173, 0.34);
+}
+
+html[data-theme="dark"] .server-latency-chip-error {
+  color: #ffabc7;
+  background: rgba(169, 54, 119, 0.16);
+  border-color: rgba(255, 171, 199, 0.24);
+}
+
 .portal-latency-box {
   margin-top: 0.35rem;
   padding-top: 0.25rem;
@@ -4489,9 +4514,9 @@ html[data-theme="dark"] .portal-section-nav a {
   }
 
   .portal-app-page .portal-server-table tr {
-    flex: 0 0 clamp(15.6rem, 72vw, 18.4rem) !important;
-    width: clamp(15.6rem, 72vw, 18.4rem);
-    max-width: 18.4rem;
+    flex: 0 0 clamp(14.2rem, 64vw, 16.6rem) !important;
+    width: clamp(14.2rem, 64vw, 16.6rem);
+    max-width: 16.6rem;
     scroll-snap-align: start;
   }
 }
@@ -4507,8 +4532,8 @@ html[data-theme="dark"] .portal-section-nav a {
   }
 
   .portal-app-page .portal-server-table tr {
-    flex-basis: min(74vw, 17.5rem) !important;
-    width: min(74vw, 17.5rem);
+    flex-basis: min(68vw, 16rem) !important;
+    width: min(68vw, 16rem);
   }
 }
 
@@ -4631,7 +4656,7 @@ html[data-theme="dark"] .portal-section-nav a {
   .portal-app-page .portal-app-topbar {
     min-height: 0 !important;
     height: auto;
-    padding-block: 0.38rem !important;
+    padding-block: 0.48rem !important;
     padding-inline: 0.78rem !important;
     display: flex;
     align-items: center !important;

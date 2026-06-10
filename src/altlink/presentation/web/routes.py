@@ -790,6 +790,8 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
 
     current_plan = subscription.plan if subscription else None
     current_plan_code = getattr(current_plan.code, "value", current_plan.code) if current_plan else None
+    request_session = getattr(request, "session", None)
+    portal_link_reissued = bool(request_session.pop("portal_link_reissued", False)) if request_session is not None else False
 
     return {
         "title": "Личный кабинет",
@@ -811,6 +813,7 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_devices": portal_devices,
         "portal_devices_error": portal_devices_error,
         "portal_subscription_payload": payload,
+        "portal_link_reissued": portal_link_reissued,
         "portal_support_requests": support_requests,
         "portal_active_support_request": active_support_request,
         "portal_referral_count": referral["count"],
@@ -1702,6 +1705,7 @@ async def portal_link_revoke(request: Request):
             return portal_login_redirect()
         try:
             await hub.accounts.revoke_user_subscription_link(user.id)
+            request.session["portal_link_reissued"] = True
             set_flash(request, "Ссылка перевыпущена. Старую ссылку нужно заменить в приложении.")
         except (ConflictError, NotFoundError, ServiceError) as exc:
             set_flash(request, str(exc), "danger")
