@@ -4514,10 +4514,10 @@ html[data-theme="dark"] .portal-section-nav a {
 
 @media (max-width: 980px) {
   .portal-app-page .portal-app-topbar {
-    min-height: 4.25rem;
+    min-height: unset;
     display: flex;
     align-items: center;
-    padding: 0.72rem 0.92rem;
+    padding: 0.48rem 0.78rem;
     border: 1px solid rgba(7, 148, 127, 0.14);
     border-radius: 1.25rem;
     background: rgba(255, 255, 255, 0.9);
@@ -4531,7 +4531,7 @@ html[data-theme="dark"] .portal-section-nav a {
   }
 
   .portal-app-page .portal-brand {
-    min-height: 3rem;
+    min-height: unset;
     display: inline-flex;
     align-items: center;
     gap: 0.82rem;
@@ -4558,7 +4558,7 @@ html[data-theme="dark"] .portal-section-nav a {
   }
 
   .portal-app-page .portal-brand > div > strong {
-    font-size: 1.22rem;
+    font-size: clamp(1.34rem, 5.6vw, 1.52rem);
     line-height: 1;
     letter-spacing: -0.045em;
   }
