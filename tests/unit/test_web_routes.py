@@ -117,6 +117,12 @@ def test_latency_quality_label_uses_positive_landing_scale():
 
 
 def test_portal_user_facing_status_labels_are_translated():
+    assert web_routes.payment_status_label("approved") == "Зачислено"
+    assert web_routes.payment_status_label("new") == "Новый"
+    assert web_routes.payment_status_label("Зачислено") == "Зачислено"
+    assert web_routes.payment_status_label("Отклонён") == "Отклонён"
+    assert web_routes.payment_status_label("Отменён") == "Отменён"
+    assert web_routes.payment_status_label("Новый") == "Новый"
     assert web_routes.payment_status_label("succeeded") == "Оплачен"
     assert web_routes.payment_status_label("paid") == "Оплачен"
     assert web_routes.payment_status_label("pending") == "Ожидает оплаты"

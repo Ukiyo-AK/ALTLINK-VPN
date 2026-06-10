@@ -1946,8 +1946,25 @@ async def start(message: Message, container: AppContainer):
             return
         if len(start_payload) > 1 and start_payload[1].startswith("ref_"):
             await hub.accounts.bind_referrer(provisional_user.id, start_payload[1].removeprefix("ref_"))
+        pay_amount: Decimal | None = None
+        if len(start_payload) > 1 and start_payload[1].startswith("pay_"):
+            try:
+                pay_amount = Decimal(start_payload[1].removeprefix("pay_").replace(",", "."))
+            except (InvalidOperation, ValueError):
+                pay_amount = None
         user = await ensure_client_access(message, container, hub)
         if user is None:
+            return
+        if pay_amount is not None:
+            if pay_amount < MIN_TOPUP_AMOUNT_RUB:
+                await answer_or_edit(
+                    message,
+                    f"Минимальная сумма пополнения — {MIN_TOPUP_AMOUNT_RUB:.0f} ₽.",
+                    reply_markup=balance_actions().as_markup(),
+                )
+                return
+            await send_reply_menu(message, force=True)
+            await continue_topup_flow(message, container, user=user, amount=pay_amount)
             return
         subscription = await hub.accounts.get_current_subscription(user.id)
         latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription

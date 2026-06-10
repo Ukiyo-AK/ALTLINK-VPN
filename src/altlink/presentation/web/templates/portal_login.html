@@ -10,6 +10,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
   {% include "_theme_bootstrap.html" %}
   <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body class="portal-login-page">
   <div class="center-shell">
@@ -34,6 +35,10 @@
             <p class="muted">
               Подтвердите вход через Telegram-бота ALTLINK. Это займёт несколько секунд.
             </p>
+          </div>
+          <div class="panel stack portal-login-status-card" id="portal-miniapp-status" hidden>
+            <strong>Открываем личный кабинет…</strong>
+            <div class="muted">Проверяем Telegram Mini App. Если вход не получится, ниже останется обычная кнопка входа.</div>
           </div>
 
           {% if telegram_login_enabled and telegram_login_url %}
@@ -106,6 +111,33 @@
   {% if telegram_login_enabled and telegram_login_url %}
   <script>
     (() => {
+      const miniAppStatus = document.getElementById("portal-miniapp-status");
+      const telegram = window.Telegram?.WebApp;
+      const initData = telegram?.initData;
+      if (initData && miniAppStatus) {
+        miniAppStatus.hidden = false;
+        telegram.ready?.();
+        fetch("/api/auth/telegram-webapp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ init_data: initData }),
+        })
+          .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
+          .then(({ ok, payload }) => {
+            if (ok && payload.redirect_url) {
+              miniAppStatus.querySelector("strong").textContent = "Вход подтверждён, открываем кабинет…";
+              window.location.href = payload.redirect_url;
+              return;
+            }
+            miniAppStatus.querySelector("strong").textContent = "Не удалось войти автоматически";
+            miniAppStatus.querySelector(".muted").textContent = payload.message || "Войдите через Telegram-кнопку ниже.";
+          })
+          .catch(() => {
+            miniAppStatus.querySelector("strong").textContent = "Не удалось войти автоматически";
+            miniAppStatus.querySelector(".muted").textContent = "Проверьте соединение или войдите через Telegram-кнопку ниже.";
+          });
+      }
+
       const statusNode = document.getElementById("portal-login-status");
       const hintNode = document.getElementById("portal-login-hint");
       const reloadLink = document.getElementById("portal-login-reload");

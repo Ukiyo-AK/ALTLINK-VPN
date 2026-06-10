@@ -69,6 +69,37 @@ class SupportRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="support_requests")
     resolved_by_admin: Mapped["AdminUser | None"] = relationship(back_populates="resolved_support_requests")
+    messages: Mapped[list["SupportMessage"]] = relationship(
+        back_populates="support_request",
+        cascade="all, delete-orphan",
+        order_by="SupportMessage.created_at.asc()",
+    )
+
+
+class SupportMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "support_messages"
+
+    support_request_id: Mapped[str] = mapped_column(
+        ForeignKey("support_requests.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    admin_id: Mapped[str | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    sender_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    support_request: Mapped["SupportRequest"] = relationship(back_populates="messages")
+    user: Mapped["User | None"] = relationship(back_populates="support_messages")
+    admin: Mapped["AdminUser | None"] = relationship(back_populates="support_messages")
 
 
 class OnlineSessionCache(UUIDPrimaryKeyMixin, TimestampMixin, Base):

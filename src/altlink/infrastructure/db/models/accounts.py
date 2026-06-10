@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from altlink.infrastructure.db.models.ops import (
         Notification,
         OnlineSessionCache,
+        SupportMessage,
         SupportRequest,
         SystemEvent,
         SystemSetting,
@@ -71,6 +72,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     promo_redemptions: Mapped[list["PromoCodeRedemption"]] = relationship(back_populates="user")
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user")
     support_requests: Mapped[list["SupportRequest"]] = relationship(back_populates="user")
+    support_messages: Mapped[list["SupportMessage"]] = relationship(back_populates="user")
     server_accesses: Mapped[list["UserServerAccess"]] = relationship(back_populates="user")
     online_sessions: Mapped[list["OnlineSessionCache"]] = relationship(back_populates="user")
     traffic_snapshots: Mapped[list["TrafficSnapshot"]] = relationship(back_populates="user")
@@ -95,3 +97,4 @@ class AdminUser(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     updated_settings: Mapped[list["SystemSetting"]] = relationship(back_populates="updated_by_admin")
     system_events: Mapped[list["SystemEvent"]] = relationship(back_populates="actor_admin")
     resolved_support_requests: Mapped[list["SupportRequest"]] = relationship(back_populates="resolved_by_admin")
+    support_messages: Mapped[list["SupportMessage"]] = relationship(back_populates="admin")

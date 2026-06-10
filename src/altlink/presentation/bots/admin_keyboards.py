@@ -44,6 +44,8 @@ MAINTENANCE_CANCEL = "adm:mc"
 SERVER_OPEN_PREFIX = "adm:so"
 SERVER_DELETE_PREFIX = "adm:sd"
 SERVER_DELETE_CONFIRM_PREFIX = "adm:sc"
+SUPPORT_REPLY_PREFIX = "adm:sr"
+SUPPORT_RESOLVE_PREFIX = "adm:ss"
 
 
 def admin_menu() -> ReplyKeyboardMarkup:
@@ -235,9 +237,10 @@ def support_request_actions(
         builder.button(text="▶️", callback_data=f"admin:support:page:{next_index}")
         builder.adjust(3)
     if not is_resolved:
-        builder.button(text="Закрыть запрос", callback_data=f"admin:support:resolve:{request_id}", style="success")
+        builder.button(text="Ответить", callback_data=f"{SUPPORT_REPLY_PREFIX}:{request_id}", style="primary")
+        builder.button(text="Закрыть запрос", callback_data=f"{SUPPORT_RESOLVE_PREFIX}:{request_id}", style="success")
     builder.button(text="Обновить список", callback_data="admin:support:list")
-    builder.adjust(*( [3] if total > 1 else [] ), *( [1] if not is_resolved else [] ), 1)
+    builder.adjust(*( [3] if total > 1 else [] ), *( [2] if not is_resolved else [] ), 1)
     return builder
 
 

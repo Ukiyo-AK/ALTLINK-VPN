@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 from datetime import UTC, datetime
+from urllib.parse import parse_qsl
 
 import httpx
 
@@ -42,6 +44,49 @@ def verify_telegram_auth_payload(
         hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(computed_hash, auth_hash)
+
+
+def verify_telegram_webapp_init_data(
+    init_data: str,
+    *,
+    bot_token: str,
+    max_age_seconds: int,
+) -> dict | None:
+    if not init_data or not bot_token:
+        return None
+
+    pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+    auth_hash = pairs.pop("hash", None)
+    auth_date = pairs.get("auth_date")
+    if not auth_hash or not auth_date:
+        return None
+
+    try:
+        auth_ts = int(auth_date)
+    except (TypeError, ValueError):
+        return None
+
+    now_ts = int(datetime.now(UTC).timestamp())
+    if now_ts - auth_ts > max_age_seconds:
+        return None
+
+    data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(pairs.items()))
+    secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
+    computed_hash = hmac.new(
+        secret_key,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(computed_hash, auth_hash):
+        return None
+
+    try:
+        user = json.loads(pairs.get("user") or "{}")
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(user, dict) or not user.get("id"):
+        return None
+    return {"user": user, "auth_date": auth_ts, "raw": pairs}
 
 
 async def check_channel_membership(

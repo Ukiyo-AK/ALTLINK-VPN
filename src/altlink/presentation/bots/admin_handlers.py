@@ -23,6 +23,7 @@ from altlink.application.services.base import ConflictError, NotFoundError, Serv
 from altlink.application.services.registry import AppContainer
 from altlink.domain.enums import (
     BalanceTransactionType,
+    NotificationType,
     PlanCode,
     PromoRewardKind,
     ServerType,
@@ -51,6 +52,8 @@ from altlink.presentation.bots.admin_keyboards import (
     SERVER_DELETE_CONFIRM_PREFIX,
     SERVER_DELETE_PREFIX,
     SERVER_OPEN_PREFIX,
+    SUPPORT_REPLY_PREFIX,
+    SUPPORT_RESOLVE_PREFIX,
     USER_ACTIVATE_PREFIX,
     USER_BALANCE_PREFIX,
     USER_MESSAGE_CANCEL_PREFIX,
@@ -192,6 +195,10 @@ class DatabaseImportStates(StatesGroup):
 
 class MaintenanceStates(StatesGroup):
     waiting_for_add_exception_query = State()
+
+
+class SupportReplyStates(StatesGroup):
+    waiting_for_text = State()
 
 
 async def is_admin(telegram_id: int, container: AppContainer) -> bool:
@@ -473,6 +480,7 @@ def format_activity_summary(summary: dict | None) -> list[str]:
 def format_support_request(item) -> str:
     user = item.user
     status = "закрыт" if item.status == SupportRequestStatus.RESOLVED else "новый"
+    messages = list(getattr(item, "messages", []) or [])
     lines = [
         "Запрос поддержки",
         "",
@@ -482,9 +490,15 @@ def format_support_request(item) -> str:
         f"Статус: {status}",
         f"Создан: {item.created_at:%d.%m.%Y %H:%M}",
         f"Тема: {item.topic}",
-        "",
-        item.message,
     ]
+    if messages:
+        lines.extend(["", "Чат:"])
+        for message in messages[-6:]:
+            sender = "Админ" if message.sender_type == "admin" else "Пользователь"
+            lines.append(f"{sender} · {message.created_at:%d.%m %H:%M}")
+            lines.append(message.message)
+    else:
+        lines.extend(["", item.message])
     if item.resolution_comment:
         lines.extend(["", f"Комментарий закрытия: {item.resolution_comment}"])
     if item.resolved_at:
@@ -2129,7 +2143,77 @@ async def support_request_page(callback: CallbackQuery, container: AppContainer)
     )
 
 
+@router.callback_query(F.data.startswith(f"{SUPPORT_REPLY_PREFIX}:"))
+async def support_reply_prompt(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    request_id = callback.data.split(":")[-1]
+    async with container.hub() as hub:
+        try:
+            item = await hub.support.get_request(request_id)
+        except NotFoundError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+    if item.status == SupportRequestStatus.RESOLVED:
+        await callback.answer("Запрос уже закрыт.", show_alert=True)
+        return
+    await state.set_state(SupportReplyStates.waiting_for_text)
+    await state.update_data(support_request_id=request_id)
+    await render_admin(
+        callback,
+        "Напишите ответ пользователю одним сообщением. Он появится в чате на сайте и будет отправлен уведомлением в клиентский бот.",
+    )
+
+
+@router.message(SupportReplyStates.waiting_for_text)
+async def support_reply_submit(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    state_data = await state.get_data()
+    request_id = str(state_data.get("support_request_id") or "")
+    if not request_id:
+        await state.clear()
+        await render_admin(message, "Не удалось найти запрос. Откройте список поддержки ещё раз.")
+        return
+    async with container.hub() as hub:
+        admin = await hub.accounts.get_admin_by_telegram_id(message.from_user.id)
+        try:
+            await hub.support.add_admin_message(
+                request_id,
+                admin_id=admin.id if admin else None,
+                message=message.text or "",
+            )
+            item = await hub.support.get_request(request_id)
+            await hub.notifications.queue(
+                user_id=item.user_id,
+                notification_type=NotificationType.BROADCAST,
+                message=(
+                    "💬 Поддержка ALTLINK ответила на ваш запрос.\n\n"
+                    f"{message.text or ''}\n\n"
+                    "Ответ также доступен в личном кабинете."
+                ),
+            )
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            await render_admin(message, str(exc))
+            return
+        items = await hub.support.list_requests(limit=20)
+    await state.clear()
+    active_index = next((index for index, current in enumerate(items) if current.id == request_id), 0)
+    current = items[active_index]
+    await render_admin(
+        message,
+        format_support_request_browser(items, active_index),
+        reply_markup=support_request_actions(
+            current.id,
+            current.status == SupportRequestStatus.RESOLVED,
+            index=active_index,
+            total=len(items),
+        ).as_markup(),
+    )
+
+
 @router.callback_query(F.data.startswith("admin:support:resolve:"))
+@router.callback_query(F.data.startswith(f"{SUPPORT_RESOLVE_PREFIX}:"))
 async def resolve_support_request(callback: CallbackQuery, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
         return

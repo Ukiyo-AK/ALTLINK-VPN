@@ -111,9 +111,13 @@ def test_portal_and_admin_user_templates_show_hwid_devices():
 def test_portal_dashboard_has_mobile_section_navigation():
     portal = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
 
-    assert 'class="portal-section-nav"' in portal
+    assert "portal-desktop-nav" in portal
+    assert "mobile-bottom-nav" in portal
+    assert "<svg viewBox=\"0 0 24 24\"" in portal
     assert "data-portal-page-nav" in portal
-    assert "Меню кабинета" not in portal
+    assert "Главная" in portal
+    assert "Подписка" in portal
+    assert "Баланс" in portal
     assert "theme-switcher" in portal
     assert 'data-theme-choice="light"' in portal
     assert 'data-theme-choice="dark"' in portal
@@ -121,26 +125,29 @@ def test_portal_dashboard_has_mobile_section_navigation():
     assert "responsive-table portal-device-table" in portal
     assert "responsive-table portal-server-table" in portal
     assert "responsive-table portal-payments-table" in portal
-    assert "scrollActiveTabIntoView" in portal
     assert "scrollIntoView" in portal
     assert "access_status" in portal
     assert "payment_status" in portal
+    assert "support_status" in portal
+    assert 'action="/portal/support"' in portal
+    assert 'action="/portal/link/revoke"' in portal
+    assert 'href="/portal/vless-keys"' in portal
+    assert 'data-promo-form' in portal
+    assert 'POST"' in portal or 'method: "POST"' in portal
+    assert "Пользовательское соглашение" in portal
+    assert "Политика конфиденциальности" in portal
+    assert "portal-footer" in portal
     assert "admin_comment" not in portal
     assert "user_comment" not in portal
     for page, section_id in (
-        ("overview", "portal-overview"),
-        ("devices", "portal-devices"),
-        ("plans", "portal-plans"),
+        ("home", "portal-home"),
+        ("subscription", "portal-subscription"),
         ("balance", "portal-balance"),
-        ("link", "portal-link"),
-        ("servers", "portal-servers"),
-        ("payments", "portal-payments"),
     ):
         assert f'data-portal-page-link="{page}"' in portal
         assert f'data-portal-page="{page}"' in portal
         assert f'href="#{section_id}"' in portal
         assert f'id="{section_id}"' in portal
-    assert "is-mobile-paged" in portal
     assert "is-portal-page-hidden" in portal
 
 

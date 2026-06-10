@@ -8,21 +8,31 @@ import re
 from decimal import Decimal
 from html import escape
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
+from aiogram import Bot
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
 from altlink.domain.billing import bytes_to_gb_cost
-from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType, TopupStatus
+from altlink.domain.enums import (
+    BalanceTransactionType,
+    NotificationType,
+    PlanCode,
+    PromoRewardKind,
+    ServerType,
+    SupportRequestStatus,
+    TopupStatus,
+)
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
-from altlink.infrastructure.db.models import Subscription, SystemSetting, User
+from altlink.infrastructure.db.models import BalanceTransaction, Subscription, SystemSetting, User
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.monitoring import MonitoringService
+from altlink.presentation.bots.admin_keyboards import support_request_actions
 from altlink.utils.latency import (
     LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY,
     LATENCY_RECHECK_THRESHOLD_MS,
@@ -36,7 +46,11 @@ from altlink.utils.latency import (
 from altlink.utils.devices import hwid_device_view
 from altlink.utils.qr import render_qr_png
 from altlink.utils.security import generate_token
-from altlink.utils.telegram_web import check_channel_membership, verify_telegram_auth_payload
+from altlink.utils.telegram_web import (
+    check_channel_membership,
+    verify_telegram_auth_payload,
+    verify_telegram_webapp_init_data,
+)
 
 router = APIRouter(tags=["web"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -51,7 +65,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260609-portal-polish"
+ASSET_VERSION = "20260610-portal-miniapp"
 COUNTRY_NAMES_RU = {
     "AM": "Армения",
     "AT": "Австрия",
@@ -185,7 +199,12 @@ def user_status_label(value) -> str:
 
 def payment_status_label(value) -> str:
     status = getattr(value, "value", value)
+    raw_status = str(status)
+    if raw_status in {"Зачислено", "Отклонён", "Отменён", "Новый"}:
+        return raw_status
     return {
+        "approved": "Зачислено",
+        "new": "Новый",
         "succeeded": "Оплачен",
         "paid": "Оплачен",
         "pending": "Ожидает оплаты",
@@ -194,7 +213,7 @@ def payment_status_label(value) -> str:
         "cancelled": "Отменён",
         "rejected": "Отклонён",
         "expired": "Истёк",
-    }.get(str(status), "Неизвестный статус")
+    }.get(raw_status, "Неизвестный статус")
 
 
 def access_status_label(value) -> str:
@@ -207,10 +226,34 @@ def access_status_label(value) -> str:
     }.get(str(status), "Статус неизвестен")
 
 
+def support_status_label(item) -> str:
+    if getattr(item, "status", None) == SupportRequestStatus.RESOLVED:
+        return "Закрыт"
+    messages = list(getattr(item, "messages", []) or [])
+    if messages and getattr(messages[-1], "sender_type", "") == "admin":
+        return "Ожидает вашего ответа"
+    return "Ожидает ответа"
+
+
+def vless_keys_file_content(keys: list[str]) -> bytes:
+    lines = [
+        "ALTLINK VLESS keys",
+        "",
+        "Один ключ соответствует одному доступному серверу.",
+        "Импортируйте нужную строку vless:// в совместимое приложение вручную.",
+        "",
+    ]
+    for index, key in enumerate(keys, start=1):
+        config_name = unquote(urlparse(key).fragment).strip() or f"Конфиг {index}"
+        lines.extend([f"{index}. Название конфига: {config_name}", f"Ключ: {key}", ""])
+    return "\n".join(lines).encode("utf-8")
+
+
 templates.env.filters["rub"] = format_rub_amount
 templates.env.filters["user_status"] = user_status_label
 templates.env.filters["payment_status"] = payment_status_label
 templates.env.filters["access_status"] = access_status_label
+templates.env.filters["support_status"] = support_status_label
 
 
 def latency_quality_label(latency_ms) -> str:
@@ -623,6 +666,80 @@ def markdown_to_html(markdown_text: str) -> Markup:
     return Markup("\n".join(blocks))
 
 
+async def notify_admins_about_support_request_from_portal(
+    settings,
+    *,
+    admin_telegram_ids: list[int],
+    user: User,
+    request_id: str,
+    topic: str,
+    message: str,
+) -> None:
+    if not admin_telegram_ids or not settings.admin_bot_token:
+        return
+    text = "\n".join(
+        [
+            "Новый запрос поддержки с сайта",
+            "",
+            f"Пользователь: @{user.username}" if user.username else f"Пользователь: Telegram ID {user.telegram_id}",
+            f"Telegram ID: {user.telegram_id}",
+            f"Тема: {topic}",
+            f"Номер: {request_id}",
+            "",
+            message,
+        ]
+    )
+    bot = Bot(token=settings.admin_bot_token)
+    try:
+        for chat_id in admin_telegram_ids:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=support_request_actions(request_id, False).as_markup(),
+                )
+            except Exception:
+                logger.warning("Failed to notify admin %s about support request %s.", chat_id, request_id, exc_info=True)
+    finally:
+        await bot.session.close()
+
+
+def bot_deep_link(settings, payload: str | None = None) -> str | None:
+    bot_name = (settings.client_bot_name or "").strip().lstrip("@")
+    if not bot_name or not TELEGRAM_USERNAME_RE.fullmatch(bot_name):
+        return None
+    if payload:
+        return f"https://t.me/{bot_name}?start={payload}"
+    return f"https://t.me/{bot_name}"
+
+
+async def referral_stats(hub, user: User) -> dict[str, object]:
+    try:
+        referral_count = await hub.session.scalar(
+            select(func.count(User.id)).where(User.referred_by_user_id == user.id)
+        )
+        referral_earned = await hub.session.scalar(
+            select(func.coalesce(func.sum(BalanceTransaction.amount_rub), 0)).where(
+                BalanceTransaction.user_id == user.id,
+                BalanceTransaction.type == BalanceTransactionType.REFERRAL_BONUS,
+            )
+        )
+    except Exception:
+        logger.warning("Failed to load referral stats for portal user %s.", user.id, exc_info=True)
+        referral_count = 0
+        referral_earned = Decimal("0")
+    if not isinstance(referral_count, int | float | Decimal):
+        referral_count = 0
+    try:
+        earned_total = Decimal(referral_earned or 0)
+    except Exception:
+        earned_total = Decimal("0")
+    return {
+        "count": int(referral_count or 0),
+        "earned_total": earned_total,
+    }
+
+
 async def build_portal_context(request: Request, hub, user: User) -> dict:
     bundle = await hub.accounts.get_subscription_bundle(user.id)
     subscription = bundle.get("subscription")
@@ -634,6 +751,26 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
     trial_available = await hub.accounts.can_offer_trial(user.id)
     server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
     portal_devices, portal_devices_error = await safe_user_hwid_device_views(hub, user.id)
+    support_service = getattr(hub, "support", None)
+    support_requests = (
+        await support_service.list_user_requests(user.id, limit=10)
+        if support_service is not None
+        else []
+    )
+    active_support_request = next(
+        (item for item in support_requests if item.status != SupportRequestStatus.RESOLVED),
+        support_requests[0] if support_requests else None,
+    )
+    referral = await referral_stats(hub, user)
+    settings = request.app.state.settings
+    client_bot_url = bot_deep_link(settings)
+    user_referral_code = getattr(user, "referral_code", None)
+    referral_link = bot_deep_link(settings, f"ref_{user_referral_code}") if user_referral_code else None
+    topup_amounts = [100, 300, 500, 1000]
+    topup_links = [
+        {"amount": amount, "url": bot_deep_link(settings, f"pay_{amount}")}
+        for amount in topup_amounts
+    ]
 
     qr_data_uri = None
     info = bundle.get("subscription_info")
@@ -665,21 +802,28 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_devices": portal_devices,
         "portal_devices_error": portal_devices_error,
         "portal_subscription_payload": payload,
-        "portal_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/portal",
-        "client_bot_url": f"https://t.me/{request.app.state.settings.client_bot_name.lstrip('@')}" if request.app.state.settings.client_bot_name else None,
-        "connection_help_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/help/connect",
-        "agreement_page_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/legal/agreement",
-        "privacy_page_url": f"{request.app.state.settings.backend_public_url.rstrip('/')}/legal/privacy",
+        "portal_support_requests": support_requests,
+        "portal_active_support_request": active_support_request,
+        "portal_referral_count": referral["count"],
+        "portal_referral_earned_total": referral["earned_total"],
+        "portal_referral_link": referral_link,
+        "portal_topup_links": topup_links,
+        "portal_url": f"{settings.backend_public_url.rstrip('/')}/portal",
+        "client_bot_url": client_bot_url,
+        "support_url": "https://t.me/altlink_support",
+        "connection_help_url": f"{settings.backend_public_url.rstrip('/')}/help/connect",
+        "agreement_page_url": f"{settings.backend_public_url.rstrip('/')}/legal/agreement",
+        "privacy_page_url": f"{settings.backend_public_url.rstrip('/')}/legal/privacy",
         "latency_api_url": "/api/latency",
         "latency_target_label": latency_target_label(),
         "latency_disclaimer": latency_disclaimer_text(),
-        "required_channel_url": request.app.state.settings.required_subscription_channel_url,
-        "whitelist_price_per_gb": request.app.state.settings.whitelist_price_per_gb_rub,
+        "required_channel_url": settings.required_subscription_channel_url,
+        "whitelist_price_per_gb": settings.whitelist_price_per_gb_rub,
         "whitelist_cost_rub": bytes_to_gb_cost(
             subscription.whitelist_traffic_used_bytes if subscription else 0,
-            Decimal(request.app.state.settings.whitelist_price_per_gb_rub),
+            Decimal(settings.whitelist_price_per_gb_rub),
         ),
-        "telegram_login_bot": request.app.state.settings.client_bot_name.lstrip("@"),
+        "telegram_login_bot": settings.client_bot_name.lstrip("@"),
     }
 
 
@@ -1387,6 +1531,43 @@ async def portal_telegram_auth(request: Request):
     return RedirectResponse("/portal", status_code=303)
 
 
+@router.post("/api/auth/telegram-webapp")
+async def portal_telegram_webapp_auth(request: Request) -> JSONResponse:
+    settings = request.app.state.settings
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    init_data = str(body.get("init_data") or "")
+    verified = verify_telegram_webapp_init_data(
+        init_data,
+        bot_token=settings.client_bot_token,
+        max_age_seconds=settings.telegram_auth_max_age_seconds,
+    )
+    if verified is None:
+        return JSONResponse(
+            {"ok": False, "message": "Не удалось подтвердить вход через Telegram Mini App."},
+            status_code=401,
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+        )
+
+    telegram_user = verified["user"]
+    async with request.app.state.container.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=int(telegram_user["id"]),
+            username=telegram_user.get("username"),
+            first_name=telegram_user.get("first_name"),
+            last_name=telegram_user.get("last_name"),
+            language_code=telegram_user.get("language_code") or "ru",
+        )
+        request.session["portal_user_id"] = user.id
+        request.session.pop(PORTAL_LOGIN_ATTEMPT_SESSION_KEY, None)
+    return JSONResponse(
+        {"ok": True, "redirect_url": "/portal"},
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
 @router.post("/portal/dev-login")
 async def portal_dev_login(request: Request):
     form = dict(await request.form())
@@ -1499,6 +1680,47 @@ async def portal_plan(request: Request):
     return RedirectResponse("/portal", status_code=303)
 
 
+@router.post("/portal/link/revoke")
+async def portal_link_revoke(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    if form.get("confirm") != "1":
+        set_flash(request, "Подтвердите перевыпуск ссылки.", "danger")
+        return RedirectResponse("/portal#portal-subscription", status_code=303)
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        try:
+            await hub.accounts.revoke_user_subscription_link(user.id)
+            set_flash(request, "Ссылка перевыпущена. Старую ссылку нужно заменить в приложении.")
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+    return RedirectResponse("/portal#portal-subscription", status_code=303)
+
+
+@router.get("/portal/vless-keys")
+async def portal_vless_keys(request: Request):
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        subscription = await hub.accounts.get_current_subscription(user.id)
+        if subscription is None:
+            set_flash(request, "Сначала активируйте тариф.", "danger")
+            return RedirectResponse("/portal#portal-subscription", status_code=303)
+        try:
+            keys = await hub.accounts.get_rate_limited_user_vless_keys(user.id)
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+            return RedirectResponse("/portal#portal-subscription", status_code=303)
+    return Response(
+        vless_keys_file_content(keys),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="altlink-vless-keys.txt"'},
+    )
+
+
 @router.post("/portal/topup")
 async def portal_topup(request: Request):
     async with request.app.state.container.hub() as hub:
@@ -1507,6 +1729,87 @@ async def portal_topup(request: Request):
             return portal_login_redirect()
     set_flash(request, "Пополнение через сайт пока скрыто. Используйте клиентский бот.", "warning")
     return RedirectResponse("/portal", status_code=303)
+
+
+@router.post("/api/promo/apply")
+async def portal_promo_apply(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    if body.get("csrf_token") != request.session.get("csrf_token"):
+        return JSONResponse({"success": False, "message": "Некорректный CSRF токен."}, status_code=400)
+    code = str(body.get("code") or "").strip()
+    if not code:
+        return JSONResponse({"success": False, "message": "Введите промокод."}, status_code=400)
+
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return JSONResponse({"success": False, "message": "Нужно войти в кабинет."}, status_code=401)
+        try:
+            promo, redemption, _ = await hub.promos.redeem_code(user.id, code)
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+
+        if promo.reward_kind == PromoRewardKind.BALANCE:
+            applied = redemption.reward_value_applied or promo.reward_value
+            message = f"Промокод применён. На баланс зачислено {format_rub_amount(applied)} ₽."
+            payload = {"balance_delta": str(applied), "bonus": str(applied)}
+        else:
+            message = f"Промокод применён. Скидка {format_rub_amount(promo.reward_value)}% появится в ценах тарифа."
+            payload = {"discount": str(promo.reward_value)}
+    return JSONResponse({"success": True, "message": message, **payload})
+
+
+@router.post("/portal/support")
+async def portal_support_create(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    topic = str(form.get("topic") or "Обращение").strip()[:64] or "Обращение"
+    message = str(form.get("message") or "").strip()
+    settings = request.app.state.settings
+    created_request = None
+    admin_ids: list[int] = []
+    user = None
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        try:
+            created_request = await hub.support.create_request(user_id=user.id, topic=topic, message=message)
+            admin_ids = await hub.accounts.list_admin_telegram_ids()
+            set_flash(request, "Запрос отправлен. Ответ появится в чате поддержки.")
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+            return RedirectResponse("/portal#portal-home", status_code=303)
+    if created_request is not None and user is not None:
+        await notify_admins_about_support_request_from_portal(
+            settings,
+            admin_telegram_ids=admin_ids,
+            user=user,
+            request_id=created_request.id,
+            topic=topic,
+            message=message,
+        )
+    return RedirectResponse("/portal#portal-home", status_code=303)
+
+
+@router.post("/portal/support/{request_id}/messages")
+async def portal_support_message(request: Request, request_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    message = str(form.get("message") or "").strip()
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        try:
+            await hub.support.add_user_message(request_id, user_id=user.id, message=message)
+            set_flash(request, "Сообщение отправлено.")
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+    return RedirectResponse("/portal#portal-home", status_code=303)
 
 
 @router.get("/portal/check-channel")
