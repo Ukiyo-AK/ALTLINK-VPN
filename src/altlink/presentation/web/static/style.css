@@ -35,13 +35,20 @@
 .portal-app-topbar {
   position: sticky;
   top: 14px;
-  z-index: 70;
+  z-index: 140;
+  align-items: center;
   backdrop-filter: blur(20px);
 }
 
 .portal-brand {
+  margin-bottom: 0;
+  min-width: 0;
   color: inherit;
   text-decoration: none;
+}
+
+.portal-brand > div {
+  min-width: 0;
 }
 
 .portal-desktop-actions {
@@ -58,6 +65,8 @@
 .portal-mobile-menu {
   display: none;
   position: relative;
+  flex: 0 0 auto;
+  z-index: 150;
 }
 
 .portal-mobile-menu summary {
@@ -66,11 +75,13 @@
   border-radius: 16px;
   display: grid;
   place-items: center;
-  gap: 3px;
+  gap: 2px;
   cursor: pointer;
   list-style: none;
   border: 1px solid var(--border);
   background: var(--surface-muted);
+  color: var(--accent-strong);
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 
 .portal-mobile-menu summary::-webkit-details-marker {
@@ -79,7 +90,7 @@
 
 .portal-mobile-menu summary span {
   width: 18px;
-  height: 2px;
+  height: 1.8px;
   border-radius: 99px;
   background: currentColor;
 }
@@ -88,6 +99,7 @@
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
+  z-index: 160;
   width: min(290px, calc(100vw - 32px));
   display: grid;
   gap: 10px;
@@ -96,6 +108,12 @@
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-card);
+}
+
+.portal-mobile-menu[open] summary {
+  border-color: rgba(7, 148, 127, 0.3);
+  background: rgba(223, 245, 239, 0.92);
+  transform: translateY(-1px);
 }
 
 .compact-theme-switcher {
@@ -135,6 +153,10 @@
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
   gap: 18px;
   align-items: stretch;
+}
+
+.portal-home-single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .portal-profile-card,
@@ -2447,6 +2469,21 @@ html[data-theme="dark"] body.landing-page .landing-latency-metric {
   gap: 1rem;
 }
 
+.portal-server-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.portal-server-name .landing-country-flag {
+  width: 2.1rem;
+  height: 1.45rem;
+  border-radius: 0.36rem;
+  box-shadow: none;
+}
+
 .portal-login-grid {
   align-items: stretch;
   grid-template-columns: minmax(0, 1fr) minmax(17rem, 0.85fr);
@@ -3347,11 +3384,127 @@ html[data-theme="dark"] .portal-section-nav a {
     width: min(100% - 24px, 100%);
   }
 
+  .portal-app-page .portal-app-topbar {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.7rem;
+    overflow: visible;
+    padding: 0.72rem 0.78rem;
+  }
+
+  .portal-app-page .portal-app-topbar > * {
+    width: auto;
+  }
+
+  .portal-app-page .portal-brand {
+    flex: 1 1 auto;
+  }
+
+  .portal-app-page .portal-brand .muted {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .portal-app-page .portal-mobile-menu {
+    display: block;
+    margin-left: auto;
+  }
+
+  .portal-app-page .portal-desktop-nav,
+  .portal-app-page .portal-section-nav.portal-desktop-nav {
+    display: none !important;
+  }
+
   .portal-app-page .portal-content {
     padding-bottom: calc(104px + env(safe-area-inset-bottom));
   }
 
+  .portal-app-page .portal-content,
+  .portal-app-page .portal-page {
+    gap: 18px;
+  }
+
+  .portal-app-page .portal-page-head {
+    gap: 8px;
+  }
+
+  .portal-app-page .portal-page-head p {
+    margin: 0;
+  }
+
+  .portal-app-page .panel {
+    padding: 1rem;
+  }
+
+  .portal-app-page .stack {
+    gap: 0.68rem;
+  }
+
+  .portal-app-page .portal-metrics-grid {
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .portal-app-page .portal-metric {
+    padding: 13px;
+    border-radius: 16px;
+  }
+
+  .portal-app-page .portal-balance-topup {
+    display: none;
+  }
+
   .portal-app-page .mobile-bottom-nav {
     display: grid;
+  }
+}
+
+@media (max-width: 620px) {
+  .portal-app-page .portal-app-shell {
+    margin-top: 0.55rem;
+  }
+
+  .portal-app-page .portal-app-topbar {
+    top: 8px;
+    border-radius: 1rem;
+  }
+
+  .portal-app-page .brand-logo {
+    width: 2.2rem;
+    height: 2.2rem;
+    border-radius: 0.75rem;
+  }
+
+  .portal-app-page .portal-mobile-menu summary {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+  }
+
+  .portal-app-page .portal-mobile-menu summary span {
+    width: 17px;
+    height: 1.7px;
+  }
+
+  .portal-app-page .portal-mobile-menu-card {
+    width: min(286px, calc(100vw - 24px));
+  }
+
+  .portal-app-page .portal-page-head h1 {
+    font-size: clamp(1.7rem, 8vw, 2.55rem);
+  }
+
+  .portal-app-page .portal-content,
+  .portal-app-page .portal-page {
+    gap: 14px;
+  }
+
+  .portal-app-page .portal-metric span {
+    margin-bottom: 3px;
+  }
+
+  .portal-app-page .portal-chat-thread {
+    gap: 9px;
   }
 }

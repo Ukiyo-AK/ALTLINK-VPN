@@ -86,7 +86,7 @@
         </section>
         {% endif %}
 
-        <section class="portal-home-grid">
+        <section class="portal-home-grid portal-home-single">
           <article class="panel portal-profile-card">
             <div class="split">
               <div>
@@ -119,23 +119,6 @@
               {% if support_url %}
               <a class="button ghost compact" href="{{ support_url }}" target="_blank" rel="noreferrer">Открыть поддержку</a>
               {% endif %}
-            </div>
-          </article>
-
-          <article class="panel portal-server-summary stack">
-            <div class="split">
-              <h2>Серверы</h2>
-              <span class="badge">{{ portal_servers|length }} доступно</span>
-            </div>
-            <p class="muted">Краткий статус серверов, доступных вашему тарифу.</p>
-            <div class="portal-server-chips">
-              {% for access in portal_servers[:6] if access.server %}
-              <span class="server-latency-chip server-latency-chip-ready">
-                {{ access.server.name }} · {{ access.status|access_status }}
-              </span>
-              {% else %}
-              <span class="muted">Серверы появятся после активации тарифа.</span>
-              {% endfor %}
             </div>
           </article>
         </section>
@@ -381,7 +364,16 @@
               {% for access in portal_servers if access.server %}
               {% set latency = portal_server_latency_state.get(access.server.id) if portal_server_latency_state else None %}
               <tr data-server-id="{{ access.server.id }}">
-                <td>{{ access.server.name }}</td>
+                <td>
+                  <span class="portal-server-name">
+                    <span
+                      class="landing-country-flag flag-{{ (access.server.country_code or '')|lower }}"
+                      data-code="{{ (access.server.country_code or 'AL')|upper }}"
+                      aria-hidden="true"
+                    ></span>
+                    <span>{{ access.server.name }}</span>
+                  </span>
+                </td>
                 <td>
                   {% if access.server.server_type.value == 'ten_gbit' %}Start{% endif %}
                   {% if access.server.server_type.value == 'whitelist' %}Белые списки{% endif %}
@@ -422,7 +414,7 @@
         </div>
 
         <section class="grid-two">
-          <article class="panel balance-showcase stack">
+          <article class="panel balance-showcase portal-balance-topup stack">
             <div class="split">
               <h2>Пополнение</h2>
               <span class="badge">Через Telegram-бота</span>
