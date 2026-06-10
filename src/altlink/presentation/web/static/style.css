@@ -4511,3 +4511,118 @@ html[data-theme="dark"] .portal-section-nav a {
     width: min(74vw, 17.5rem);
   }
 }
+
+@media (max-width: 980px) {
+  .portal-app-page .portal-app-topbar {
+    min-height: 4.25rem;
+    display: flex;
+    align-items: center;
+    padding: 0.72rem 0.92rem;
+    border: 1px solid rgba(7, 148, 127, 0.14);
+    border-radius: 1.25rem;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 14px 34px rgba(5, 89, 72, 0.08);
+  }
+
+  [data-theme="dark"] .portal-app-page .portal-app-topbar {
+    background: rgba(10, 29, 25, 0.78);
+    border-color: rgba(116, 245, 211, 0.16);
+    box-shadow: 0 18px 38px rgba(0, 0, 0, 0.22);
+  }
+
+  .portal-app-page .portal-brand {
+    min-height: 3rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.82rem;
+  }
+
+  .portal-app-page .portal-brand-logo-desktop {
+    width: 3rem;
+    height: 3rem;
+    padding: 0.22rem;
+    border-radius: 1rem;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 10px 22px rgba(7, 148, 127, 0.14);
+  }
+
+  [data-theme="dark"] .portal-app-page .portal-brand-logo-desktop {
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.22);
+  }
+
+  .portal-app-page .portal-brand > div {
+    display: grid;
+    gap: 0.14rem;
+    line-height: 1;
+  }
+
+  .portal-app-page .portal-brand > div > strong {
+    font-size: 1.22rem;
+    line-height: 1;
+    letter-spacing: -0.045em;
+  }
+
+  .portal-mobile-balance-card::before {
+    right: -1.55rem;
+    top: 0.25rem;
+    width: min(50vw, 13.5rem);
+    opacity: 0.08;
+    transform: none;
+  }
+
+  [data-theme="dark"] .portal-mobile-balance-card::before {
+    opacity: 0.1;
+  }
+}
+
+@media (max-width: 980px) {
+  html[data-theme="light"] .portal-app-page {
+    --muted: #41665d;
+  }
+
+  html[data-theme="light"] .portal-app-page .muted,
+  html[data-theme="light"] .portal-app-page .portal-mobile-device-line,
+  html[data-theme="light"] .portal-app-page .portal-mobile-referral-card p,
+  html[data-theme="light"] .portal-app-page .portal-mobile-referral-stats span,
+  html[data-theme="light"] .portal-app-page .portal-mobile-settings-row small,
+  html[data-theme="light"] .portal-app-page .portal-topup-field span,
+  html[data-theme="light"] .portal-app-page .portal-topup-promo label span {
+    color: #41665d;
+  }
+
+  html[data-theme="light"] .portal-mobile-balance-card {
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(239, 252, 248, 0.9));
+    border-color: rgba(7, 148, 127, 0.2);
+  }
+
+  html[data-theme="light"] .portal-mobile-plan-summary {
+    background: rgba(255, 255, 255, 0.88);
+    border-color: rgba(7, 148, 127, 0.22);
+  }
+
+  html[data-theme="light"] .portal-mobile-referral-card,
+  html[data-theme="light"] .portal-mobile-settings-card,
+  html[data-theme="light"] .portal-mobile-sheet .portal-modal-card,
+  html[data-theme="light"] .portal-app-page .portal-server-table tr {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(7, 148, 127, 0.16);
+  }
+
+  html[data-theme="light"] .portal-mobile-referral-link,
+  html[data-theme="light"] .portal-mobile-row-icon,
+  html[data-theme="light"] .portal-topup-amounts button,
+  html[data-theme="light"] .portal-archive-ticket,
+  html[data-theme="light"] .portal-mobile-list-card {
+    background: rgba(232, 248, 243, 0.9);
+  }
+
+  html[data-theme="light"] .portal-mobile-referral-stats span {
+    background: rgba(232, 248, 243, 0.82);
+    border-color: rgba(7, 148, 127, 0.15);
+  }
+
+  html[data-theme="light"] .portal-sheet-tabs {
+    background: rgba(232, 248, 243, 0.9);
+  }
+}
