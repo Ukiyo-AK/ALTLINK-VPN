@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock
 
 import httpx
@@ -255,7 +256,7 @@ async def test_dispatch_menu_button_routes_to_main_action(monkeypatch):
     assert calls == [("access", "Меню", None), ("action", "menu", "Меню")]
 
 
-def test_share_vpn_text_skips_invalid_targets():
+def test_share_vpn_url_skips_invalid_targets():
     settings = Settings(
         _env_file=None,
         client_bot_name="Bot Display Name",
@@ -263,7 +264,20 @@ def test_share_vpn_text_skips_invalid_targets():
     )
 
     assert client_handlers.share_vpn_target_url(settings) is None
-    assert client_handlers.share_vpn_text(settings) is None
+    assert client_handlers.share_vpn_url(settings) is None
+
+
+def test_referral_share_vpn_url_contains_only_link():
+    settings = Settings(_env_file=None, client_bot_name="@Altlinkbot")
+
+    url = client_handlers.referral_share_vpn_url(settings, "272B39BC")
+    parsed = urlparse(url)
+    query = parse_qs(parsed.query)
+
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "t.me"
+    assert parsed.path == "/share/url"
+    assert query == {"url": ["https://t.me/Altlinkbot?start=ref_272B39BC"]}
 
 
 def test_portal_login_resume_url_points_back_to_login_page_with_token():

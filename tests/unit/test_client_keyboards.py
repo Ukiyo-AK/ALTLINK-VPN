@@ -53,7 +53,7 @@ def test_main_menu_matches_new_navigation():
 def test_menu_actions_include_cabinet_trial_and_styles():
     markup = menu_actions(
         show_trial=True,
-        share_text="Попробуй ALTLINK VPN\nhttps://example.com/ref",
+        share_url="https://t.me/share/url?url=https%3A%2F%2Fexample.com%2Fref",
         portal_url="https://altlink.online/portal/login?token=demo-token",
     ).as_markup()
     rows = inline_rows(markup)
@@ -75,8 +75,8 @@ def test_menu_actions_include_cabinet_trial_and_styles():
     assert balance_button["style"] == "primary"
     assert portal_button["url"] == "https://altlink.online/portal/login?token=demo-token"
     assert share_button["style"] == "success"
-    assert share_button["copy_text"]["text"] == "Попробуй ALTLINK VPN\nhttps://example.com/ref"
-    assert "url" not in share_button
+    assert share_button["url"] == "https://t.me/share/url?url=https%3A%2F%2Fexample.com%2Fref"
+    assert "copy_text" not in share_button
     assert support_button["style"] == "primary"
     assert trial_button["style"] == "success"
 

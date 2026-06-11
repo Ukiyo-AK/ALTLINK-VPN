@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram.types import CopyTextButton, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from altlink.domain.enums import PlanCode
@@ -90,19 +90,19 @@ def portal_login_complete_actions(portal_url: str | None = None) -> InlineKeyboa
     return builder
 
 
-def menu_actions(*, show_trial: bool, share_text: str | None = None, portal_url: str | None = None) -> InlineKeyboardBuilder:
+def menu_actions(*, show_trial: bool, share_url: str | None = None, portal_url: str | None = None) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Баланс", callback_data="client:balance", style="primary")
     builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
     if portal_url:
         builder.button(text="🌐 Личный кабинет", url=portal_url, style="success")
-    if share_text:
-        builder.button(text="📣 Поделиться VPN", copy_text=CopyTextButton(text=share_text), style="success")
+    if share_url:
+        builder.button(text="📣 Поделиться VPN", url=share_url, style="success")
     builder.button(text="🛟 Поддержка", callback_data="client:support", style="primary")
     if show_trial:
         builder.button(text="🎁 Тест на 2 дня", callback_data="client:trial_activate", style="success")
     row_sizes = [2]
-    second_row = int(bool(portal_url)) + int(bool(share_text))
+    second_row = int(bool(portal_url)) + int(bool(share_url))
     if second_row:
         row_sizes.append(second_row)
     row_sizes.append(1)
@@ -127,7 +127,7 @@ def profile_actions(
     *,
     agreement_url: str | None = None,
     privacy_url: str | None = None,
-    share_text: str | None = None,
+    share_url: str | None = None,
     portal_url: str | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
@@ -137,8 +137,8 @@ def profile_actions(
         builder.button(text="🔐 Политика конфиденциальности", url=privacy_url)
     if portal_url:
         builder.button(text="🌐 Личный кабинет", url=portal_url, style="success")
-    if share_text:
-        builder.button(text="📣 Поделиться VPN", copy_text=CopyTextButton(text=share_text), style="success")
+    if share_url:
+        builder.button(text="📣 Поделиться VPN", url=share_url, style="success")
     builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
     builder.button(text="🏠 Меню", callback_data="client:home")
     row_sizes: list[int] = []
@@ -146,7 +146,7 @@ def profile_actions(
         row_sizes.append(2 if agreement_url and privacy_url else 1)
     if portal_url:
         row_sizes.append(1)
-    if share_text:
+    if share_url:
         row_sizes.append(1)
     row_sizes.extend([1, 1])
     builder.adjust(*row_sizes)
