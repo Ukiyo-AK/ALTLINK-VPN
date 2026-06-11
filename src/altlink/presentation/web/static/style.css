@@ -3144,6 +3144,9 @@ html[data-theme="dark"] .portal-section-nav a {
     font-size: 0.96rem;
     line-height: 1.62;
   }
+  .legal-page .legal-actions .button:not(.legal-portal-link) {
+    display: none;
+  }
   .landing-hero { padding: 1rem; }
   .landing-copy { max-width: 100%; }
 }

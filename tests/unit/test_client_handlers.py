@@ -255,7 +255,7 @@ async def test_dispatch_menu_button_routes_to_main_action(monkeypatch):
     assert calls == [("access", "Меню", None), ("action", "menu", "Меню")]
 
 
-def test_share_vpn_url_skips_invalid_targets():
+def test_share_vpn_text_skips_invalid_targets():
     settings = Settings(
         _env_file=None,
         client_bot_name="Bot Display Name",
@@ -263,7 +263,7 @@ def test_share_vpn_url_skips_invalid_targets():
     )
 
     assert client_handlers.share_vpn_target_url(settings) is None
-    assert client_handlers.share_vpn_url(settings) is None
+    assert client_handlers.share_vpn_text(settings) is None
 
 
 def test_portal_login_resume_url_points_back_to_login_page_with_token():

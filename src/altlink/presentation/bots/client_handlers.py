@@ -518,12 +518,12 @@ def share_vpn_target_url(settings) -> str | None:
     return portal_public_url(settings)
 
 
-def share_vpn_url(settings) -> str | None:
+def share_vpn_text(settings) -> str | None:
     target_url = share_vpn_target_url(settings)
     if target_url is None:
         return None
     text = "Попробуй ALTLINK VPN. Подключение, баланс и подписка доступны прямо в Telegram."
-    return f"https://t.me/share/url?url={quote_plus(target_url)}&text={quote_plus(text)}"
+    return f"{text}\n{target_url}"
 
 
 def bot_public_url(settings) -> str | None:
@@ -549,16 +549,16 @@ def portal_public_url(settings) -> str | None:
     return None
 
 
-def referral_share_vpn_url(settings, referral_code: str | None) -> str | None:
+def referral_share_vpn_text(settings, referral_code: str | None) -> str | None:
     target_url = bot_public_url(settings)
     if referral_code and target_url:
         target_url = f"{target_url}?start=ref_{referral_code}"
     elif target_url is None:
         target_url = site_public_url(settings)
     if target_url is None:
-        return share_vpn_url(settings)
+        return share_vpn_text(settings)
     text = "Попробуй ALTLINK VPN по моей ссылке и подключись через Telegram."
-    return f"https://t.me/share/url?url={quote_plus(target_url)}&text={quote_plus(text)}"
+    return f"{text}\n{target_url}"
 
 
 def connection_help_url(settings) -> str | None:
@@ -1721,7 +1721,7 @@ async def show_profile(target: Message | CallbackQuery, container: AppContainer,
         primary_markup=profile_actions(
             agreement_url=agreement_url(container.settings),
             privacy_url=privacy_url(container.settings),
-            share_url=referral_share_vpn_url(container.settings, getattr(user, "referral_code", None)),
+            share_text=referral_share_vpn_text(container.settings, getattr(user, "referral_code", None)),
             portal_url=portal_url,
         ).as_markup(),
         media_section="profile",
@@ -1808,8 +1808,8 @@ def build_home_markup(
     allow_share: bool = True,
     portal_url: str | None = None,
 ):
-    share_url = referral_share_vpn_url(settings, referral_code) if allow_share else None
-    return menu_actions(show_trial=show_trial, share_url=share_url, portal_url=portal_url).as_markup()
+    share_text = referral_share_vpn_text(settings, referral_code) if allow_share else None
+    return menu_actions(show_trial=show_trial, share_text=share_text, portal_url=portal_url).as_markup()
 
 
 async def send_home_card(
@@ -2623,15 +2623,15 @@ async def referral_info(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
-    share_url = referral_share_vpn_url(container.settings, getattr(user, "referral_code", None))
+    share_text = referral_share_vpn_text(container.settings, getattr(user, "referral_code", None))
     text = (
         "Рефералка\n\n"
         f"Ваш код: {getattr(user, 'referral_code', 'будет создан позже')}\n"
         "За пользователя, который придёт по вашей ссылке и оформит первый платный тариф, вы получите +100 ₽ на баланс."
     )
     markup = balance_actions().as_markup()
-    if share_url:
-        await answer_or_edit(callback, f"{text}\n\nСсылка уже подготовлена в кнопке «Поделиться VPN» в меню и профиле.", reply_markup=markup)
+    if share_text:
+        await answer_or_edit(callback, f"{text}\n\nГотовый текст со ссылкой копируется кнопкой «Поделиться VPN» в меню и профиле.", reply_markup=markup)
     else:
         await answer_or_edit(callback, text, reply_markup=markup)
 
