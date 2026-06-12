@@ -744,7 +744,7 @@ def format_user_node_access_sync_summary(summary: dict[str, object]) -> str:
     errors = list(summary.get("errors") or [])
     if errors:
         lines.extend(["", "Первые ошибки:"])
-        lines.extend(f"• {compact_text(item, 160)}" for item in errors[:5])
+        lines.extend(f"• {compact_text(item, 260)}" for item in errors[:5])
     return "\n".join(lines)
 
 

@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
-from altlink.application.services.base import BaseService, NotFoundError
+from altlink.application.services.base import BaseService, ConflictError, NotFoundError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType, SubscriptionStatus, SystemEventLevel, UserStatus
 from altlink.domain.plans import is_metered_plan_code, is_unlimited_plan_code
 from altlink.infrastructure.db.models import (
@@ -402,10 +402,17 @@ class CatalogService(BaseService):
                 try:
                     created = await self.remnawave.create_internal_squad(name=squad_name, inbounds=inbound_ids)
                     server.remnawave_internal_squad_uuid = created.uuid
-                except Exception:
-                    logger.warning("Failed to create internal squad for server %s", server.id, exc_info=True)
+                except Exception as exc:  # noqa: BLE001
+                    message = self._format_internal_squad_sync_error(
+                        "создать",
+                        server=server,
+                        squad_name=squad_name,
+                        inbound_ids=inbound_ids,
+                        exc=exc,
+                    )
+                    logger.warning(message, exc_info=True)
                     if strict:
-                        raise
+                        raise ConflictError(message) from exc
                     continue
             else:
                 try:
@@ -415,10 +422,18 @@ class CatalogService(BaseService):
                         inbounds=inbound_ids,
                     )
                     server.remnawave_internal_squad_uuid = updated.uuid
-                except Exception:
-                    logger.warning("Failed to update internal squad for server %s", server.id, exc_info=True)
+                except Exception as exc:  # noqa: BLE001
+                    message = self._format_internal_squad_sync_error(
+                        "обновить",
+                        server=server,
+                        squad_name=squad_name,
+                        inbound_ids=inbound_ids,
+                        exc=exc,
+                        remote_squad_uuid=squad.uuid,
+                    )
+                    logger.warning(message, exc_info=True)
                     if strict:
-                        raise
+                        raise ConflictError(message) from exc
                     continue
 
     async def _sync_user_squads(self, users: Sequence[User], user_server_targets: dict[str, set[str]]) -> None:
@@ -487,3 +502,57 @@ class CatalogService(BaseService):
         safe_name = "".join(ch if ch.isalnum() or ch in {" ", "-", "_"} else "_" for ch in server.name).strip()
         safe_name = safe_name or "Server"
         return f"ALTLINK {server.id[:6]} {safe_name}"[:30]
+
+    def _format_internal_squad_sync_error(
+        self,
+        action: str,
+        *,
+        server: Server,
+        squad_name: str,
+        inbound_ids: Sequence[str],
+        exc: Exception,
+        remote_squad_uuid: str | None = None,
+    ) -> str:
+        reason = self._format_remnawave_exception(exc)
+        current_squad_uuid = remote_squad_uuid or server.remnawave_internal_squad_uuid or "—"
+        inbounds = ", ".join(inbound_ids) if inbound_ids else "—"
+        return (
+            f"Не удалось {action} internal squad в Remnawave. "
+            f"Сервер: {server.name}; "
+            f"адрес: {server.address or '—'}; "
+            f"локальный server_id: {server.id}; "
+            f"node_uuid: {server.remnawave_node_uuid}; "
+            f"squad_name: {squad_name}; "
+            f"squad_uuid: {current_squad_uuid}; "
+            f"inbounds: {inbounds}. "
+            f"Причина: {reason}"
+        )
+
+    def _format_remnawave_exception(self, exc: Exception) -> str:
+        if not isinstance(exc, httpx.HTTPStatusError):
+            return str(exc) or exc.__class__.__name__
+
+        response = exc.response
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+
+        errors: list[str] = []
+        if isinstance(payload, dict):
+            details = payload.get("errors")
+            if isinstance(details, list):
+                for item in details:
+                    if isinstance(item, dict):
+                        message = item.get("message") or item.get("code")
+                        path = item.get("path")
+                        if isinstance(path, list) and path:
+                            message = f"{'.'.join(str(part) for part in path)}: {message}"
+                        if message:
+                            errors.append(str(message))
+            message = payload.get("message")
+            if message and not errors:
+                errors.append(str(message))
+
+        detail = "; ".join(errors) if errors else response.text[:300]
+        return f"Remnawave отклонил операцию: {detail}"

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import httpx
 import pytest
 
-from altlink.application.services.base import NotFoundError
+from altlink.application.services.base import ConflictError, NotFoundError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType
 
 
@@ -108,6 +109,44 @@ async def test_sync_does_not_recreate_squad_for_missing_node(test_services):
         assert removed_squad_uuid not in remote_squad_ids
         with pytest.raises(NotFoundError):
             await hub.catalog.get_server(removed.id)
+
+
+@pytest.mark.asyncio
+async def test_strict_squad_sync_error_identifies_problem_server(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3031,
+            username="squadduplicate",
+            first_name="Squad",
+            last_name="Duplicate",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        user = await hub.accounts.get_user_by_telegram_id(3031)
+        target_servers = [access.server for access in await hub.catalog.get_user_servers(user.id) if access.server]
+        expected_squad_names = [hub.catalog._squad_name(server) for server in target_servers]
+
+        async def empty_squads():
+            return []
+
+        async def duplicate_squad(*, name: str, inbounds: list[str]):
+            request = httpx.Request("POST", "https://remna.example/api/internal-squads")
+            response = httpx.Response(409, request=request, json={"message": "Internal squad name already exists"})
+            raise httpx.HTTPStatusError("duplicate", request=request, response=response)
+
+        monkeypatch.setattr(test_services.remnawave, "list_internal_squads", empty_squads)
+        monkeypatch.setattr(test_services.remnawave, "create_internal_squad", duplicate_squad)
+
+        with pytest.raises(ConflictError) as exc_info:
+            await hub.catalog.sync_user_target_squads(user.id)
+
+    message = str(exc_info.value)
+
+    assert "Internal squad name already exists" in message
+    assert any(f"Сервер: {server.name}" in message for server in target_servers)
+    assert any(f"локальный server_id: {server.id}" in message for server in target_servers)
+    assert any(f"node_uuid: {server.remnawave_node_uuid}" in message for server in target_servers)
+    assert any(f"squad_name: {squad_name}" in message for squad_name in expected_squad_names)
 
 
 @pytest.mark.asyncio
