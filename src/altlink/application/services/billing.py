@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -50,6 +51,7 @@ TRIAL_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] = (
 )
 
 logger = logging.getLogger(__name__)
+SyncProgressCallback = Callable[[dict[str, object]], Awaitable[None]]
 
 
 class BillingService(BaseService):
@@ -301,7 +303,10 @@ class BillingService(BaseService):
         )
         return subscription
 
-    async def sync_users_with_available_nodes(self) -> dict[str, object]:
+    async def sync_users_with_available_nodes(
+        self,
+        progress_callback: SyncProgressCallback | None = None,
+    ) -> dict[str, object]:
         if self.remnawave is None:
             raise ConflictError("Remnawave panel is not configured.")
 
@@ -318,6 +323,21 @@ class BillingService(BaseService):
             "errors": [],
         }
 
+        async def notify_progress(stage: str, *, processed: int = 0, total: int | None = None) -> None:
+            if progress_callback is None:
+                return
+            payload = {
+                **summary,
+                "stage": stage,
+                "processed": processed,
+                "total": int(summary["total"]) if total is None else total,
+            }
+            try:
+                await progress_callback(payload)
+            except Exception:  # noqa: BLE001
+                logger.debug("User node access sync progress callback failed.", exc_info=True)
+
+        await notify_progress("catalog")
         try:
             await self.catalog.sync_servers()
         except Exception as exc:  # noqa: BLE001
@@ -342,20 +362,26 @@ class BillingService(BaseService):
             ).all()
         )
 
-        active_user_statuses = {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE}
+        unique_subscriptions: list[Subscription] = []
         seen_user_ids: set[str] = set()
-        errors = summary["errors"]
-        assert isinstance(errors, list)
         for subscription in subscriptions:
             if subscription.user_id in seen_user_ids:
                 continue
             seen_user_ids.add(subscription.user_id)
-            summary["total"] = int(summary["total"]) + 1
+            unique_subscriptions.append(subscription)
 
+        summary["total"] = len(unique_subscriptions)
+        await notify_progress("users_loaded", total=len(unique_subscriptions))
+
+        active_user_statuses = {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE}
+        errors = summary["errors"]
+        assert isinstance(errors, list)
+        for processed, subscription in enumerate(unique_subscriptions, start=1):
             user = subscription.user
             plan = subscription.plan
             if user is None or plan is None or user.status not in active_user_statuses:
                 summary["skipped"] = int(summary["skipped"]) + 1
+                await notify_progress("user_processed", processed=processed)
                 continue
 
             before_uuid = user.remnawave_user_uuid
@@ -373,10 +399,12 @@ class BillingService(BaseService):
                 label = user.username or user.telegram_id
                 errors.append(f"{label}: {exc}")
                 logger.warning("Failed to sync available node squads for user %s.", user.id, exc_info=True)
+                await notify_progress("user_processed", processed=processed)
                 continue
 
             if remote is None:
                 summary["skipped"] = int(summary["skipped"]) + 1
+                await notify_progress("user_processed", processed=processed)
                 continue
 
             summary["synced"] = int(summary["synced"]) + 1
@@ -388,6 +416,7 @@ class BillingService(BaseService):
                 summary["recreated"] = int(summary["recreated"]) + 1
             else:
                 summary["updated"] = int(summary["updated"]) + 1
+            await notify_progress("user_processed", processed=processed)
 
         await self.log_event(
             level=SystemEventLevel.INFO if not int(summary["failed"]) else SystemEventLevel.WARNING,
@@ -395,6 +424,7 @@ class BillingService(BaseService):
             message="Manual Remnawave user node access sync completed.",
             payload={key: value for key, value in summary.items() if key != "errors"},
         )
+        await notify_progress("completed", processed=int(summary["total"]))
         return summary
 
     async def process_due_subscriptions(self) -> None:

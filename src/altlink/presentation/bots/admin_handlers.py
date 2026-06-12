@@ -748,6 +748,51 @@ def format_user_node_access_sync_summary(summary: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def format_progress_bar(processed: int, total: int, *, width: int = 14) -> str:
+    if total <= 0:
+        return f"[{'-' * width}]"
+    ratio = min(1, max(0, processed / total))
+    filled = min(width, round(ratio * width))
+    return f"[{'#' * filled}{'-' * (width - filled)}]"
+
+
+def format_user_node_access_sync_progress(progress: dict[str, object]) -> str:
+    stage = str(progress.get("stage") or "user_processed")
+    processed = int(progress.get("processed") or 0)
+    total = int(progress.get("total") or 0)
+    synced = int(progress.get("synced") or 0)
+    created = int(progress.get("created") or 0)
+    updated = int(progress.get("updated") or 0)
+    recreated = int(progress.get("recreated") or 0)
+    skipped = int(progress.get("skipped") or 0)
+    failed = int(progress.get("failed") or 0)
+
+    if stage == "catalog":
+        return (
+            "Синхронизация доступов к нодам запущена.\n\n"
+            "Обновляю каталог нод Remnawave...\n"
+            f"{format_progress_bar(0, 0)}\n\n"
+            "Процесс работает, это может занять немного времени."
+        )
+    if total <= 0:
+        return (
+            "Синхронизация доступов к нодам идет.\n\n"
+            "Активных подписок для обработки пока не найдено.\n"
+            f"{format_progress_bar(0, 0)}"
+        )
+
+    percent = min(100, round(processed / total * 100))
+    return (
+        "Синхронизация доступов к нодам идет.\n\n"
+        f"{format_progress_bar(processed, total)} {percent}%\n"
+        f"Обработано: {processed}/{total}\n"
+        f"Успешно: {synced} | Ошибок: {failed}\n"
+        f"Создано: {created} | Обновлено: {updated} | Пересоздано: {recreated}\n"
+        f"Пропущено: {skipped}\n\n"
+        "Не закрывайте это сообщение: оно обновляется по ходу работы."
+    )
+
+
 def parse_user_plan(data: str) -> tuple[str, PlanCode | None]:
     _, _, short_code, user_id = data.split(":", 3)
     return user_id, parse_paid_plan_code(SHORT_PLAN_CODES.get(short_code))
@@ -1621,12 +1666,49 @@ async def users_screen(message: Message, state: FSMContext, container: AppContai
 async def sync_users_node_access(callback: CallbackQuery, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
         return
+    if callback.message is None:
+        await callback.answer("Не удалось открыть сообщение прогресса.", show_alert=True)
+        return
     await callback.answer("Синхронизация запущена.")
-    progress = await callback.message.answer("Синхронизирую пользователей с доступными нодами Remnawave...")
+    progress = await callback.message.answer("Запускаю синхронизацию доступов к нодам...")
     remember_admin_card(progress)
+    last_edit_at = 0.0
+    last_processed = -1
+    last_stage = ""
+    last_text = ""
+
+    async def update_sync_progress(progress_data: dict[str, object]) -> None:
+        nonlocal last_edit_at, last_processed, last_stage, last_text
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        stage = str(progress_data.get("stage") or "")
+        processed = int(progress_data.get("processed") or 0)
+        total = int(progress_data.get("total") or 0)
+        milestone = max(1, total // 20) if total else 1
+        should_update = (
+            stage != last_stage
+            or processed >= total > 0
+            or processed - last_processed >= milestone
+            or now - last_edit_at >= 2.0
+        )
+        if not should_update:
+            return
+
+        text = format_user_node_access_sync_progress(progress_data)
+        if text == last_text:
+            return
+        try:
+            await progress.edit_text(text)
+        except TelegramBadRequest:
+            return
+        last_edit_at = now
+        last_processed = processed
+        last_stage = stage
+        last_text = text
+
     try:
         async with container.hub() as hub:
-            summary = await hub.billing.sync_users_with_available_nodes()
+            summary = await hub.billing.sync_users_with_available_nodes(progress_callback=update_sync_progress)
     except ServiceError as exc:
         await progress.edit_text(f"Не удалось синхронизировать доступы к нодам.\n\n{exc}")
         return

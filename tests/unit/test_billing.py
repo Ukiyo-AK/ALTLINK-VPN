@@ -524,6 +524,35 @@ async def test_sync_users_with_available_nodes_restores_remote_squads(test_servi
 
 
 @pytest.mark.asyncio
+async def test_sync_users_with_available_nodes_reports_progress(test_services):
+    progress_events: list[dict[str, object]] = []
+
+    async def collect_progress(payload: dict[str, object]) -> None:
+        progress_events.append(dict(payload))
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13031,
+            username="node_access_progress",
+            first_name="Node",
+            last_name="Progress",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+
+        summary = await hub.billing.sync_users_with_available_nodes(progress_callback=collect_progress)
+
+    stages = [str(item["stage"]) for item in progress_events]
+
+    assert summary["total"] == 1
+    assert stages[0] == "catalog"
+    assert "users_loaded" in stages
+    assert "user_processed" in stages
+    assert stages[-1] == "completed"
+    assert progress_events[-1]["processed"] == summary["total"]
+
+
+@pytest.mark.asyncio
 async def test_sync_users_with_available_nodes_recreates_missing_remote_user(test_services, monkeypatch):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
