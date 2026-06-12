@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import select, text
-from sqlalchemy.orm import joinedload
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.base import BaseService
 from altlink.domain.enums import BalanceTransactionType, ServerType, SubscriptionStatus, TopupStatus, UserStatus
@@ -20,8 +20,10 @@ from altlink.infrastructure.db.models import (
     SystemSetting,
     TrafficSnapshot,
     TopupRequest,
+    TrialPeriod,
     User,
 )
+from altlink.utils.time import ensure_utc, utc_now
 
 
 @dataclass(slots=True)
@@ -39,11 +41,31 @@ class TrafficLeaderboardRow:
     auto_renew: bool
 
 
+@dataclass(slots=True)
+class DashboardWindow:
+    key: str
+    label: str
+    start: datetime
+    end: datetime
+    bucket_seconds: int
+    labels: list[str]
+
+
+DASHBOARD_PERIODS: dict[str, tuple[str, timedelta, int]] = {
+    "1h": ("1 час", timedelta(hours=1), 12),
+    "1d": ("1 день", timedelta(days=1), 24),
+    "1w": ("1 неделя", timedelta(days=7), 7),
+    "2w": ("2 недели", timedelta(days=14), 14),
+    "1m": ("1 месяц", timedelta(days=30), 30),
+}
+DEFAULT_DASHBOARD_PERIOD = "2w"
+
+
 class DashboardService(BaseService):
     source = "dashboard"
 
-    async def overview(self) -> dict:
-        users = list((await self.session.scalars(select(User))).all())
+    async def overview(self, period: str = DEFAULT_DASHBOARD_PERIOD) -> dict:
+        window = self._dashboard_window(period)
         subscriptions = list(
             (
                 await self.session.scalars(
@@ -51,13 +73,12 @@ class DashboardService(BaseService):
                 )
             ).all()
         )
-        servers = list((await self.session.scalars(select(Server).order_by(Server.load_percent.desc()))).all())
-        transactions = list(
+        servers = list(
             (
                 await self.session.scalars(
-                    select(BalanceTransaction)
-                    .options(joinedload(BalanceTransaction.user))
-                    .order_by(BalanceTransaction.created_at.desc())
+                    select(Server)
+                    .options(selectinload(Server.inbounds))
+                    .order_by(Server.load_percent.desc(), Server.users_online.desc())
                 )
             ).all()
         )
@@ -71,6 +92,7 @@ class DashboardService(BaseService):
             ).all()
         )
 
+        user_status_counts = await self._user_status_counts()
         latest_subscriptions = self._latest_subscriptions(subscriptions)
         top_users = await self._traffic_leaderboard_rows(subscriptions)
         plan_mix = self._paid_plan_mix(latest_subscriptions)
@@ -84,26 +106,24 @@ class DashboardService(BaseService):
             ]
         )
 
-        since = date.today() - timedelta(days=13)
-        payments_series = {since + timedelta(days=index): Decimal("0") for index in range(14)}
-        for transaction in transactions:
-            if transaction.type != BalanceTransactionType.TOPUP or transaction.created_at.date() not in payments_series:
-                continue
-            payments_series[transaction.created_at.date()] += Decimal(transaction.amount_rub)
-
-        payments_last_30_days = [
-            item
-            for item in transactions
-            if item.type == BalanceTransactionType.TOPUP and item.created_at.date() >= date.today() - timedelta(days=29)
-        ]
+        payments_chart = await self._payments_chart(window)
+        users_chart = await self._users_chart(window)
+        traffic_chart = await self._traffic_chart(window)
+        plan_signups_chart = self._plan_signups_chart(window, subscriptions)
+        period_topup_total = Decimal(str(sum(payments_chart["values"]))).quantize(Decimal("0.01"))
 
         return {
-            "active_users": len([user for user in users if user.status == UserStatus.ACTIVE]),
+            "period": window.key,
+            "period_label": window.label,
+            "period_options": self.period_options(),
+            "active_users": user_status_counts.get(UserStatus.ACTIVE.value, 0),
             "renewal_disabled_users": renewal_disabled_users,
-            "blocked_users": len([user for user in users if user.status == UserStatus.BLOCKED]),
-            "trial_users": len([user for user in users if user.status == UserStatus.TRIAL]),
-            "payments_count": len(payments_last_30_days),
-            "payments_total_rub": sum((Decimal(item.amount_rub) for item in payments_last_30_days), Decimal("0")),
+            "blocked_users": user_status_counts.get(UserStatus.BLOCKED.value, 0),
+            "trial_users": user_status_counts.get(UserStatus.TRIAL.value, 0),
+            "new_users_in_period": sum(users_chart["datasets"]["new_users"]),
+            "new_paid_users_in_period": sum(users_chart["datasets"]["new_paid_users"]),
+            "payments_count": sum(payments_chart["counts"]),
+            "payments_total_rub": period_topup_total,
             "total_traffic_bytes": total_traffic,
             "whitelist_traffic_bytes": whitelist_traffic,
             "servers": servers[:12],
@@ -113,22 +133,23 @@ class DashboardService(BaseService):
                 "user_statuses": {
                     "labels": ["Активные", "Без продления", "Заблокированные", "Тестовые", "Новые"],
                     "values": [
-                        len([user for user in users if user.status == UserStatus.ACTIVE]),
+                        user_status_counts.get(UserStatus.ACTIVE.value, 0),
                         renewal_disabled_users,
-                        len([user for user in users if user.status == UserStatus.BLOCKED]),
-                        len([user for user in users if user.status == UserStatus.TRIAL]),
-                        len([user for user in users if user.status == UserStatus.NEW]),
+                        user_status_counts.get(UserStatus.BLOCKED.value, 0),
+                        user_status_counts.get(UserStatus.TRIAL.value, 0),
+                        user_status_counts.get(UserStatus.NEW.value, 0),
                     ],
                 },
-                "server_loads": {
-                    "labels": [self._format_server_name(server) for server in servers[:10]],
-                    "values": [float(server.load_percent) for server in servers[:10]],
-                    "types": [server.server_type.value for server in servers[:10]],
+                "users": users_chart,
+                "paid_users": {
+                    "labels": users_chart["labels"],
+                    "values": users_chart["datasets"]["new_paid_users"],
                 },
-                "payments": {
-                    "labels": [day.strftime("%d.%m") for day in payments_series],
-                    "values": [float(value) for value in payments_series.values()],
-                },
+                "plan_signups": plan_signups_chart,
+                "server_loads": self._server_load_chart(servers),
+                "host_loads": self._host_load_chart(servers),
+                "payments": payments_chart,
+                "traffic": traffic_chart,
                 "plan_mix": {
                     "labels": ["Start", "Pro"],
                     "values": [plan_mix["start"], plan_mix["pro"]],
@@ -143,6 +164,10 @@ class DashboardService(BaseService):
                 },
             },
         }
+
+    @classmethod
+    def period_options(cls) -> list[dict[str, str]]:
+        return [{"value": key, "label": value[0]} for key, value in DASHBOARD_PERIODS.items()]
 
     async def top_users(self, metric: str, limit: int = 10) -> list[UserMetricRow]:
         subscriptions = list(
@@ -263,6 +288,229 @@ class DashboardService(BaseService):
             return f"WL {server.name}"
         return server.name
 
+    def _dashboard_window(self, period: str) -> DashboardWindow:
+        key = period if period in DASHBOARD_PERIODS else DEFAULT_DASHBOARD_PERIOD
+        label, duration, bucket_count = DASHBOARD_PERIODS[key]
+        end = utc_now()
+        start = end - duration
+        bucket_seconds = max(int(duration.total_seconds() // bucket_count), 1)
+        labels = []
+        for index in range(bucket_count):
+            bucket_start = start + timedelta(seconds=bucket_seconds * index)
+            labels.append(bucket_start.strftime("%H:%M") if duration <= timedelta(days=1) else bucket_start.strftime("%d.%m"))
+        return DashboardWindow(
+            key=key,
+            label=label,
+            start=start,
+            end=end,
+            bucket_seconds=bucket_seconds,
+            labels=labels,
+        )
+
+    def _bucket_index(self, window: DashboardWindow, value: datetime | None) -> int | None:
+        if value is None:
+            return None
+        current = ensure_utc(value)
+        if current < window.start or current > window.end:
+            return None
+        index = int((current - window.start).total_seconds() // window.bucket_seconds)
+        return min(max(index, 0), len(window.labels) - 1)
+
+    async def _user_status_counts(self) -> dict[str, int]:
+        rows = (
+            await self.session.execute(
+                select(User.status, func.count(User.id)).group_by(User.status)
+            )
+        ).all()
+        return {status.value if hasattr(status, "value") else str(status): int(count) for status, count in rows}
+
+    async def _users_chart(self, window: DashboardWindow) -> dict:
+        labels = list(window.labels)
+        new_users = [0 for _ in labels]
+        new_paid_users = [0 for _ in labels]
+        trial_users = [0 for _ in labels]
+
+        user_created_rows = (
+            await self.session.execute(
+                select(User.created_at).where(User.created_at >= window.start, User.created_at <= window.end)
+            )
+        ).all()
+        for (created_at,) in user_created_rows:
+            index = self._bucket_index(window, created_at)
+            if index is not None:
+                new_users[index] += 1
+
+        first_paid_rows = (
+            await self.session.execute(
+                select(Subscription.user_id, func.min(Subscription.created_at))
+                .join(Plan)
+                .where(Plan.is_trial.is_(False), Subscription.created_at <= window.end)
+                .group_by(Subscription.user_id)
+            )
+        ).all()
+        for _, first_paid_at in first_paid_rows:
+            index = self._bucket_index(window, first_paid_at)
+            if index is not None:
+                new_paid_users[index] += 1
+
+        trial_rows = (
+            await self.session.execute(
+                select(TrialPeriod.started_at).where(
+                    TrialPeriod.started_at >= window.start,
+                    TrialPeriod.started_at <= window.end,
+                )
+            )
+        ).all()
+        for (started_at,) in trial_rows:
+            index = self._bucket_index(window, started_at)
+            if index is not None:
+                trial_users[index] += 1
+
+        return {
+            "labels": labels,
+            "datasets": {
+                "new_users": new_users,
+                "new_paid_users": new_paid_users,
+                "trial_users": trial_users,
+            },
+            "series": [
+                {"key": "new_users", "label": "Новые пользователи", "values": new_users},
+                {"key": "new_paid_users", "label": "Новые платные", "values": new_paid_users},
+                {"key": "trial_users", "label": "Пробные периоды", "values": trial_users},
+            ],
+        }
+
+    async def _payments_chart(self, window: DashboardWindow) -> dict:
+        values = [0.0 for _ in window.labels]
+        counts = [0 for _ in window.labels]
+        rows = (
+            await self.session.execute(
+                select(BalanceTransaction.created_at, BalanceTransaction.amount_rub)
+                .where(
+                    BalanceTransaction.type == BalanceTransactionType.TOPUP,
+                    BalanceTransaction.created_at >= window.start,
+                    BalanceTransaction.created_at <= window.end,
+                )
+                .order_by(BalanceTransaction.created_at.asc())
+            )
+        ).all()
+        for created_at, amount in rows:
+            index = self._bucket_index(window, created_at)
+            if index is None:
+                continue
+            values[index] += float(Decimal(amount))
+            counts[index] += 1
+        return {"labels": list(window.labels), "values": values, "counts": counts}
+
+    async def _traffic_chart(self, window: DashboardWindow) -> dict:
+        total = [0.0 for _ in window.labels]
+        whitelist = [0.0 for _ in window.labels]
+        rows = (
+            await self.session.execute(
+                select(TrafficSnapshot.created_at, TrafficSnapshot.used_bytes, Server.server_type)
+                .outerjoin(Server, TrafficSnapshot.server_id == Server.id)
+                .where(TrafficSnapshot.created_at >= window.start, TrafficSnapshot.created_at <= window.end)
+                .order_by(TrafficSnapshot.created_at.asc())
+            )
+        ).all()
+        for created_at, used_bytes, server_type in rows:
+            index = self._bucket_index(window, created_at)
+            if index is None:
+                continue
+            gb = round(int(used_bytes or 0) / 1024**3, 4)
+            total[index] += gb
+            if server_type == ServerType.WHITELIST:
+                whitelist[index] += gb
+        return {
+            "labels": list(window.labels),
+            "datasets": {
+                "total_gb": total,
+                "whitelist_gb": whitelist,
+            },
+        }
+
+    def _plan_signups_chart(self, window: DashboardWindow, subscriptions: list[Subscription]) -> dict:
+        labels = list(window.labels)
+        series: dict[str, list[int]] = {}
+        for item in subscriptions:
+            if item.plan is None:
+                continue
+            index = self._bucket_index(window, item.created_at)
+            if index is None:
+                continue
+            label = item.plan.name or item.plan.code.value
+            series.setdefault(label, [0 for _ in labels])[index] += 1
+        return {
+            "labels": labels,
+            "datasets": [
+                {"label": label, "values": values}
+                for label, values in sorted(series.items(), key=lambda item: item[0].lower())
+            ],
+        }
+
+    def _server_load_chart(self, servers: list[Server]) -> dict:
+        items = []
+        for server in servers:
+            items.append(
+                {
+                    "id": server.id,
+                    "label": self._format_server_name(server),
+                    "name": server.name,
+                    "type": server.server_type.value,
+                    "type_label": self._server_type_label(server.server_type),
+                    "load": float(server.load_percent or 0),
+                    "online": int(server.users_online or 0),
+                    "assigned": int(server.current_clients or 0),
+                    "capacity": int(server.max_clients or 0),
+                    "connected": bool(server.is_connected),
+                }
+            )
+        return {
+            "labels": [item["label"] for item in items],
+            "values": [item["load"] for item in items],
+            "types": [item["type"] for item in items],
+            "items": items,
+        }
+
+    def _host_load_chart(self, servers: list[Server]) -> dict:
+        items = []
+        for server in servers:
+            for inbound in server.inbounds:
+                if not inbound.is_active:
+                    continue
+                max_clients = int(inbound.max_clients or 0)
+                client_count = int(inbound.client_count or 0)
+                load = round(client_count / max_clients * 100, 2) if max_clients > 0 else 0
+                items.append(
+                    {
+                        "id": inbound.id,
+                        "label": f"{server.name} · {inbound.tag}",
+                        "server": server.name,
+                        "server_type": server.server_type.value,
+                        "type_label": self._server_type_label(server.server_type),
+                        "tag": inbound.tag,
+                        "protocol": inbound.type,
+                        "network": inbound.network or "—",
+                        "port": inbound.port or 0,
+                        "clients": client_count,
+                        "capacity": max_clients,
+                        "load": load,
+                    }
+                )
+        items.sort(key=lambda item: (item["load"], item["clients"]), reverse=True)
+        return {
+            "labels": [item["label"] for item in items],
+            "values": [item["load"] for item in items],
+            "items": items,
+        }
+
+    def _server_type_label(self, server_type: ServerType) -> str:
+        if server_type == ServerType.TEN_GBIT:
+            return "Start"
+        if server_type == ServerType.WHITELIST:
+            return "Белые списки"
+        return "Обычные"
+
     def _latest_subscriptions(self, subscriptions: list[Subscription]) -> list[Subscription]:
         latest: dict[str, Subscription] = {}
         for item in subscriptions:
@@ -288,19 +536,29 @@ class DashboardService(BaseService):
 
     async def _traffic_leaderboard_rows(self, subscriptions: list[Subscription]) -> list[TrafficLeaderboardRow]:
         latest_subscriptions = {item.user_id: item for item in self._latest_subscriptions(subscriptions)}
-        snapshots = list(
-            (
+        ranked_snapshots = (
+            select(
+                TrafficSnapshot.id.label("snapshot_id"),
+                func.row_number()
+                .over(
+                    partition_by=TrafficSnapshot.user_id,
+                    order_by=(TrafficSnapshot.snapshot_date.desc(), TrafficSnapshot.created_at.desc()),
+                )
+                .label("row_number"),
+            )
+            .subquery()
+        )
+        latest_snapshots = {
+            item.user_id: item
+            for item in (
                 await self.session.scalars(
                     select(TrafficSnapshot)
+                    .join(ranked_snapshots, TrafficSnapshot.id == ranked_snapshots.c.snapshot_id)
                     .options(joinedload(TrafficSnapshot.user))
-                    .order_by(TrafficSnapshot.snapshot_date.desc(), TrafficSnapshot.created_at.desc())
+                    .where(ranked_snapshots.c.row_number == 1)
                 )
             ).all()
-        )
-        latest_snapshots: dict[str, TrafficSnapshot] = {}
-        for item in snapshots:
-            if item.user_id not in latest_snapshots:
-                latest_snapshots[item.user_id] = item
+        }
 
         rows: list[TrafficLeaderboardRow] = []
         for user_id in latest_subscriptions.keys() | latest_snapshots.keys():

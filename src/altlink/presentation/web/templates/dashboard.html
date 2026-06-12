@@ -2,22 +2,145 @@
 {% block content %}
 <nav class="dashboard-section-nav" aria-label="Разделы админской панели">
   <a href="#dashboard-overview">Обзор</a>
-  <a href="#dashboard-statuses">Статусы</a>
-  <a href="#dashboard-servers">Серверы</a>
-  <a href="#dashboard-plans">Тарифы</a>
+  <a href="#dashboard-users">Пользователи</a>
+  <a href="#dashboard-load">Нагрузка</a>
+  <a href="#dashboard-finance">Финансы</a>
+  <a href="#dashboard-plans">Срез</a>
   <a href="#dashboard-lists">Списки</a>
 </nav>
 
-<section class="cards dashboard-section" id="dashboard-overview" data-section-title="Обзор">
-  <article class="card"><div class="muted">Активные</div><strong>{{ overview.active_users }}</strong></article>
-  <article class="card"><div class="muted">Без продления</div><strong>{{ overview.renewal_disabled_users }}</strong></article>
-  <article class="card"><div class="muted">Заблокированные</div><strong>{{ overview.blocked_users }}</strong></article>
-  <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>
-  <article class="card"><div class="muted">Платежи за 30 дней</div><strong>{{ overview.payments_total_rub|rub }} ₽</strong></article>
-  <article class="card"><div class="muted">Трафик</div><strong>{{ '%.2f'|format(overview.total_traffic_bytes / 1024**3) }} ГБ</strong></article>
+<section class="panel dashboard-toolbar-panel">
+  <div>
+    <span class="badge highlight">Аналитика</span>
+    <h1>Дашборд ALTLINK</h1>
+    <p class="muted">
+      Графики строятся за выбранный период. Нагрузка нод и хостов показывает последний сохранённый срез после обновления.
+    </p>
+  </div>
+  <form method="get" action="/admin/dashboard" class="dashboard-filter-form">
+    <label>
+      <span class="muted">Период</span>
+      <select name="period" aria-label="Период графиков">
+        {% for item in overview.period_options %}
+        <option value="{{ item.value }}" {% if item.value == selected_period %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="button ghost" name="refresh" value="0">Показать</button>
+    <button type="submit" class="button" name="refresh" value="1">Обновить данные</button>
+  </form>
 </section>
 
-<section class="grid-two dashboard-section" id="dashboard-statuses" data-section-title="Статусы">
+<section class="cards dashboard-section" id="dashboard-overview" data-section-title="Обзор">
+  <article class="card"><div class="muted">Активные</div><strong>{{ overview.active_users }}</strong></article>
+  <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>
+  <article class="card"><div class="muted">Новые за {{ overview.period_label }}</div><strong>{{ overview.new_users_in_period }}</strong></article>
+  <article class="card"><div class="muted">Новые платные</div><strong>{{ overview.new_paid_users_in_period }}</strong></article>
+  <article class="card"><div class="muted">Пополнения за период</div><strong>{{ overview.payments_total_rub|rub }} ₽</strong></article>
+  <article class="card"><div class="muted">Трафик всего</div><strong>{{ '%.2f'|format(overview.total_traffic_bytes / 1024**3) }} ГБ</strong></article>
+</section>
+
+<section class="grid-two dashboard-section" id="dashboard-users" data-section-title="Пользователи">
+  <article class="panel chart-box chart-box-tall">
+    <div class="split chart-head">
+      <div>
+        <h2>Пользователи по времени</h2>
+        <p class="muted">Регистрации, первые платные подписки и пробные периоды.</p>
+      </div>
+      <label class="chart-control">
+        <span class="muted">Показать</span>
+        <select id="usersChartMode">
+          <option value="all">Все линии</option>
+          <option value="new_users">Новые пользователи</option>
+          <option value="new_paid_users">Новые платные</option>
+          <option value="trial_users">Пробные периоды</option>
+        </select>
+      </label>
+    </div>
+    <canvas id="usersChart"></canvas>
+  </article>
+
+  <article class="panel chart-box chart-box-tall">
+    <div class="split chart-head">
+      <div>
+        <h2>Новые подписки по тарифам</h2>
+        <p class="muted">Сравнение разных тарифов за выбранный период.</p>
+      </div>
+      <span class="badge">{{ overview.period_label }}</span>
+    </div>
+    <canvas id="planSignupsChart"></canvas>
+  </article>
+</section>
+
+<section class="grid-two dashboard-section" id="dashboard-load" data-section-title="Нагрузка">
+  <article class="panel chart-box chart-box-tall">
+    <div class="split chart-head">
+      <div>
+        <h2>Нагрузка на ноды</h2>
+        <p class="muted">Последний срез из локальной базы после синхронизации с Remnawave.</p>
+      </div>
+      <div class="chart-controls-row">
+        <select id="nodeTypeFilter" aria-label="Фильтр нод по типу">
+          <option value="all">Все типы</option>
+          <option value="ten_gbit">Start</option>
+          <option value="whitelist">Белые списки</option>
+          <option value="regular">Обычные</option>
+        </select>
+        <select id="nodeMetricSelect" aria-label="Метрика нод">
+          <option value="load">Нагрузка, %</option>
+          <option value="online">Онлайн</option>
+          <option value="assigned">Выдано доступов</option>
+          <option value="capacity">Ёмкость</option>
+        </select>
+      </div>
+    </div>
+    <canvas id="nodeLoadChart"></canvas>
+  </article>
+
+  <article class="panel chart-box chart-box-tall">
+    <div class="split chart-head">
+      <div>
+        <h2>Нагрузка на хосты</h2>
+        <p class="muted">Активные inbound/host-метрики внутри нод.</p>
+      </div>
+      <div class="chart-controls-row">
+        <select id="hostTypeFilter" aria-label="Фильтр хостов по типу сервера">
+          <option value="all">Все типы</option>
+          <option value="ten_gbit">Start</option>
+          <option value="whitelist">Белые списки</option>
+          <option value="regular">Обычные</option>
+        </select>
+        <select id="hostMetricSelect" aria-label="Метрика хостов">
+          <option value="load">Нагрузка, %</option>
+          <option value="clients">Клиенты</option>
+          <option value="capacity">Ёмкость</option>
+          <option value="port">Порт</option>
+        </select>
+      </div>
+    </div>
+    <canvas id="hostLoadChart"></canvas>
+  </article>
+</section>
+
+<section class="grid-two dashboard-section" id="dashboard-finance" data-section-title="Финансы и трафик">
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Выручка по времени</h2>
+      <span class="badge highlight">{{ overview.period_label }}</span>
+    </div>
+    <canvas id="paymentsChart"></canvas>
+  </article>
+
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Трафик по снапшотам</h2>
+      <span class="badge">После обновлений</span>
+    </div>
+    <canvas id="trafficChart"></canvas>
+  </article>
+</section>
+
+<section class="grid-two dashboard-section" id="dashboard-plans" data-section-title="Текущий срез">
   <article class="panel chart-box">
     <div class="split">
       <h2>Статусы пользователей</h2>
@@ -28,20 +151,10 @@
 
   <article class="panel chart-box">
     <div class="split">
-      <h2>Выручка по дням</h2>
-      <span class="badge highlight">14 дней</span>
+      <h2>Соотношение Start / Pro</h2>
+      <span class="badge">Активные платные подписки</span>
     </div>
-    <canvas id="paymentsChart"></canvas>
-  </article>
-</section>
-
-<section class="grid-two dashboard-section" id="dashboard-servers" data-section-title="Серверы">
-  <article class="panel chart-box">
-    <div class="split">
-      <h2>Загрузка серверов</h2>
-      <span class="badge warning">По локальной матрице доступа</span>
-    </div>
-    <canvas id="serversChart"></canvas>
+    <canvas id="planMixChart"></canvas>
   </article>
 
   <article class="panel chart-box">
@@ -50,16 +163,6 @@
       <span class="badge">Каталог</span>
     </div>
     <canvas id="serverTypesChart"></canvas>
-  </article>
-</section>
-
-<section class="grid-two dashboard-section" id="dashboard-plans" data-section-title="Тарифы">
-  <article class="panel chart-box">
-    <div class="split">
-      <h2>Соотношение Start / Pro</h2>
-      <span class="badge">Активные платные подписки</span>
-    </div>
-    <canvas id="planMixChart"></canvas>
   </article>
 
   <article class="panel">
@@ -123,18 +226,158 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
   const charts = {{ charts_json | safe }};
+  const green = "#07947f";
+  const mint = "#35b89f";
+  const teal = "#0f766e";
+  const blue = "#2e7a95";
+  const rose = "#a93677";
+  const muted = "#7acdb8";
+  const palette = [green, mint, teal, blue, muted, rose, "#5c7771", "#28a78f"];
 
-  new Chart(document.getElementById("statusChart"), {
-    type: "doughnut",
+  function alpha(hex, value) {
+    const clean = hex.replace("#", "");
+    const r = parseInt(clean.slice(0, 2), 16);
+    const g = parseInt(clean.slice(2, 4), 16);
+    const b = parseInt(clean.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${value})`;
+  }
+
+  function chartColor(index) {
+    return palette[index % palette.length];
+  }
+
+  function commonOptions(extra = {}) {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { boxWidth: 12, usePointStyle: true }
+        }
+      },
+      ...extra
+    };
+  }
+
+  const usersSeries = charts.users.series || [];
+  const usersChart = new Chart(document.getElementById("usersChart"), {
+    type: "line",
     data: {
-      labels: charts.user_statuses.labels,
-      datasets: [{
-        data: charts.user_statuses.values,
-        backgroundColor: ["#07947f", "#35b89f", "#a93677", "#7acdb8", "#5c7771"]
-      }]
+      labels: charts.users.labels,
+      datasets: usersSeries.map((item, index) => {
+        const color = chartColor(index);
+        return {
+          label: item.label,
+          data: item.values,
+          borderColor: color,
+          backgroundColor: alpha(color, 0.12),
+          fill: true,
+          tension: 0.34,
+          pointRadius: 2,
+          key: item.key
+        };
+      })
     },
-    options: { responsive: true, maintainAspectRatio: false }
+    options: commonOptions()
   });
+
+  document.getElementById("usersChartMode")?.addEventListener("change", (event) => {
+    const mode = event.target.value;
+    usersChart.data.datasets.forEach((dataset) => {
+      dataset.hidden = mode !== "all" && dataset.key !== mode;
+    });
+    usersChart.update();
+  });
+
+  new Chart(document.getElementById("planSignupsChart"), {
+    type: "bar",
+    data: {
+      labels: charts.plan_signups.labels,
+      datasets: (charts.plan_signups.datasets || []).map((item, index) => ({
+        label: item.label,
+        data: item.values,
+        backgroundColor: alpha(chartColor(index), 0.72),
+        borderColor: chartColor(index),
+        borderWidth: 1,
+        borderRadius: 8
+      }))
+    },
+    options: commonOptions({
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }
+    })
+  });
+
+  function serverColor(type) {
+    if (type === "ten_gbit") return mint;
+    if (type === "whitelist") return blue;
+    return green;
+  }
+
+  function filteredItems(items, filterKey) {
+    return filterKey === "all" ? items : items.filter((item) => (item.type || item.server_type) === filterKey);
+  }
+
+  function renderMetricChart(canvasId, items, metricSelectId, filterSelectId, valueResolver) {
+    const metricSelect = document.getElementById(metricSelectId);
+    const filterSelect = document.getElementById(filterSelectId);
+    const chart = new Chart(document.getElementById(canvasId), {
+      type: "bar",
+      data: { labels: [], datasets: [{ label: "", data: [], backgroundColor: [] }] },
+      options: commonOptions({
+        indexAxis: "y",
+        scales: { x: { beginAtZero: true } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              afterLabel(context) {
+                const item = chart.$items?.[context.dataIndex];
+                if (!item) return "";
+                if (item.tag) return `${item.server} · ${item.protocol}/${item.network} · port ${item.port || "—"}`;
+                return `${item.type_label} · онлайн ${item.online || 0} · ёмкость ${item.capacity || "—"}`;
+              }
+            }
+          }
+        }
+      })
+    });
+
+    function update() {
+      const metric = metricSelect?.value || "load";
+      const filter = filterSelect?.value || "all";
+      const visible = filteredItems(items, filter).slice(0, 18);
+      const metricLabel = metricSelect?.selectedOptions?.[0]?.textContent || "Метрика";
+      chart.$items = visible;
+      chart.data.labels = visible.map((item) => item.label);
+      chart.data.datasets[0].label = metricLabel;
+      chart.data.datasets[0].data = visible.map((item) => valueResolver(item, metric));
+      chart.data.datasets[0].backgroundColor = visible.map((item) => alpha(serverColor(item.type || item.server_type), 0.72));
+      chart.update();
+    }
+
+    metricSelect?.addEventListener("change", update);
+    filterSelect?.addEventListener("change", update);
+    update();
+    return chart;
+  }
+
+  renderMetricChart(
+    "nodeLoadChart",
+    charts.server_loads.items || [],
+    "nodeMetricSelect",
+    "nodeTypeFilter",
+    (item, metric) => Number(item[metric] || 0)
+  );
+
+  renderMetricChart(
+    "hostLoadChart",
+    charts.host_loads.items || [],
+    "hostMetricSelect",
+    "hostTypeFilter",
+    (item, metric) => Number(item[metric] || 0)
+  );
 
   new Chart(document.getElementById("paymentsChart"), {
     type: "line",
@@ -143,30 +386,51 @@
       datasets: [{
         label: "Пополнения, ₽",
         data: charts.payments.values,
-        borderColor: "#07947f",
-        backgroundColor: "rgba(7, 148, 127, 0.14)",
+        borderColor: green,
+        backgroundColor: alpha(green, 0.14),
         fill: true,
         tension: 0.35
       }]
     },
-    options: { responsive: true, maintainAspectRatio: false }
+    options: commonOptions()
   });
 
-  new Chart(document.getElementById("serversChart"), {
-    type: "bar",
+  new Chart(document.getElementById("trafficChart"), {
+    type: "line",
     data: {
-      labels: charts.server_loads.labels,
+      labels: charts.traffic.labels,
+      datasets: [
+        {
+          label: "Трафик, ГБ",
+          data: charts.traffic.datasets.total_gb,
+          borderColor: green,
+          backgroundColor: alpha(green, 0.12),
+          fill: true,
+          tension: 0.35
+        },
+        {
+          label: "Белые списки, ГБ",
+          data: charts.traffic.datasets.whitelist_gb,
+          borderColor: blue,
+          backgroundColor: alpha(blue, 0.08),
+          fill: true,
+          tension: 0.35
+        }
+      ]
+    },
+    options: commonOptions()
+  });
+
+  new Chart(document.getElementById("statusChart"), {
+    type: "doughnut",
+    data: {
+      labels: charts.user_statuses.labels,
       datasets: [{
-        label: "Онлайн-нагрузка, %",
-        data: charts.server_loads.values,
-        backgroundColor: charts.server_loads.types.map((type) => {
-          if (type === "ten_gbit") return "#35b89f";
-          if (type === "whitelist") return "#2e7a95";
-          return "#07947f";
-        })
+        data: charts.user_statuses.values,
+        backgroundColor: [green, mint, rose, muted, "#5c7771"]
       }]
     },
-    options: { responsive: true, maintainAspectRatio: false }
+    options: commonOptions()
   });
 
   new Chart(document.getElementById("serverTypesChart"), {
@@ -175,10 +439,10 @@
       labels: charts.server_types.labels,
       datasets: [{
         data: charts.server_types.values,
-        backgroundColor: ["rgba(7, 148, 127, 0.84)", "rgba(53, 184, 159, 0.76)", "rgba(46, 122, 149, 0.58)"]
+        backgroundColor: [alpha(green, 0.84), alpha(mint, 0.76), alpha(blue, 0.58)]
       }]
     },
-    options: { responsive: true, maintainAspectRatio: false }
+    options: commonOptions()
   });
 
   new Chart(document.getElementById("planMixChart"), {
@@ -187,12 +451,12 @@
       labels: charts.plan_mix.labels,
       datasets: [{
         data: charts.plan_mix.values,
-        backgroundColor: ["rgba(7, 148, 127, 0.84)", "rgba(53, 184, 159, 0.74)"],
-        borderColor: ["rgba(7, 148, 127, 1)", "rgba(53, 184, 159, 1)"],
+        backgroundColor: [alpha(green, 0.84), alpha(mint, 0.74)],
+        borderColor: [green, mint],
         borderWidth: 1
       }]
     },
-    options: { responsive: true, maintainAspectRatio: false }
+    options: commonOptions()
   });
 </script>
 {% endblock %}

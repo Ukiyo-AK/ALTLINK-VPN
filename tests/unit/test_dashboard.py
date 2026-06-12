@@ -108,3 +108,34 @@ async def test_dashboard_overview_contains_start_pro_plan_mix(test_services):
 
     assert overview["charts"]["plan_mix"]["labels"] == ["Start", "Pro"]
     assert overview["charts"]["plan_mix"]["values"] == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_overview_contains_period_analytics_and_load_charts(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=12007,
+            username="analytics_user",
+            first_name="Analytics",
+            last_name="User",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+
+        overview = await hub.dashboard.overview(period="1d")
+
+    charts = overview["charts"]
+
+    assert overview["period"] == "1d"
+    assert overview["period_label"] == "1 день"
+    assert overview["new_users_in_period"] >= 1
+    assert overview["new_paid_users_in_period"] >= 1
+    assert Decimal(overview["payments_total_rub"]) >= Decimal("500")
+    assert len(charts["users"]["labels"]) == 24
+    assert sum(charts["users"]["datasets"]["new_users"]) >= 1
+    assert sum(charts["users"]["datasets"]["new_paid_users"]) >= 1
+    assert charts["plan_signups"]["datasets"]
+    assert charts["server_loads"]["items"]
+    assert charts["host_loads"]["items"]
+    assert "traffic" in charts

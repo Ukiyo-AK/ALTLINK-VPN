@@ -233,13 +233,21 @@ def test_admin_dashboard_has_mobile_section_navigation():
     assert 'class="dashboard-section-nav"' in dashboard
     for section_id in (
         "dashboard-overview",
-        "dashboard-statuses",
-        "dashboard-servers",
+        "dashboard-users",
+        "dashboard-load",
+        "dashboard-finance",
         "dashboard-plans",
         "dashboard-lists",
     ):
         assert f'href="#{section_id}"' in dashboard
         assert f'id="{section_id}"' in dashboard
+    assert 'name="period"' in dashboard
+    assert 'name="refresh"' in dashboard
+    assert "usersChart" in dashboard
+    assert "planSignupsChart" in dashboard
+    assert "nodeLoadChart" in dashboard
+    assert "hostLoadChart" in dashboard
+    assert "trafficChart" in dashboard
 
 
 def test_admin_users_template_exposes_csrf_protected_node_access_sync():

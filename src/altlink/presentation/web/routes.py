@@ -65,7 +65,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260610-portal-miniapp"
+ASSET_VERSION = "20260613-dashboard-analytics"
 COUNTRY_NAMES_RU = {
     "AM": "Армения",
     "AT": "Австрия",
@@ -1038,15 +1038,18 @@ async def logout(request: Request):
 
 
 @router.get("/admin/dashboard")
-async def dashboard(request: Request):
+async def dashboard(request: Request, period: str = "2w", refresh: bool = False):
     container = request.app.state.container
     async with container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-    await sync_dashboard_traffic_if_possible(container)
+    if refresh:
+        async with container.hub() as sync_hub:
+            await sync_server_catalog_if_possible(sync_hub)
+        await sync_dashboard_traffic_if_possible(container)
     async with container.hub() as hub:
-        overview = await hub.dashboard.overview()
+        overview = await hub.dashboard.overview(period=period)
         return render(
             request,
             "dashboard.html",
@@ -1055,6 +1058,8 @@ async def dashboard(request: Request):
             overview=overview,
             charts=overview["charts"],
             charts_json=json.dumps(overview["charts"], ensure_ascii=False),
+            selected_period=overview["period"],
+            refresh_requested=refresh,
             active_nav="dashboard",
         )
 

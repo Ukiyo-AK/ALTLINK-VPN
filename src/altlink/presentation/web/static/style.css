@@ -1127,10 +1127,62 @@ textarea {
   min-height: 0;
 }
 
+.chart-box-tall {
+  grid-template-rows: auto minmax(280px, 380px);
+}
+
 .chart-box canvas {
   width: 100% !important;
   height: 100% !important;
   max-height: 320px;
+}
+
+.chart-box-tall canvas {
+  max-height: 380px;
+}
+
+.dashboard-toolbar-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.dashboard-toolbar-panel h1 {
+  margin: 0.45rem 0 0.35rem;
+  font-size: clamp(1.7rem, 3vw, 2.6rem);
+  line-height: 1;
+}
+
+.dashboard-filter-form,
+.chart-controls-row {
+  display: flex;
+  align-items: end;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.dashboard-filter-form label,
+.chart-control {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 10rem;
+}
+
+.chart-head {
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.chart-head h2 {
+  margin-bottom: 0.25rem;
+}
+
+.chart-controls-row select,
+.chart-control select,
+.dashboard-filter-form select {
+  min-height: 2.65rem;
 }
 
 .center-shell {
@@ -2930,6 +2982,22 @@ html[data-theme="dark"] .portal-section-nav a {
   .inline-form {
     flex-direction: column;
     align-items: stretch;
+  }
+  .dashboard-toolbar-panel {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dashboard-filter-form,
+  .chart-controls-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .dashboard-filter-form label,
+  .chart-control,
+  .dashboard-filter-form .button,
+  .chart-controls-row select {
+    width: 100%;
+    min-width: 0;
   }
   .toolbar > *,
   .toolbar > form > *,

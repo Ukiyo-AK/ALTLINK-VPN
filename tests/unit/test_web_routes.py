@@ -403,7 +403,7 @@ def test_portal_bot_login_helpers_build_deeplink_and_qr():
 
 
 @pytest.mark.asyncio
-async def test_admin_dashboard_route_passes_chart_context_and_syncs_traffic(monkeypatch):
+async def test_admin_dashboard_route_passes_chart_context_and_refreshes_on_demand(monkeypatch):
     sync_calls: list[str] = []
     rendered: dict[str, object] = {}
     overview = {
@@ -413,6 +413,7 @@ async def test_admin_dashboard_route_passes_chart_context_and_syncs_traffic(monk
         "trial_users": 0,
         "payments_total_rub": Decimal("100"),
         "total_traffic_bytes": 5 * 1024**3,
+        "period": "1w",
         "charts": {
             "plan_mix": {"labels": ["Start", "Pro"], "values": [1, 2]},
             "user_statuses": {"labels": [], "values": []},
@@ -425,10 +426,13 @@ async def test_admin_dashboard_route_passes_chart_context_and_syncs_traffic(monk
     }
 
     async def fake_snapshot_traffic():
-        sync_calls.append("sync")
+        sync_calls.append("traffic")
 
-    async def fake_overview():
-        sync_calls.append("overview")
+    async def fake_sync_servers():
+        sync_calls.append("servers")
+
+    async def fake_overview(period="2w"):
+        sync_calls.append(f"overview:{period}")
         return overview
 
     async def fake_resolve_admin(request, hub):
@@ -443,6 +447,7 @@ async def test_admin_dashboard_route_passes_chart_context_and_syncs_traffic(monk
     async def fake_hub():
         yield SimpleNamespace(
             billing=SimpleNamespace(snapshot_traffic=fake_snapshot_traffic),
+            catalog=SimpleNamespace(sync_servers=fake_sync_servers),
             dashboard=SimpleNamespace(overview=fake_overview),
         )
 
@@ -454,13 +459,66 @@ async def test_admin_dashboard_route_passes_chart_context_and_syncs_traffic(monk
     monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
     monkeypatch.setattr(web_routes, "render", fake_render)
 
-    response = await web_routes.dashboard(request)
+    response = await web_routes.dashboard(request, period="1w", refresh=True)
 
     assert response is rendered["context"]
-    assert sync_calls == ["sync", "overview"]
+    assert sync_calls == ["servers", "traffic", "overview:1w"]
     assert rendered["template_name"] == "dashboard.html"
     assert rendered["context"]["charts"] == overview["charts"]
     assert rendered["context"]["charts_json"]
+    assert rendered["context"]["selected_period"] == "1w"
+    assert rendered["context"]["refresh_requested"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_dashboard_route_uses_cached_data_without_refresh(monkeypatch):
+    sync_calls: list[str] = []
+    rendered: dict[str, object] = {}
+    overview = {
+        "period": "2w",
+        "charts": {"plan_mix": {"labels": ["Start", "Pro"], "values": [0, 0]}},
+    }
+
+    async def fake_snapshot_traffic():
+        sync_calls.append("traffic")
+
+    async def fake_sync_servers():
+        sync_calls.append("servers")
+
+    async def fake_overview(period="2w"):
+        sync_calls.append(f"overview:{period}")
+        return overview
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            billing=SimpleNamespace(snapshot_traffic=fake_snapshot_traffic),
+            catalog=SimpleNamespace(sync_servers=fake_sync_servers),
+            dashboard=SimpleNamespace(overview=fake_overview),
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.dashboard(request, period="2w", refresh=False)
+
+    assert response is rendered["context"]
+    assert sync_calls == ["overview:2w"]
+    assert rendered["template_name"] == "dashboard.html"
+    assert rendered["context"]["refresh_requested"] is False
 
 
 @pytest.mark.asyncio
