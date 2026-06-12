@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
+from altlink.application.services.accounts import UserListFilters
 from altlink.application.services.base import ConflictError
+from altlink.domain.enums import PlanCode
+from altlink.infrastructure.db.models import OnlineSessionCache, TrafficSnapshot
 
 
 @pytest.mark.asyncio
@@ -30,6 +34,77 @@ async def test_list_users_supports_username_and_remote_identifiers(test_services
         assert (await hub.accounts.list_users("remote_demo"))[0].id == user_id
         assert (await hub.accounts.list_users("remote-user-uuid"))[0].id == user_id
         assert (await hub.accounts.list_users("short-uuid"))[0].id == user_id
+
+
+@pytest.mark.asyncio
+async def test_list_users_for_admin_filters_and_sorts_across_all_users(test_services):
+    async with test_services.hub() as hub:
+        target = await hub.accounts.get_or_create_user(
+            telegram_id=11030,
+            username="filtered_target",
+            first_name="Filtered",
+            last_name="Target",
+            language_code="ru",
+        )
+        other = await hub.accounts.get_or_create_user(
+            telegram_id=11031,
+            username="filtered_other",
+            first_name="Filtered",
+            last_name="Other",
+            language_code="ru",
+        )
+        await hub.topups.create_request(target.id, Decimal("500"), auto_complete=True)
+        await hub.topups.create_request(other.id, Decimal("500"), auto_complete=True)
+        await hub.billing.activate_paid_plan(target.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        await hub.billing.activate_paid_plan(other.id, PlanCode.UNLIMITED, charge_user=True)
+
+        target = await hub.accounts.get_user(target.id)
+        subscription = await hub.accounts.get_current_subscription(target.id)
+        server_id = target.assigned_server_id
+        subscription.whitelist_traffic_used_bytes = 3 * 1024**3
+        hub.session.add(
+            TrafficSnapshot(
+                user_id=target.id,
+                subscription_id=subscription.id,
+                server_id=server_id,
+                snapshot_date=date.today(),
+                used_bytes=8 * 1024**3,
+                lifetime_used_bytes=8 * 1024**3,
+                source="test",
+            )
+        )
+        hub.session.add_all(
+            [
+                OnlineSessionCache(user_id=target.id, server_id=server_id, device="iPhone", is_online=True),
+                OnlineSessionCache(user_id=target.id, server_id=server_id, device="Windows", is_online=True),
+                OnlineSessionCache(user_id=other.id, device="Android", is_online=True),
+            ]
+        )
+        await hub.session.flush()
+
+        page = await hub.accounts.list_users_for_admin(
+            UserListFilters(
+                status="active",
+                plan="start",
+                balance_min=Decimal("100"),
+                traffic_min_bytes=5 * 1024**3,
+                whitelist_traffic_min_bytes=2 * 1024**3,
+                node_id=server_id,
+                node_traffic_min_bytes=5 * 1024**3,
+                device_count_min=2,
+                sort="traffic",
+                direction="desc",
+                limit=5,
+            )
+        )
+
+    assert page.total == 1
+    assert page.limit == 5
+    assert [item.id for item in page.users] == [target.id]
+    assert page.users[0].admin_total_traffic_bytes == 8 * 1024**3
+    assert page.users[0].admin_whitelist_traffic_bytes == 3 * 1024**3
+    assert page.users[0].admin_node_traffic_bytes == 8 * 1024**3
+    assert page.users[0].admin_device_count == 2
 
 
 @pytest.mark.asyncio

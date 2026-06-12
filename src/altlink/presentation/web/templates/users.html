@@ -1,42 +1,206 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="panel">
-  <div class="toolbar">
-    <form method="get" class="inline-form">
-      <input type="text" name="search" value="{{ search }}" placeholder="Telegram ID, username или имя">
-      <button type="submit" class="button">Найти</button>
-    </form>
+<section class="panel users-filter-panel">
+  <div class="split users-filter-head">
+    <div>
+      <span class="badge highlight">Пользователи</span>
+      <h1>Фильтры и сортировка</h1>
+      <p class="muted">
+        Фильтры применяются ко всей базе, а не только к видимым строкам. По умолчанию показываем 30 пользователей.
+      </p>
+    </div>
     <form
       method="post"
       action="/admin/users/sync-access"
-      class="inline-form"
+      class="inline-form users-sync-form"
       onsubmit="return confirm('Синхронизировать активных пользователей с доступными нодами Remnawave?');"
     >
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit" class="button">Синхронизировать доступ к нодам</button>
     </form>
   </div>
-  <table class="table">
+
+  <form method="get" class="users-filter-grid">
+    <label class="users-filter-wide">
+      <span class="muted">Поиск</span>
+      <input type="text" name="search" value="{{ filters.search }}" placeholder="Telegram ID, username, Remnawave UUID">
+    </label>
+
+    <label>
+      <span class="muted">Статус</span>
+      <select name="status">
+        <option value="">Все статусы</option>
+        {% for item in status_options %}
+        <option value="{{ item.value }}" {% if filters.status == item.value %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      <span class="muted">Тариф</span>
+      <select name="plan">
+        <option value="">Все тарифы</option>
+        {% for item in plan_filter_options %}
+        <option value="{{ item.value }}" {% if filters.plan == item.value %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+        {% for plan in plans %}
+        <option value="{{ plan.code.value }}" {% if filters.plan == plan.code.value %}selected{% endif %}>{{ plan.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      <span class="muted">Баланс от, ₽</span>
+      <input type="number" step="0.01" name="balance_min" value="{{ filters.balance_min }}">
+    </label>
+    <label>
+      <span class="muted">Баланс до, ₽</span>
+      <input type="number" step="0.01" name="balance_max" value="{{ filters.balance_max }}">
+    </label>
+
+    <label>
+      <span class="muted">Активность от</span>
+      <input type="date" name="last_seen_from" value="{{ filters.last_seen_from }}">
+    </label>
+    <label>
+      <span class="muted">Активность до</span>
+      <input type="date" name="last_seen_to" value="{{ filters.last_seen_to }}">
+    </label>
+
+    <label>
+      <span class="muted">Трафик от, ГБ</span>
+      <input type="number" step="0.01" min="0" name="traffic_min" value="{{ filters.traffic_min }}">
+    </label>
+    <label>
+      <span class="muted">Трафик до, ГБ</span>
+      <input type="number" step="0.01" min="0" name="traffic_max" value="{{ filters.traffic_max }}">
+    </label>
+
+    <label>
+      <span class="muted">Whitelist от, ГБ</span>
+      <input type="number" step="0.01" min="0" name="whitelist_traffic_min" value="{{ filters.whitelist_traffic_min }}">
+    </label>
+    <label>
+      <span class="muted">Whitelist до, ГБ</span>
+      <input type="number" step="0.01" min="0" name="whitelist_traffic_max" value="{{ filters.whitelist_traffic_max }}">
+    </label>
+
+    <label class="users-filter-wide">
+      <span class="muted">Нода для трафика</span>
+      <select name="node_id">
+        <option value="">Не фильтровать по ноде</option>
+        {% for server in servers %}
+        <option value="{{ server.id }}" {% if filters.node_id == server.id %}selected{% endif %}>{{ server.name }} · {{ server.address }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span class="muted">На ноде от, ГБ</span>
+      <input type="number" step="0.01" min="0" name="node_traffic_min" value="{{ filters.node_traffic_min }}">
+    </label>
+    <label>
+      <span class="muted">На ноде до, ГБ</span>
+      <input type="number" step="0.01" min="0" name="node_traffic_max" value="{{ filters.node_traffic_max }}">
+    </label>
+
+    <label>
+      <span class="muted">Списание от</span>
+      <input type="date" name="next_billing_from" value="{{ filters.next_billing_from }}">
+    </label>
+    <label>
+      <span class="muted">Списание до</span>
+      <input type="date" name="next_billing_to" value="{{ filters.next_billing_to }}">
+    </label>
+
+    <label>
+      <span class="muted">Регистрация от</span>
+      <input type="date" name="registered_from" value="{{ filters.registered_from }}">
+    </label>
+    <label>
+      <span class="muted">Регистрация до</span>
+      <input type="date" name="registered_to" value="{{ filters.registered_to }}">
+    </label>
+
+    <label>
+      <span class="muted">Устройств от</span>
+      <input type="number" min="0" name="devices_min" value="{{ filters.devices_min }}">
+    </label>
+    <label>
+      <span class="muted">Устройств до</span>
+      <input type="number" min="0" name="devices_max" value="{{ filters.devices_max }}">
+    </label>
+
+    <label>
+      <span class="muted">Сортировать по</span>
+      <select name="sort">
+        {% for item in sort_options %}
+        <option value="{{ item.value }}" {% if filters.sort == item.value %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span class="muted">Направление</span>
+      <select name="direction">
+        <option value="desc" {% if filters.direction == 'desc' %}selected{% endif %}>По убыванию</option>
+        <option value="asc" {% if filters.direction == 'asc' %}selected{% endif %}>По возрастанию</option>
+      </select>
+    </label>
+    <label>
+      <span class="muted">Показывать</span>
+      <select name="limit">
+        {% for value in limit_options %}
+        <option value="{{ value }}" {% if filters.limit == value|string %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <div class="users-filter-actions">
+      <button type="submit" class="button">Применить фильтры</button>
+      <a href="/admin/users" class="button ghost">Сбросить</a>
+    </div>
+  </form>
+</section>
+
+<section class="panel">
+  <div class="split users-result-head">
+    <h2>Найдено: {{ user_page.total }}</h2>
+    <span class="badge">Показано: {{ users|length }} из {{ user_page.limit }}</span>
+  </div>
+  <table class="table users-table">
     <thead>
       <tr>
         <th>Пользователь</th>
         <th>Статус</th>
+        <th>Тариф</th>
         <th>Баланс</th>
-        <th>Назначенный сервер</th>
+        <th>Трафик</th>
+        <th>Whitelist</th>
+        <th>Нода</th>
+        <th>Устройства</th>
+        <th>Списание</th>
+        <th>Регистрация</th>
         <th>Последняя активность</th>
       </tr>
     </thead>
     <tbody>
       {% for user in users %}
+      {% set subscription = user.admin_current_subscription %}
+      {% set plan = user.admin_current_plan %}
       <tr>
         <td><a href="/admin/users/{{ user.id }}">{{ user.username or user.telegram_id }}</a></td>
-        <td>{{ user.status }}</td>
+        <td>{{ user.status|user_status }}</td>
+        <td>{{ plan.name if plan else '—' }}</td>
         <td>{{ user.balance_rub|rub }} ₽</td>
-        <td>{{ user.assigned_server.name if user.assigned_server else '—' }}</td>
+        <td>{{ '%.2f'|format(user.admin_total_traffic_bytes / 1024**3) }} ГБ</td>
+        <td>{{ '%.2f'|format(user.admin_whitelist_traffic_bytes / 1024**3) }} ГБ</td>
+        <td>{{ ('%.2f'|format(user.admin_node_traffic_bytes / 1024**3) ~ ' ГБ') if filters.node_id else '—' }}</td>
+        <td>{{ user.admin_device_count }}</td>
+        <td>{{ subscription.next_billing_at.strftime('%d.%m.%Y') if subscription else '—' }}</td>
+        <td>{{ user.created_at.strftime('%d.%m.%Y') }}</td>
         <td>{{ user.last_seen_at.strftime('%d.%m.%Y %H:%M') if user.last_seen_at else '—' }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="muted">Пользователи не найдены.</td></tr>
+      <tr><td colspan="11" class="muted">Пользователи не найдены.</td></tr>
       {% endfor %}
     </tbody>
   </table>

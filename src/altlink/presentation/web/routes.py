@@ -5,6 +5,7 @@ import logging
 import base64
 import json
 import re
+from datetime import UTC, datetime, time
 from decimal import Decimal
 from html import escape
 from pathlib import Path
@@ -19,6 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import joinedload
 
 from altlink.domain.billing import bytes_to_gb_cost
+from altlink.application.services.accounts import DEFAULT_USER_LIST_PAGE_SIZE, USER_LIST_PAGE_SIZE_OPTIONS, UserListFilters
 from altlink.domain.enums import (
     BalanceTransactionType,
     NotificationType,
@@ -27,6 +29,7 @@ from altlink.domain.enums import (
     ServerType,
     SupportRequestStatus,
     TopupStatus,
+    UserStatus,
 )
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
 from altlink.infrastructure.db.models import BalanceTransaction, Subscription, SystemSetting, User
@@ -147,6 +150,46 @@ def set_flash(request: Request, message: str, level: str = "success") -> None:
     request.session["flash"] = {"message": message, "level": level}
 
 
+def parse_decimal_query(value: str | None) -> Decimal | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return Decimal(str(value).strip().replace(",", "."))
+    except Exception:
+        return None
+
+
+def parse_int_query(value: str | None) -> int | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return None
+
+
+def parse_gb_to_bytes(value: str | None) -> int | None:
+    amount = parse_decimal_query(value)
+    if amount is None:
+        return None
+    return max(int(amount * Decimal(1024**3)), 0)
+
+
+def parse_date_query(value: str | None, *, end_of_day: bool = False) -> datetime | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        parsed = datetime.strptime(str(value).strip(), "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    edge = time.max if end_of_day else time.min
+    return datetime.combine(parsed, edge, tzinfo=UTC)
+
+
+def normalize_user_list_limit(value: int | None) -> int:
+    return value if value in USER_LIST_PAGE_SIZE_OPTIONS else DEFAULT_USER_LIST_PAGE_SIZE
+
+
 async def load_server_latency_state(session) -> tuple[dict[str, dict], str | None]:
     item = await session.scalar(select(SystemSetting).where(SystemSetting.key == MonitoringService.SERVER_LATENCY_STATUS_KEY))
     raw = item.value if item is not None else None
@@ -191,8 +234,11 @@ def user_status_label(value) -> str:
     status = getattr(value, "value", value)
     return {
         "new": "Новый",
+        "trial": "Тест",
         "active": "Активен",
+        "grace": "Грейс",
         "blocked": "Заблокирован",
+        "canceled": "Отменён",
         "deleted": "Удалён",
     }.get(str(status), str(status))
 
@@ -1065,19 +1111,123 @@ async def dashboard(request: Request, period: str = "2w", refresh: bool = False)
 
 
 @router.get("/admin/users")
-async def users_page(request: Request, search: str | None = None):
+async def users_page(
+    request: Request,
+    search: str | None = None,
+    status: str | None = None,
+    plan: str | None = None,
+    balance_min: str | None = None,
+    balance_max: str | None = None,
+    last_seen_from: str | None = None,
+    last_seen_to: str | None = None,
+    traffic_min: str | None = None,
+    traffic_max: str | None = None,
+    whitelist_traffic_min: str | None = None,
+    whitelist_traffic_max: str | None = None,
+    node_id: str | None = None,
+    node_traffic_min: str | None = None,
+    node_traffic_max: str | None = None,
+    next_billing_from: str | None = None,
+    next_billing_to: str | None = None,
+    registered_from: str | None = None,
+    registered_to: str | None = None,
+    devices_min: str | None = None,
+    devices_max: str | None = None,
+    sort: str = "created_at",
+    direction: str = "desc",
+    limit: int = DEFAULT_USER_LIST_PAGE_SIZE,
+):
+    filter_values = {
+        "search": search or "",
+        "status": status or "",
+        "plan": plan or "",
+        "balance_min": balance_min or "",
+        "balance_max": balance_max or "",
+        "last_seen_from": last_seen_from or "",
+        "last_seen_to": last_seen_to or "",
+        "traffic_min": traffic_min or "",
+        "traffic_max": traffic_max or "",
+        "whitelist_traffic_min": whitelist_traffic_min or "",
+        "whitelist_traffic_max": whitelist_traffic_max or "",
+        "node_id": node_id or "",
+        "node_traffic_min": node_traffic_min or "",
+        "node_traffic_max": node_traffic_max or "",
+        "next_billing_from": next_billing_from or "",
+        "next_billing_to": next_billing_to or "",
+        "registered_from": registered_from or "",
+        "registered_to": registered_to or "",
+        "devices_min": devices_min or "",
+        "devices_max": devices_max or "",
+        "sort": sort or "created_at",
+        "direction": direction if direction in {"asc", "desc"} else "desc",
+        "limit": str(normalize_user_list_limit(limit)),
+    }
+    filters = UserListFilters(
+        search=search,
+        status=status,
+        plan=plan,
+        balance_min=parse_decimal_query(balance_min),
+        balance_max=parse_decimal_query(balance_max),
+        last_seen_from=parse_date_query(last_seen_from),
+        last_seen_to=parse_date_query(last_seen_to, end_of_day=True),
+        traffic_min_bytes=parse_gb_to_bytes(traffic_min),
+        traffic_max_bytes=parse_gb_to_bytes(traffic_max),
+        whitelist_traffic_min_bytes=parse_gb_to_bytes(whitelist_traffic_min),
+        whitelist_traffic_max_bytes=parse_gb_to_bytes(whitelist_traffic_max),
+        node_id=node_id,
+        node_traffic_min_bytes=parse_gb_to_bytes(node_traffic_min),
+        node_traffic_max_bytes=parse_gb_to_bytes(node_traffic_max),
+        next_billing_from=parse_date_query(next_billing_from),
+        next_billing_to=parse_date_query(next_billing_to, end_of_day=True),
+        registered_from=parse_date_query(registered_from),
+        registered_to=parse_date_query(registered_to, end_of_day=True),
+        device_count_min=parse_int_query(devices_min),
+        device_count_max=parse_int_query(devices_max),
+        sort=filter_values["sort"],
+        direction=filter_values["direction"],
+        limit=normalize_user_list_limit(limit),
+    )
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        users = await hub.accounts.list_users(search)
+        page = await hub.accounts.list_users_for_admin(filters)
+        plans = await hub.dashboard.list_plans()
+        servers = await hub.catalog.list_servers()
         return render(
             request,
             "users.html",
             title="Пользователи",
             admin=admin,
-            users=users,
+            users=page.users,
+            user_page=page,
+            filters=filter_values,
             search=search or "",
+            status_options=[{"value": item.value, "label": user_status_label(item)} for item in UserStatus],
+            plan_filter_options=[
+                {"value": "start", "label": "Start"},
+                {"value": "pro", "label": "Pro"},
+                {"value": "trial", "label": "Тест"},
+                {"value": "paid", "label": "Любой платный"},
+                {"value": "none", "label": "Без тарифа"},
+            ],
+            plans=plans,
+            servers=servers,
+            limit_options=USER_LIST_PAGE_SIZE_OPTIONS,
+            sort_options=[
+                {"value": "created_at", "label": "Дата регистрации"},
+                {"value": "username", "label": "Пользователь"},
+                {"value": "status", "label": "Статус"},
+                {"value": "plan", "label": "Тариф"},
+                {"value": "balance", "label": "Баланс"},
+                {"value": "last_seen", "label": "Последняя активность"},
+                {"value": "traffic", "label": "Трафик"},
+                {"value": "whitelist_traffic", "label": "Whitelist-трафик"},
+                {"value": "node_traffic", "label": "Трафик на ноде"},
+                {"value": "next_billing", "label": "Следующее списание"},
+                {"value": "devices", "label": "Устройства"},
+            ],
+            csrf_token=get_csrf_token(request),
             active_nav="users",
         )
 

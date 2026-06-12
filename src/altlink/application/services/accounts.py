@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -8,8 +9,8 @@ from math import ceil
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import Text, cast, delete, func, or_, select
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy import Text, and_, asc, cast, delete, desc, func, literal, or_, select
+from sqlalchemy.orm import aliased, joinedload, selectinload
 
 from altlink.application.services.base import AuthError, BaseService, ConflictError, NotFoundError
 from altlink.domain.enums import (
@@ -24,11 +25,13 @@ from altlink.domain.notifications import topup_approved_message, topup_rejected_
 from altlink.infrastructure.db.models import (
     AdminUser,
     BalanceTransaction,
+    OnlineSessionCache,
     Notification,
     Plan,
     Subscription,
     TopupRequest,
     TrialPeriod,
+    TrafficSnapshot,
     User,
 )
 from altlink.infrastructure.remnawave_schemas import RemoteHwidDevice, RemoteUser
@@ -37,6 +40,44 @@ from altlink.utils.security import hash_password, verify_password
 from altlink.utils.time import ensure_utc, utc_now
 
 logger = logging.getLogger(__name__)
+USER_LIST_PAGE_SIZE_OPTIONS = (5, 10, 15, 20, 25, 30, 50, 100)
+DEFAULT_USER_LIST_PAGE_SIZE = 30
+
+
+@dataclass(slots=True)
+class UserListFilters:
+    search: str | None = None
+    status: str | None = None
+    plan: str | None = None
+    balance_min: Decimal | None = None
+    balance_max: Decimal | None = None
+    last_seen_from: datetime | None = None
+    last_seen_to: datetime | None = None
+    traffic_min_bytes: int | None = None
+    traffic_max_bytes: int | None = None
+    whitelist_traffic_min_bytes: int | None = None
+    whitelist_traffic_max_bytes: int | None = None
+    node_id: str | None = None
+    node_traffic_min_bytes: int | None = None
+    node_traffic_max_bytes: int | None = None
+    next_billing_from: datetime | None = None
+    next_billing_to: datetime | None = None
+    registered_from: datetime | None = None
+    registered_to: datetime | None = None
+    device_count_min: int | None = None
+    device_count_max: int | None = None
+    sort: str = "created_at"
+    direction: str = "desc"
+    limit: int = DEFAULT_USER_LIST_PAGE_SIZE
+
+
+@dataclass(slots=True)
+class UserListPage:
+    users: list[User]
+    total: int
+    limit: int
+    sort: str
+    direction: str
 
 
 class AccountService(BaseService):
@@ -109,47 +150,284 @@ class AccountService(BaseService):
         )
 
     async def list_users(self, search: str | None = None) -> Sequence[User]:
-        query = select(User).options(joinedload(User.assigned_server)).order_by(User.created_at.desc())
-        if search:
-            normalized = search.strip()
-            if not normalized:
-                return list((await self.session.scalars(query.limit(200))).all())
-            username_search = normalized.removeprefix("@")
-            exact_match = normalized.casefold()
-            exact_conditions = [
-                cast(User.telegram_id, Text) == normalized,
-                func.lower(User.id) == exact_match,
-                func.lower(func.coalesce(User.remnawave_user_uuid, "")) == exact_match,
-                func.lower(func.coalesce(User.remnawave_short_uuid, "")) == exact_match,
-            ]
-            if username_search:
+        filters = UserListFilters(search=search, limit=100)
+        return (await self.list_users_for_admin(filters)).users
+
+    async def list_users_for_admin(self, filters: UserListFilters | None = None) -> UserListPage:
+        filters = filters or UserListFilters()
+        limit = self._normalize_user_list_limit(filters.limit)
+        filters.limit = limit
+
+        latest_subscription_rank = (
+            select(
+                Subscription.id.label("subscription_id"),
+                Subscription.user_id.label("user_id"),
+                func.row_number()
+                .over(partition_by=Subscription.user_id, order_by=Subscription.created_at.desc())
+                .label("row_number"),
+            )
+            .subquery()
+        )
+        latest_subscription = aliased(Subscription)
+        latest_plan = aliased(Plan)
+
+        latest_traffic_rank = (
+            select(
+                TrafficSnapshot.id.label("snapshot_id"),
+                TrafficSnapshot.user_id.label("user_id"),
+                func.row_number()
+                .over(
+                    partition_by=TrafficSnapshot.user_id,
+                    order_by=(TrafficSnapshot.snapshot_date.desc(), TrafficSnapshot.created_at.desc()),
+                )
+                .label("row_number"),
+            )
+            .subquery()
+        )
+        latest_traffic = aliased(TrafficSnapshot)
+
+        device_key = func.coalesce(
+            func.nullif(OnlineSessionCache.device, ""),
+            func.nullif(OnlineSessionCache.remote_ip, ""),
+            OnlineSessionCache.id,
+        )
+        device_counts = (
+            select(OnlineSessionCache.user_id.label("user_id"), func.count(func.distinct(device_key)).label("device_count"))
+            .where(OnlineSessionCache.user_id.is_not(None))
+            .group_by(OnlineSessionCache.user_id)
+            .subquery()
+        )
+
+        node_traffic = None
+        if filters.node_id:
+            node_traffic = (
+                select(
+                    TrafficSnapshot.user_id.label("user_id"),
+                    func.max(TrafficSnapshot.lifetime_used_bytes).label("node_traffic_bytes"),
+                )
+                .where(TrafficSnapshot.server_id == filters.node_id)
+                .group_by(TrafficSnapshot.user_id)
+                .subquery()
+            )
+
+        total_traffic_expr = func.coalesce(latest_traffic.lifetime_used_bytes, latest_subscription.traffic_used_bytes, 0)
+        whitelist_traffic_expr = func.coalesce(latest_subscription.whitelist_traffic_used_bytes, 0)
+        device_count_expr = func.coalesce(device_counts.c.device_count, 0)
+        node_traffic_expr = func.coalesce(node_traffic.c.node_traffic_bytes, 0) if node_traffic is not None else literal(0)
+
+        query = (
+            select(
+                User,
+                latest_subscription,
+                latest_plan,
+                total_traffic_expr.label("total_traffic_bytes"),
+                whitelist_traffic_expr.label("whitelist_traffic_bytes"),
+                node_traffic_expr.label("node_traffic_bytes"),
+                device_count_expr.label("device_count"),
+            )
+            .options(joinedload(User.assigned_server))
+            .outerjoin(
+                latest_subscription_rank,
+                and_(
+                    latest_subscription_rank.c.user_id == User.id,
+                    latest_subscription_rank.c.row_number == 1,
+                ),
+            )
+            .outerjoin(latest_subscription, latest_subscription.id == latest_subscription_rank.c.subscription_id)
+            .outerjoin(latest_plan, latest_plan.id == latest_subscription.plan_id)
+            .outerjoin(
+                latest_traffic_rank,
+                and_(
+                    latest_traffic_rank.c.user_id == User.id,
+                    latest_traffic_rank.c.row_number == 1,
+                ),
+            )
+            .outerjoin(latest_traffic, latest_traffic.id == latest_traffic_rank.c.snapshot_id)
+            .outerjoin(device_counts, device_counts.c.user_id == User.id)
+        )
+        if node_traffic is not None:
+            query = query.outerjoin(node_traffic, node_traffic.c.user_id == User.id)
+
+        query = self._apply_user_list_filters(
+            query,
+            filters,
+            latest_subscription=latest_subscription,
+            latest_plan=latest_plan,
+            total_traffic_expr=total_traffic_expr,
+            whitelist_traffic_expr=whitelist_traffic_expr,
+            node_traffic_expr=node_traffic_expr,
+            device_count_expr=device_count_expr,
+        )
+
+        count_query = select(func.count()).select_from(query.with_only_columns(User.id).order_by(None).subquery())
+        total = int((await self.session.scalar(count_query)) or 0)
+
+        sort_expr = self._user_list_sort_expression(
+            filters.sort,
+            latest_subscription=latest_subscription,
+            latest_plan=latest_plan,
+            total_traffic_expr=total_traffic_expr,
+            whitelist_traffic_expr=whitelist_traffic_expr,
+            node_traffic_expr=node_traffic_expr,
+            device_count_expr=device_count_expr,
+        )
+        ordered_sort = asc(sort_expr) if filters.direction == "asc" else desc(sort_expr)
+        query = query.order_by(ordered_sort, desc(User.created_at)).limit(limit)
+
+        rows = (await self.session.execute(query)).all()
+        users: list[User] = []
+        for user, subscription, plan, total_traffic, whitelist_traffic, node_traffic_value, device_count in rows:
+            setattr(user, "admin_current_subscription", subscription)
+            setattr(user, "admin_current_plan", plan)
+            setattr(user, "admin_total_traffic_bytes", int(total_traffic or 0))
+            setattr(user, "admin_whitelist_traffic_bytes", int(whitelist_traffic or 0))
+            setattr(user, "admin_node_traffic_bytes", int(node_traffic_value or 0))
+            setattr(user, "admin_device_count", int(device_count or 0))
+            users.append(user)
+
+        return UserListPage(
+            users=users,
+            total=total,
+            limit=limit,
+            sort=filters.sort,
+            direction=filters.direction,
+        )
+
+    def _apply_user_list_filters(
+        self,
+        query,
+        filters: UserListFilters,
+        *,
+        latest_subscription,
+        latest_plan,
+        total_traffic_expr,
+        whitelist_traffic_expr,
+        node_traffic_expr,
+        device_count_expr,
+    ):
+        if filters.search:
+            normalized = filters.search.strip()
+            if normalized:
+                username_search = normalized.removeprefix("@")
+                search_like = f"%{username_search or normalized}%"
+                raw_like = f"%{normalized}%"
+                exact_match = normalized.casefold()
                 username_exact = username_search.casefold()
-                exact_conditions.extend(
-                    [
+                query = query.where(
+                    or_(
+                        cast(User.telegram_id, Text) == normalized,
+                        func.lower(User.id) == exact_match,
+                        func.lower(func.coalesce(User.remnawave_user_uuid, "")) == exact_match,
+                        func.lower(func.coalesce(User.remnawave_short_uuid, "")) == exact_match,
                         func.lower(func.coalesce(User.username, "")) == username_exact,
                         func.lower(func.coalesce(User.remnawave_username, "")) == username_exact,
-                    ]
+                        User.username.ilike(search_like),
+                        User.first_name.ilike(search_like),
+                        User.last_name.ilike(search_like),
+                        User.remnawave_username.ilike(search_like),
+                        cast(User.telegram_id, Text).ilike(raw_like),
+                        User.id.ilike(raw_like),
+                        User.remnawave_user_uuid.ilike(raw_like),
+                        User.remnawave_short_uuid.ilike(raw_like),
+                    )
                 )
-            exact_query = query.where(or_(*exact_conditions)).limit(20)
-            exact_matches = list((await self.session.scalars(exact_query)).all())
-            if exact_matches:
-                return exact_matches
 
-            search_like = f"%{username_search or normalized}%"
-            raw_like = f"%{normalized}%"
-            query = query.where(
-                or_(
-                    User.username.ilike(search_like),
-                    User.first_name.ilike(search_like),
-                    User.last_name.ilike(search_like),
-                    User.remnawave_username.ilike(search_like),
-                    cast(User.telegram_id, Text).ilike(raw_like),
-                    User.id.ilike(raw_like),
-                    User.remnawave_user_uuid.ilike(raw_like),
-                    User.remnawave_short_uuid.ilike(raw_like),
-                )
-            )
-        return list((await self.session.scalars(query.limit(200))).all())
+        status = self._parse_user_status(filters.status)
+        if status is not None:
+            query = query.where(User.status == status)
+
+        plan_filter = (filters.plan or "").strip()
+        if plan_filter == "none":
+            query = query.where(latest_subscription.id.is_(None))
+        elif plan_filter == "trial":
+            query = query.where(latest_plan.is_trial.is_(True))
+        elif plan_filter == "paid":
+            query = query.where(latest_plan.is_trial.is_(False))
+        elif plan_filter == "start":
+            query = query.where(latest_plan.code.in_([PlanCode.SINGLE_10GBIT, PlanCode.SINGLE_10GBIT_WEEKLY]))
+        elif plan_filter == "pro":
+            query = query.where(latest_plan.code.in_([PlanCode.UNLIMITED, PlanCode.UNLIMITED_WEEKLY]))
+        elif plan_filter:
+            try:
+                query = query.where(latest_plan.code == PlanCode(plan_filter))
+            except ValueError:
+                pass
+
+        if filters.balance_min is not None:
+            query = query.where(User.balance_rub >= filters.balance_min)
+        if filters.balance_max is not None:
+            query = query.where(User.balance_rub <= filters.balance_max)
+        if filters.last_seen_from is not None:
+            query = query.where(User.last_seen_at >= filters.last_seen_from)
+        if filters.last_seen_to is not None:
+            query = query.where(User.last_seen_at <= filters.last_seen_to)
+        if filters.registered_from is not None:
+            query = query.where(User.created_at >= filters.registered_from)
+        if filters.registered_to is not None:
+            query = query.where(User.created_at <= filters.registered_to)
+        if filters.next_billing_from is not None:
+            query = query.where(latest_subscription.next_billing_at >= filters.next_billing_from)
+        if filters.next_billing_to is not None:
+            query = query.where(latest_subscription.next_billing_at <= filters.next_billing_to)
+        if filters.traffic_min_bytes is not None:
+            query = query.where(total_traffic_expr >= filters.traffic_min_bytes)
+        if filters.traffic_max_bytes is not None:
+            query = query.where(total_traffic_expr <= filters.traffic_max_bytes)
+        if filters.whitelist_traffic_min_bytes is not None:
+            query = query.where(whitelist_traffic_expr >= filters.whitelist_traffic_min_bytes)
+        if filters.whitelist_traffic_max_bytes is not None:
+            query = query.where(whitelist_traffic_expr <= filters.whitelist_traffic_max_bytes)
+        if filters.node_id:
+            query = query.where(node_traffic_expr > 0)
+        if filters.node_traffic_min_bytes is not None:
+            query = query.where(node_traffic_expr >= filters.node_traffic_min_bytes)
+        if filters.node_traffic_max_bytes is not None:
+            query = query.where(node_traffic_expr <= filters.node_traffic_max_bytes)
+        if filters.device_count_min is not None:
+            query = query.where(device_count_expr >= filters.device_count_min)
+        if filters.device_count_max is not None:
+            query = query.where(device_count_expr <= filters.device_count_max)
+        return query
+
+    def _user_list_sort_expression(
+        self,
+        sort: str,
+        *,
+        latest_subscription,
+        latest_plan,
+        total_traffic_expr,
+        whitelist_traffic_expr,
+        node_traffic_expr,
+        device_count_expr,
+    ):
+        sort_map = {
+            "created_at": User.created_at,
+            "registration": User.created_at,
+            "username": func.lower(func.coalesce(User.username, "")),
+            "status": User.status,
+            "balance": User.balance_rub,
+            "last_seen": User.last_seen_at,
+            "traffic": total_traffic_expr,
+            "whitelist_traffic": whitelist_traffic_expr,
+            "node_traffic": node_traffic_expr,
+            "next_billing": latest_subscription.next_billing_at,
+            "devices": device_count_expr,
+            "plan": latest_plan.name,
+        }
+        return sort_map.get(sort, User.created_at)
+
+    @staticmethod
+    def _normalize_user_list_limit(limit: int) -> int:
+        return limit if limit in USER_LIST_PAGE_SIZE_OPTIONS else DEFAULT_USER_LIST_PAGE_SIZE
+
+    @staticmethod
+    def _parse_user_status(value: str | None) -> UserStatus | None:
+        if not value:
+            return None
+        try:
+            return UserStatus(value)
+        except ValueError:
+            return None
 
     async def complete_registration(
         self,

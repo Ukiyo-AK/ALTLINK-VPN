@@ -257,6 +257,25 @@ def test_admin_users_template_exposes_csrf_protected_node_access_sync():
     assert 'action="/admin/users/sync-access"' in users
     assert 'name="csrf_token"' in users
     assert "Синхронизировать доступ к нодам" in users
+    for field_name in (
+        "status",
+        "plan",
+        "balance_min",
+        "last_seen_from",
+        "traffic_min",
+        "whitelist_traffic_min",
+        "node_id",
+        "node_traffic_min",
+        "next_billing_from",
+        "registered_from",
+        "devices_min",
+        "sort",
+        "direction",
+        "limit",
+    ):
+        assert f'name="{field_name}"' in users
+    assert "user_page.total" in users
+    assert "admin_total_traffic_bytes" in users
 
 
 def test_web_theme_does_not_use_legacy_yellow_palette():
