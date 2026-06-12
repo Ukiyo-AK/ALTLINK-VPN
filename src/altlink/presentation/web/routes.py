@@ -374,6 +374,20 @@ def render(request: Request, template_name: str, **context):
     return response
 
 
+def format_user_node_access_sync_flash(summary: dict[str, object]) -> str:
+    parts = [
+        f"проверено {summary.get('total', 0)}",
+        f"обновлено {summary.get('synced', 0)}",
+        f"создано {summary.get('created', 0)}",
+        f"пересоздано {summary.get('recreated', 0)}",
+        f"без squads {summary.get('empty_squads', 0)}",
+        f"ошибок {summary.get('failed', 0)}",
+    ]
+    if not summary.get("catalog_synced", True):
+        parts.append("каталог нод не обновился")
+    return "Синхронизация доступов к нодам завершена: " + ", ".join(parts) + "."
+
+
 def login_redirect() -> RedirectResponse:
     return RedirectResponse("/admin/login", status_code=303)
 
@@ -1091,6 +1105,27 @@ async def user_detail(request: Request, user_id: str):
             ),
             active_nav="users",
         )
+
+
+@router.post("/admin/users/sync-access")
+async def users_sync_access(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            summary = await hub.billing.sync_users_with_available_nodes()
+        except (ConflictError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+        except Exception:
+            logger.warning("Manual user node access sync failed from web admin.", exc_info=True)
+            set_flash(request, "Не удалось синхронизировать доступы к нодам. Проверьте раздел событий и логи.", "danger")
+        else:
+            level = "warning" if int(summary.get("failed", 0) or 0) else "success"
+            set_flash(request, format_user_node_access_sync_flash(summary), level)
+        return RedirectResponse("/admin/users", status_code=303)
 
 
 @router.post("/admin/users/{user_id}/balance")

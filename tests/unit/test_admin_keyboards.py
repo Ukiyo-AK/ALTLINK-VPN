@@ -6,6 +6,7 @@ from altlink.presentation.bots.admin_keyboards import (
     SERVER_DELETE_CONFIRM_PREFIX,
     SERVER_DELETE_PREFIX,
     SERVER_OPEN_PREFIX,
+    USERS_SYNC_NODE_ACCESS,
     payment_browser_actions,
     payment_request_actions,
     server_actions,
@@ -64,7 +65,9 @@ def test_user_subscription_actions_keep_old_controls_in_subsection():
 
 
 def test_user_action_callbacks_fit_telegram_limit():
-    buttons = inline_buttons(user_subscription_actions("609237c1-7ffb-4d76-9861-a14b7ddc8a6a").as_markup())
+    user_id = "609237c1-7ffb-4d76-9861-a14b7ddc8a6a"
+    buttons = inline_buttons(user_subscription_actions(user_id).as_markup())
+    buttons += inline_buttons(user_actions(user_id).as_markup())
     callback_data = [button["callback_data"] for button in buttons if "callback_data" in button]
 
     assert callback_data
@@ -102,6 +105,17 @@ def test_user_lookup_actions_builds_open_buttons():
     items = [SimpleNamespace(id="u1", username="demo", telegram_id=12345)]
     buttons = inline_buttons(user_lookup_actions(items).as_markup())
     assert buttons[0]["callback_data"] == "adm:uo:u1"
+
+
+def test_user_lookup_actions_can_include_node_access_sync_button():
+    buttons = inline_buttons(user_lookup_actions([], include_node_sync=True).as_markup())
+    assert buttons == [
+        {
+            "text": "Синхронизировать доступ к нодам",
+            "callback_data": USERS_SYNC_NODE_ACCESS,
+            "style": "success",
+        }
+    ]
 
 
 def test_system_logs_actions_exposes_refresh_button():

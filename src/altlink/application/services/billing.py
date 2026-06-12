@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -47,6 +48,8 @@ TRIAL_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] = (
     ("3h", timedelta(hours=3), timedelta(hours=1), "3 часа"),
     ("1h", timedelta(hours=1), timedelta(0), "1 час"),
 )
+
+logger = logging.getLogger(__name__)
 
 
 class BillingService(BaseService):
@@ -297,6 +300,102 @@ class BillingService(BaseService):
             payload={"user_id": user_id, "subscription_id": subscription.id},
         )
         return subscription
+
+    async def sync_users_with_available_nodes(self) -> dict[str, object]:
+        if self.remnawave is None:
+            raise ConflictError("Remnawave panel is not configured.")
+
+        summary: dict[str, object] = {
+            "total": 0,
+            "synced": 0,
+            "created": 0,
+            "updated": 0,
+            "recreated": 0,
+            "empty_squads": 0,
+            "skipped": 0,
+            "failed": 0,
+            "catalog_synced": True,
+            "errors": [],
+        }
+
+        try:
+            await self.catalog.sync_servers()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to sync server catalog before user node access sync.", exc_info=True)
+            summary["catalog_synced"] = False
+            errors = summary["errors"]
+            assert isinstance(errors, list)
+            errors.append(f"catalog: {exc}")
+
+        subscriptions = list(
+            (
+                await self.session.scalars(
+                    select(Subscription)
+                    .options(joinedload(Subscription.user), joinedload(Subscription.plan))
+                    .where(
+                        Subscription.status.in_(
+                            [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL, SubscriptionStatus.GRACE]
+                        )
+                    )
+                    .order_by(Subscription.created_at.desc())
+                )
+            ).all()
+        )
+
+        active_user_statuses = {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE}
+        seen_user_ids: set[str] = set()
+        errors = summary["errors"]
+        assert isinstance(errors, list)
+        for subscription in subscriptions:
+            if subscription.user_id in seen_user_ids:
+                continue
+            seen_user_ids.add(subscription.user_id)
+            summary["total"] = int(summary["total"]) + 1
+
+            user = subscription.user
+            plan = subscription.plan
+            if user is None or plan is None or user.status not in active_user_statuses:
+                summary["skipped"] = int(summary["skipped"]) + 1
+                continue
+
+            before_uuid = user.remnawave_user_uuid
+            try:
+                remote = await self._sync_user_remote_access(
+                    user,
+                    subscription,
+                    plan,
+                    enable=True,
+                    reset_traffic=False,
+                )
+                await self.session.flush()
+            except Exception as exc:  # noqa: BLE001
+                summary["failed"] = int(summary["failed"]) + 1
+                label = user.username or user.telegram_id
+                errors.append(f"{label}: {exc}")
+                logger.warning("Failed to sync available node squads for user %s.", user.id, exc_info=True)
+                continue
+
+            if remote is None:
+                summary["skipped"] = int(summary["skipped"]) + 1
+                continue
+
+            summary["synced"] = int(summary["synced"]) + 1
+            if not remote.activeInternalSquads:
+                summary["empty_squads"] = int(summary["empty_squads"]) + 1
+            if before_uuid is None:
+                summary["created"] = int(summary["created"]) + 1
+            elif before_uuid != user.remnawave_user_uuid:
+                summary["recreated"] = int(summary["recreated"]) + 1
+            else:
+                summary["updated"] = int(summary["updated"]) + 1
+
+        await self.log_event(
+            level=SystemEventLevel.INFO if not int(summary["failed"]) else SystemEventLevel.WARNING,
+            event_type="remnawave_user_node_access_synced",
+            message="Manual Remnawave user node access sync completed.",
+            payload={key: value for key, value in summary.items() if key != "errors"},
+        )
+        return summary
 
     async def process_due_subscriptions(self) -> None:
         now = utc_now()
@@ -978,7 +1077,13 @@ class BillingService(BaseService):
         }
         try:
             if user.remnawave_user_uuid:
-                remote = await self.remnawave.update_user(payload)
+                try:
+                    remote = await self.remnawave.update_user(payload)
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code != 404:
+                        raise
+                    payload.pop("uuid", None)
+                    remote = await self.remnawave.create_user(payload)
             else:
                 payload.pop("uuid", None)
                 remote = await self.remnawave.create_user(payload)

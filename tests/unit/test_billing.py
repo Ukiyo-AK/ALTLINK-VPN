@@ -439,6 +439,34 @@ async def test_activate_paid_plan_ignores_unrelated_remote_user_sync_failure(
 
 
 @pytest.mark.asyncio
+async def test_new_paid_user_activation_creates_remnawave_user_and_subscription_link(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13031,
+            username="new_paid_remote_user",
+            first_name="New",
+            last_name="Paid",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        refreshed_user = await hub.accounts.get_user(user.id)
+        bundle = await hub.accounts.get_subscription_bundle(user.id)
+        remote_user = await test_services.remnawave.get_user(refreshed_user.remnawave_user_uuid)
+
+    assert subscription.status == SubscriptionStatus.ACTIVE
+    assert refreshed_user.remnawave_user_uuid
+    assert refreshed_user.remnawave_short_uuid
+    assert refreshed_user.remnawave_username
+    assert remote_user.telegramId == 13031
+    assert remote_user.status == "ACTIVE"
+    assert remote_user.activeInternalSquads
+    assert bundle["subscription_url"]
+    assert refreshed_user.remnawave_short_uuid in bundle["subscription_url"]
+
+
+@pytest.mark.asyncio
 async def test_activate_paid_plan_wraps_panel_connection_errors_as_conflict(test_services, monkeypatch):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
@@ -459,3 +487,119 @@ async def test_activate_paid_plan_wraps_panel_connection_errors_as_conflict(test
             await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
 
     assert "Попробуйте позже" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_sync_users_with_available_nodes_restores_remote_squads(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13027,
+            username="node_access_restore",
+            first_name="Node",
+            last_name="Restore",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        user = await hub.accounts.get_user(user.id)
+        remote = await test_services.remnawave.get_user(user.remnawave_user_uuid)
+        remote.activeInternalSquads = []
+
+        summary = await hub.billing.sync_users_with_available_nodes()
+        refreshed_user = await hub.accounts.get_user(user.id)
+        active_accesses = await hub.catalog.get_user_servers(user.id)
+        remote = await test_services.remnawave.get_user(refreshed_user.remnawave_user_uuid)
+
+    expected_squad_ids = {
+        access.server.remnawave_internal_squad_uuid
+        for access in active_accesses
+        if access.server and access.server.remnawave_internal_squad_uuid
+    }
+    remote_squad_ids = {item.uuid for item in remote.activeInternalSquads}
+
+    assert summary["total"] == 1
+    assert summary["synced"] == 1
+    assert summary["failed"] == 0
+    assert remote_squad_ids == expected_squad_ids
+    assert remote_squad_ids
+
+
+@pytest.mark.asyncio
+async def test_sync_users_with_available_nodes_recreates_missing_remote_user(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13028,
+            username="node_access_recreate",
+            first_name="Node",
+            last_name="Recreate",
+            language_code="ru",
+        )
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=False)
+        user = await hub.accounts.get_user(user.id)
+        old_remote_uuid = user.remnawave_user_uuid
+        user.remnawave_user_uuid = "missing-remote-user"
+        user.remnawave_username = "old_remote"
+        user.remnawave_short_uuid = "old-short"
+
+        original_update_user = test_services.remnawave.update_user
+
+        async def missing_update_user(payload: dict):
+            if payload.get("uuid") == "missing-remote-user":
+                request = httpx.Request("PATCH", "https://remna.example/api/users")
+                response = httpx.Response(404, request=request, json={"message": "not found"})
+                raise httpx.HTTPStatusError("not found", request=request, response=response)
+            return await original_update_user(payload)
+
+        monkeypatch.setattr(test_services.remnawave, "update_user", missing_update_user)
+
+        summary = await hub.billing.sync_users_with_available_nodes()
+        refreshed_user = await hub.accounts.get_user(user.id)
+        remote = await test_services.remnawave.get_user(refreshed_user.remnawave_user_uuid)
+
+    assert summary["total"] == 1
+    assert summary["synced"] == 1
+    assert summary["recreated"] == 1
+    assert summary["failed"] == 0
+    assert refreshed_user.remnawave_user_uuid not in {old_remote_uuid, "missing-remote-user"}
+    assert refreshed_user.remnawave_short_uuid != "old-short"
+    assert remote.telegramId == 13028
+    assert remote.activeInternalSquads
+
+
+@pytest.mark.asyncio
+async def test_sync_users_with_available_nodes_keeps_processing_after_user_error(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        ok_user = await hub.accounts.get_or_create_user(
+            telegram_id=13029,
+            username="node_access_ok",
+            first_name="Node",
+            last_name="Ok",
+            language_code="ru",
+        )
+        broken_user = await hub.accounts.get_or_create_user(
+            telegram_id=13030,
+            username="node_access_broken",
+            first_name="Node",
+            last_name="Broken",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(ok_user.id)
+        await hub.billing.activate_trial(broken_user.id)
+
+        original_update_user = test_services.remnawave.update_user
+
+        async def flaky_update_user(payload: dict):
+            if payload.get("telegramId") == 13030:
+                raise httpx.ConnectError("temporary panel error")
+            return await original_update_user(payload)
+
+        monkeypatch.setattr(test_services.remnawave, "update_user", flaky_update_user)
+
+        summary = await hub.billing.sync_users_with_available_nodes()
+        ok_user = await hub.accounts.get_user(ok_user.id)
+        remote = await test_services.remnawave.get_user(ok_user.remnawave_user_uuid)
+
+    assert summary["total"] == 2
+    assert summary["synced"] == 1
+    assert summary["failed"] == 1
+    assert summary["errors"]
+    assert remote.activeInternalSquads

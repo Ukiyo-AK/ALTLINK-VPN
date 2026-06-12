@@ -65,6 +65,7 @@ from altlink.presentation.bots.admin_keyboards import (
     USER_DEVICES_PREFIX,
     USER_OPEN_PREFIX,
     USER_PLAN_PREFIX,
+    USERS_SYNC_NODE_ACCESS,
     USER_SUBSCRIPTIONS_PREFIX,
     USER_TRIAL_PREFIX,
     admin_menu,
@@ -724,6 +725,29 @@ def format_server_card(server) -> str:
     )
 
 
+def format_user_node_access_sync_summary(summary: dict[str, object]) -> str:
+    lines = [
+        "Синхронизация доступов к нодам завершена.",
+        "",
+        f"Проверено активных подписок: {summary.get('total', 0)}",
+        f"Пользователей обновлено: {summary.get('synced', 0)}",
+        f"Создано/привязано в Remnawave: {summary.get('created', 0)}",
+        f"Обновлено: {summary.get('updated', 0)}",
+        f"Пересоздано после 404: {summary.get('recreated', 0)}",
+        f"Без доступных squads: {summary.get('empty_squads', 0)}",
+        f"Пропущено: {summary.get('skipped', 0)}",
+        f"Ошибок: {summary.get('failed', 0)}",
+    ]
+    if not summary.get("catalog_synced", True):
+        lines.append("")
+        lines.append("Каталог нод не удалось обновить перед синхронизацией, пользователи обработаны по текущим локальным данным.")
+    errors = list(summary.get("errors") or [])
+    if errors:
+        lines.extend(["", "Первые ошибки:"])
+        lines.extend(f"• {compact_text(item, 160)}" for item in errors[:5])
+    return "\n".join(lines)
+
+
 def parse_user_plan(data: str) -> tuple[str, PlanCode | None]:
     _, _, short_code, user_id = data.split(":", 3)
     return user_id, parse_paid_plan_code(SHORT_PLAN_CODES.get(short_code))
@@ -1035,10 +1059,11 @@ async def users_prompt(target: Message | CallbackQuery, container: AppContainer,
         await state.set_state(UserLookupStates.waiting_for_query)
     async with container.hub() as hub:
         recent_users = await hub.accounts.list_users()
-    reply_markup = user_lookup_actions(recent_users[:8]).as_markup() if recent_users else None
+    reply_markup = user_lookup_actions(recent_users[:8], include_node_sync=True).as_markup()
     text = USER_LOOKUP_PROMPT
     if recent_users:
         text += "\n\nМожно сразу открыть одного из последних пользователей кнопками ниже."
+    text += "\n\nКнопка синхронизации пересобирает доступы активных пользователей к доступным нодам Remnawave."
     await render_admin(target, text, reply_markup=reply_markup)
 
 
@@ -1590,6 +1615,29 @@ async def users_screen(message: Message, state: FSMContext, container: AppContai
     if not await is_admin(message.from_user.id, container):
         return
     await users_prompt(message, container, state)
+
+
+@router.callback_query(F.data == USERS_SYNC_NODE_ACCESS)
+async def sync_users_node_access(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await callback.answer("Синхронизация запущена.")
+    progress = await callback.message.answer("Синхронизирую пользователей с доступными нодами Remnawave...")
+    remember_admin_card(progress)
+    try:
+        async with container.hub() as hub:
+            summary = await hub.billing.sync_users_with_available_nodes()
+    except ServiceError as exc:
+        await progress.edit_text(f"Не удалось синхронизировать доступы к нодам.\n\n{exc}")
+        return
+    except Exception:
+        logger.warning("Manual user node access sync failed from admin bot.", exc_info=True)
+        await progress.edit_text("Не удалось синхронизировать доступы к нодам. Проверьте раздел «Логи».")
+        return
+    await progress.edit_text(
+        format_user_node_access_sync_summary(summary),
+        reply_markup=user_lookup_actions([], include_node_sync=True).as_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith(f"{USER_OPEN_PREFIX}:"))

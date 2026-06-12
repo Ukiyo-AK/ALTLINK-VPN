@@ -242,6 +242,15 @@ def test_admin_dashboard_has_mobile_section_navigation():
         assert f'id="{section_id}"' in dashboard
 
 
+def test_admin_users_template_exposes_csrf_protected_node_access_sync():
+    users = (TEMPLATE_ROOT / "users.html").read_text(encoding="utf-8")
+
+    assert 'method="post"' in users
+    assert 'action="/admin/users/sync-access"' in users
+    assert 'name="csrf_token"' in users
+    assert "Синхронизировать доступ к нодам" in users
+
+
 def test_web_theme_does_not_use_legacy_yellow_palette():
     style = Path("src/altlink/presentation/web/static/style.css").read_text(encoding="utf-8")
     dashboard = (TEMPLATE_ROOT / "dashboard.html").read_text(encoding="utf-8")

@@ -573,6 +573,48 @@ async def test_admin_servers_route_passes_latency_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_admin_users_sync_access_route_sets_flash(monkeypatch):
+    sync_users = AsyncMock(
+        return_value={
+            "total": 2,
+            "synced": 2,
+            "created": 1,
+            "updated": 1,
+            "recreated": 0,
+            "empty_squads": 0,
+            "failed": 0,
+            "catalog_synced": True,
+        }
+    )
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(billing=SimpleNamespace(sync_users_with_available_nodes=sync_users))
+
+    class DummyRequest(SimpleNamespace):
+        async def form(self):
+            return {"csrf_token": "token"}
+
+    request = DummyRequest(
+        session={"admin_id": "admin-1", "csrf_token": "token"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+
+    response = await web_routes.users_sync_access(request)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/users"
+    assert request.session["flash"]["level"] == "success"
+    assert "обновлено 2" in request.session["flash"]["message"]
+    sync_users.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_landing_page_includes_monitoring_latency_fallback(monkeypatch):
     rendered: dict[str, object] = {}
 

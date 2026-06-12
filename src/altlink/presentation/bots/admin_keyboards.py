@@ -24,6 +24,7 @@ USER_DELETE_PREFIX = "adm:ux"
 USER_DELETE_CONFIRM_PREFIX = "adm:xc"
 USER_DEVICES_PREFIX = "adm:dl"
 USER_DEVICE_PREFIX = "adm:do"
+USERS_SYNC_NODE_ACCESS = "adm:usr:nodes"
 
 PROMO_TOGGLE_PREFIX = "adm:pt"
 PAYMENT_APPROVE_PREFIX = "adm:pa"
@@ -155,7 +156,7 @@ def user_delete_confirmation_actions(user_id: str) -> InlineKeyboardBuilder:
     return builder
 
 
-def user_lookup_actions(items) -> InlineKeyboardBuilder:
+def user_lookup_actions(items, *, include_node_sync: bool = False) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     for item in items:
         label = f"@{item.username}" if item.username else str(item.telegram_id)
@@ -164,7 +165,13 @@ def user_lookup_actions(items) -> InlineKeyboardBuilder:
             callback_data=f"{USER_OPEN_PREFIX}:{item.id}",
             style="primary",
         )
-    builder.adjust(1)
+    if include_node_sync:
+        builder.button(
+            text="Синхронизировать доступ к нодам",
+            callback_data=USERS_SYNC_NODE_ACCESS,
+            style="success",
+        )
+    builder.adjust(*([1] * (len(items) + int(include_node_sync))))
     return builder
 
 

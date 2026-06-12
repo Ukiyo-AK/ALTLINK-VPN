@@ -1,10 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
-  <form method="get" class="toolbar">
-    <input type="text" name="search" value="{{ search }}" placeholder="Telegram ID, username или имя">
-    <button type="submit" class="button">Найти</button>
-  </form>
+  <div class="toolbar">
+    <form method="get" class="inline-form">
+      <input type="text" name="search" value="{{ search }}" placeholder="Telegram ID, username или имя">
+      <button type="submit" class="button">Найти</button>
+    </form>
+    <form
+      method="post"
+      action="/admin/users/sync-access"
+      class="inline-form"
+      onsubmit="return confirm('Синхронизировать активных пользователей с доступными нодами Remnawave?');"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="button">Синхронизировать доступ к нодам</button>
+    </form>
+  </div>
   <table class="table">
     <thead>
       <tr>
