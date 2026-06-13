@@ -7,6 +7,7 @@ from datetime import date, datetime
 from typing import Protocol
 
 import httpx
+from pydantic import ValidationError
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from altlink.infrastructure.remnawave_schemas import (
@@ -113,10 +114,27 @@ class RemnawaveClient:
     async def list_nodes(self) -> list[RemoteNode]:
         payload = await self._request("GET", "/api/nodes")
         if isinstance(payload, dict):
-            items = payload.get("nodes") or payload.get("items") or payload.get("data") or []
+            items = payload.get("nodes") or payload.get("items") or payload.get("data") or payload.get("response") or []
         else:
             items = payload or []
-        return [RemoteNode.model_validate(item) for item in items]
+        nodes: list[RemoteNode] = []
+        skipped: list[dict[str, str | None]] = []
+        for item in items:
+            try:
+                nodes.append(RemoteNode.model_validate(item))
+            except ValidationError as exc:
+                label = item if isinstance(item, dict) else {}
+                skipped.append(
+                    {
+                        "uuid": str(label.get("uuid") or "") or None,
+                        "name": str(label.get("name") or "") or None,
+                        "error": str(exc).splitlines()[0],
+                    }
+                )
+        if skipped:
+            logger.warning("Skipped invalid Remnawave nodes while parsing /api/nodes: %s", skipped[:10])
+        logger.debug("Fetched %s Remnawave nodes from /api/nodes, skipped %s.", len(nodes), len(skipped))
+        return nodes
 
     async def list_users(self) -> list[RemoteUser]:
         users: list[RemoteUser] = []

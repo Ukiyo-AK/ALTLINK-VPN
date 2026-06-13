@@ -73,6 +73,74 @@ async def test_list_nodes_accepts_wrapped_remnawave_payload(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_list_nodes_accepts_new_node_with_nullable_operational_fields(monkeypatch):
+    client = RemnawaveClient(
+        Settings(
+            _env_file=None,
+            remnawave_base_url="https://remna.example",
+            remnawave_api_token="token",
+        )
+    )
+    payload = minimal_node_payload("node-nullable")
+    payload.update(
+        {
+            "isConnected": None,
+            "isDisabled": None,
+            "isConnecting": None,
+            "xrayUptime": None,
+            "isTrafficTrackingActive": None,
+            "viewPosition": None,
+            "countryCode": None,
+            "consumptionMultiplier": None,
+            "tags": None,
+            "createdAt": None,
+            "updatedAt": None,
+            "configProfile": None,
+        }
+    )
+
+    async def fake_request(method: str, path: str, **kwargs):
+        return [payload]
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    try:
+        nodes = await client.list_nodes()
+    finally:
+        await client.aclose()
+
+    assert len(nodes) == 1
+    assert nodes[0].uuid == "node-nullable"
+    assert nodes[0].configProfile.activeInbounds == []
+    assert nodes[0].tags == []
+
+
+@pytest.mark.asyncio
+async def test_list_nodes_skips_invalid_node_without_dropping_valid_nodes(monkeypatch, caplog):
+    client = RemnawaveClient(
+        Settings(
+            _env_file=None,
+            remnawave_base_url="https://remna.example",
+            remnawave_api_token="token",
+        )
+    )
+
+    async def fake_request(method: str, path: str, **kwargs):
+        return [
+            {"uuid": "broken-node", "name": "Broken Node"},
+            minimal_node_payload("valid-node"),
+        ]
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    try:
+        nodes = await client.list_nodes()
+    finally:
+        await client.aclose()
+
+    assert [node.uuid for node in nodes] == ["valid-node"]
+    assert "Skipped invalid Remnawave nodes" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_get_node_user_usage_falls_back_to_legacy_nodes_usage_route(monkeypatch):
     client = RemnawaveClient(
         Settings(

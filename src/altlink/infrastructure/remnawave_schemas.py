@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class BaseSchema(BaseModel):
@@ -19,7 +19,7 @@ class RemoteUserTraffic(BaseSchema):
 
 class RemoteInbound(BaseSchema):
     uuid: str
-    profileUuid: str
+    profileUuid: str | None = None
     tag: str
     type: str
     network: str | None = None
@@ -30,7 +30,12 @@ class RemoteInbound(BaseSchema):
 
 class RemoteNodeConfigProfile(BaseSchema):
     activeConfigProfileUuid: str | None = None
-    activeInbounds: list[RemoteInbound] = []
+    activeInbounds: list[RemoteInbound] = Field(default_factory=list)
+
+    @field_validator("activeInbounds", mode="before")
+    @classmethod
+    def normalize_active_inbounds(cls, value):
+        return value or []
 
 
 class RemoteNode(BaseSchema):
@@ -38,30 +43,40 @@ class RemoteNode(BaseSchema):
     name: str
     address: str
     port: int | None = None
-    isConnected: bool
-    isDisabled: bool
-    isConnecting: bool
+    isConnected: bool | None = False
+    isDisabled: bool | None = False
+    isConnecting: bool | None = False
     lastStatusChange: datetime | None = None
     lastStatusMessage: str | None = None
     xrayVersion: str | None = None
     nodeVersion: str | None = None
     xrayUptime: int | str | None = None
-    isTrafficTrackingActive: bool
+    isTrafficTrackingActive: bool | None = None
     trafficResetDay: int | None = None
     trafficLimitBytes: int | None = None
     trafficUsedBytes: int | None = None
     notifyPercent: int | None = None
     usersOnline: int | None = None
-    viewPosition: int
-    countryCode: str
-    consumptionMultiplier: float
-    tags: list[str]
+    viewPosition: int | None = None
+    countryCode: str | None = None
+    consumptionMultiplier: float | None = None
+    tags: list[str] = Field(default_factory=list)
     cpuCount: int | None = None
     cpuModel: str | None = None
     totalRam: str | None = None
-    createdAt: datetime
-    updatedAt: datetime
-    configProfile: RemoteNodeConfigProfile
+    createdAt: datetime | None = None
+    updatedAt: datetime | None = None
+    configProfile: RemoteNodeConfigProfile = Field(default_factory=RemoteNodeConfigProfile)
+
+    @field_validator("configProfile", mode="before")
+    @classmethod
+    def normalize_config_profile(cls, value):
+        return value or {}
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_tags(cls, value):
+        return value or []
 
 
 class RemoteInternalSquad(BaseSchema):

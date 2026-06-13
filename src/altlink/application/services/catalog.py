@@ -57,6 +57,8 @@ class CatalogService(BaseService):
         }
 
         seen_node_ids: set[str] = set()
+        created_servers: list[dict[str, str | None]] = []
+        updated_servers: list[dict[str, str | None]] = []
         for node in remote_nodes:
             seen_node_ids.add(node.uuid)
             server = current_servers.get(node.uuid)
@@ -71,13 +73,15 @@ class CatalogService(BaseService):
                 )
                 self.session.add(server)
                 await self.session.flush()
+                created_servers.append({"node_uuid": node.uuid, "name": node.name, "address": node.address})
             else:
                 existing_inbounds = list(server.inbounds)
+                updated_servers.append({"node_uuid": node.uuid, "name": node.name, "address": node.address})
 
             server.name = node.name
             server.address = node.address
             server.country_code = node.countryCode
-            server.is_connected = node.isConnected
+            server.is_connected = bool(node.isConnected)
             server.last_status_message = node.lastStatusMessage
             server.last_status_change = node.lastStatusChange
             server.users_online = node.usersOnline or 0
@@ -130,7 +134,13 @@ class CatalogService(BaseService):
             level=SystemEventLevel.INFO,
             event_type="servers_synced",
             message="Список серверов синхронизирован с Remnawave.",
-            payload={"count": len(remote_nodes)},
+            payload={
+                "count": len(remote_nodes),
+                "created_count": len(created_servers),
+                "updated_count": len(updated_servers),
+                "removed_count": len(removed_servers),
+                "created_servers": created_servers,
+            },
         )
         return await self.list_servers()
 
