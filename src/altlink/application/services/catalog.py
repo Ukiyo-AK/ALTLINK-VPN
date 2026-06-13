@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import httpx
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.base import BaseService, ConflictError, NotFoundError
@@ -90,12 +91,16 @@ class CatalogService(BaseService):
 
             inbound_map = {inbound.tag: inbound for inbound in existing_inbounds}
             active_tags: set[str] = set()
+            duplicate_tags: set[str] = set()
             for remote_inbound in node.configProfile.activeInbounds:
+                if remote_inbound.tag in active_tags:
+                    duplicate_tags.add(remote_inbound.tag)
                 active_tags.add(remote_inbound.tag)
                 inbound = inbound_map.get(remote_inbound.tag)
                 if inbound is None:
                     inbound = ServerInbound(server_id=server.id, tag=remote_inbound.tag, type=remote_inbound.type)
                     self.session.add(inbound)
+                    inbound_map[remote_inbound.tag] = inbound
                 inbound.remnawave_inbound_uuid = remote_inbound.uuid
                 inbound.type = remote_inbound.type
                 inbound.network = remote_inbound.network
@@ -107,6 +112,13 @@ class CatalogService(BaseService):
             for inbound in existing_inbounds:
                 if inbound.tag not in active_tags:
                     inbound.is_active = False
+            if duplicate_tags:
+                logger.warning(
+                    "Remnawave node %s (%s) returned duplicate active inbound tags: %s",
+                    node.name,
+                    node.uuid,
+                    sorted(duplicate_tags),
+                )
 
         removed_servers: list[dict] = []
         for key, server in current_servers.items():
@@ -115,6 +127,8 @@ class CatalogService(BaseService):
 
         try:
             await self._sync_internal_squads()
+        except SQLAlchemyError:
+            raise
         except Exception:  # noqa: BLE001
             logger.warning("Failed to sync Remnawave internal squads after server catalog sync.", exc_info=True)
             await self.log_event(

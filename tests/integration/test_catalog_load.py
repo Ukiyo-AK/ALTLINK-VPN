@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -130,6 +131,33 @@ async def test_sync_servers_keeps_new_node_when_internal_squad_api_fails(test_se
         refreshed_servers = await hub.catalog.list_servers()
 
     assert any(server.remnawave_node_uuid == new_node.uuid for server in refreshed_servers)
+
+
+@pytest.mark.asyncio
+async def test_sync_servers_deduplicates_duplicate_active_inbound_tags(test_services):
+    new_node = test_services.remnawave._build_node(
+        "new-node-with-duplicate-inbound-tags",
+        "Fresh Duplicate Inbounds",
+        "DE",
+    )
+    first_inbound = new_node.configProfile.activeInbounds[0]
+    duplicate_inbound = first_inbound.model_copy(
+        update={
+            "uuid": str(uuid4()),
+            "port": 8443,
+        }
+    )
+    new_node.configProfile.activeInbounds.append(duplicate_inbound)
+    test_services.remnawave.nodes[new_node.uuid] = new_node
+
+    async with test_services.hub() as hub:
+        servers = await hub.catalog.sync_servers()
+        created = next(server for server in servers if server.remnawave_node_uuid == new_node.uuid)
+        matching_inbounds = [inbound for inbound in created.inbounds if inbound.tag == first_inbound.tag]
+
+    assert len(matching_inbounds) == 1
+    assert matching_inbounds[0].remnawave_inbound_uuid == duplicate_inbound.uuid
+    assert matching_inbounds[0].port == 8443
 
 
 @pytest.mark.asyncio
