@@ -211,7 +211,7 @@ class CatalogService(BaseService):
         query = (
             select(UserServerAccess)
             .where(UserServerAccess.user_id == user_id)
-            .options(selectinload(UserServerAccess.server))
+            .options(selectinload(UserServerAccess.server).selectinload(Server.inbounds))
             .order_by(UserServerAccess.created_at.asc())
         )
         if active_only:
@@ -305,7 +305,11 @@ class CatalogService(BaseService):
         if self.remnawave is None:
             return
         accesses = await self.get_user_servers(user_id)
-        target_server_ids = {access.server_id for access in accesses if access.server_id}
+        target_server_ids = {
+            access.server_id
+            for access in accesses
+            if access.server_id and access.server and self._server_is_usable(access.server)
+        }
         if not target_server_ids:
             return
         servers = [
@@ -451,9 +455,11 @@ class CatalogService(BaseService):
             if not user.remnawave_user_uuid or subscription is None or subscription.plan is None:
                 continue
             squad_ids = [
-                server_map[server_id].remnawave_internal_squad_uuid
+                server.remnawave_internal_squad_uuid
                 for server_id in sorted(user_server_targets.get(user.id, set()))
-                if server_id in server_map and server_map[server_id].remnawave_internal_squad_uuid
+                if (server := server_map.get(server_id)) is not None
+                and self._server_is_usable(server)
+                and server.remnawave_internal_squad_uuid
             ]
             expire_at = subscription.grace_until if subscription.status == SubscriptionStatus.GRACE else subscription.ends_at
             try:
@@ -486,6 +492,9 @@ class CatalogService(BaseService):
 
     def _server_is_usable(self, server: Server) -> bool:
         return bool(server.is_available and server.is_connected and self._server_has_active_inbounds(server))
+
+    def is_server_usable(self, server: Server | None) -> bool:
+        return bool(server and self._server_is_usable(server))
 
     def _server_has_active_inbounds(self, server: Server) -> bool:
         return any(inbound.is_active and inbound.remnawave_inbound_uuid for inbound in server.inbounds)

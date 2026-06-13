@@ -120,6 +120,10 @@ async def sync_server_catalog_if_possible(hub) -> None:
         await sync_method()
     except Exception:
         logger.warning("Failed to sync server catalog before web admin render.", exc_info=True)
+        session = getattr(hub, "session", None)
+        rollback = getattr(session, "rollback", None)
+        if rollback is not None:
+            await rollback()
 
 
 def latency_target_label() -> str:
@@ -1364,11 +1368,16 @@ async def user_deactivate(request: Request, user_id: str):
 
 @router.get("/admin/servers")
 async def servers_page(request: Request):
-    async with request.app.state.container.hub() as hub:
+    container = request.app.state.container
+    async with container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        await sync_server_catalog_if_possible(hub)
+
+    async with container.hub() as sync_hub:
+        await sync_server_catalog_if_possible(sync_hub)
+
+    async with container.hub() as hub:
         servers = await hub.catalog.list_servers()
         server_latency_state, server_latency_checked_at = await load_server_latency_state(hub.session)
         return render(
@@ -1396,6 +1405,7 @@ async def servers_sync(request: Request):
             await hub.catalog.sync_servers()
         except Exception:
             logger.warning("Manual server sync failed from web admin.", exc_info=True)
+            await hub.session.rollback()
         return RedirectResponse("/admin/servers", status_code=303)
 
 

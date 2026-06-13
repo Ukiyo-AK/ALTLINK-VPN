@@ -342,6 +342,7 @@ class BillingService(BaseService):
             await self.catalog.sync_servers()
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to sync server catalog before user node access sync.", exc_info=True)
+            await self.session.rollback()
             summary["catalog_synced"] = False
             errors = summary["errors"]
             assert isinstance(errors, list)
@@ -1090,6 +1091,7 @@ class BillingService(BaseService):
             for access in user_servers
             if access.status in {AccessStatus.ACTIVE, AccessStatus.GRACE}
             and access.server
+            and self.catalog.is_server_usable(access.server)
             and access.server.remnawave_internal_squad_uuid
         ]
         expire_at = subscription.grace_until if subscription.status == SubscriptionStatus.GRACE else subscription.ends_at

@@ -631,6 +631,62 @@ async def test_admin_servers_route_passes_latency_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_sync_server_catalog_if_possible_rolls_back_after_failure():
+    async def broken_sync_servers():
+        raise RuntimeError("panel unavailable")
+
+    rollback = AsyncMock()
+    hub = SimpleNamespace(
+        catalog=SimpleNamespace(sync_servers=broken_sync_servers),
+        session=SimpleNamespace(rollback=rollback),
+    )
+
+    await web_routes.sync_server_catalog_if_possible(hub)
+
+    rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_servers_route_renders_after_sync_failure(monkeypatch):
+    rendered: dict[str, object] = {}
+    servers = [SimpleNamespace(id="server-1", name="Whitelist NL")]
+    sync_servers = AsyncMock(side_effect=RuntimeError("panel unavailable"))
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    async def fake_scalar(_query):
+        return None
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            catalog=SimpleNamespace(sync_servers=sync_servers, list_servers=AsyncMock(return_value=servers)),
+            session=SimpleNamespace(scalar=fake_scalar, rollback=AsyncMock()),
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.servers_page(request)
+
+    assert response is rendered["context"]
+    assert rendered["template_name"] == "servers.html"
+    assert rendered["context"]["servers"] == servers
+    sync_servers.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_admin_users_sync_access_route_sets_flash(monkeypatch):
     sync_users = AsyncMock(
         return_value={

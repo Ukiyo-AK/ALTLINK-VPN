@@ -524,6 +524,55 @@ async def test_sync_users_with_available_nodes_restores_remote_squads(test_servi
 
 
 @pytest.mark.asyncio
+async def test_sync_users_with_available_nodes_ignores_unavailable_server_when_catalog_sync_fails(
+    test_services,
+    monkeypatch,
+):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13032,
+            username="node_access_unavailable",
+            first_name="Node",
+            last_name="Unavailable",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        user = await hub.accounts.get_user(user.id)
+        disabled_access = next(access for access in await hub.catalog.get_user_servers(user.id) if access.server)
+        disabled_server_id = disabled_access.server_id
+        disabled_squad_uuid = disabled_access.server.remnawave_internal_squad_uuid
+        disabled_access.server.is_connected = False
+
+    async with test_services.hub() as hub:
+        async def broken_catalog_sync():
+            raise RuntimeError("node API is temporarily unavailable")
+
+        monkeypatch.setattr(hub.catalog, "sync_servers", broken_catalog_sync)
+
+        summary = await hub.billing.sync_users_with_available_nodes()
+        user = await hub.accounts.get_user(user.id)
+        active_accesses = await hub.catalog.get_user_servers(user.id)
+        remote = await test_services.remnawave.get_user(user.remnawave_user_uuid)
+
+    expected_squad_ids = {
+        access.server.remnawave_internal_squad_uuid
+        for access in active_accesses
+        if access.server
+        and access.server_id != disabled_server_id
+        and access.server.remnawave_internal_squad_uuid
+        and access.server.is_connected
+    }
+    remote_squad_ids = {item.uuid for item in remote.activeInternalSquads}
+
+    assert summary["catalog_synced"] is False
+    assert summary["synced"] == 1
+    assert summary["failed"] == 0
+    assert disabled_squad_uuid not in remote_squad_ids
+    assert remote_squad_ids == expected_squad_ids
+    assert remote_squad_ids
+
+
+@pytest.mark.asyncio
 async def test_sync_users_with_available_nodes_reports_progress(test_services):
     progress_events: list[dict[str, object]] = []
 

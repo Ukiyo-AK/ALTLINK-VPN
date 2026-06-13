@@ -149,6 +149,10 @@ async def sync_server_catalog_if_possible(hub) -> None:
         await sync_method()
     except Exception:
         logger.warning("Failed to sync server catalog before admin server render.", exc_info=True)
+        session = getattr(hub, "session", None)
+        rollback = getattr(session, "rollback", None)
+        if rollback is not None:
+            await rollback()
 
 
 SYSTEM_EVENT_LEVEL_LABELS = {
