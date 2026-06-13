@@ -112,7 +112,11 @@ class RemnawaveClient:
 
     async def list_nodes(self) -> list[RemoteNode]:
         payload = await self._request("GET", "/api/nodes")
-        return [RemoteNode.model_validate(item) for item in (payload or [])]
+        if isinstance(payload, dict):
+            items = payload.get("nodes") or payload.get("items") or payload.get("data") or []
+        else:
+            items = payload or []
+        return [RemoteNode.model_validate(item) for item in items]
 
     async def list_users(self) -> list[RemoteUser]:
         users: list[RemoteUser] = []

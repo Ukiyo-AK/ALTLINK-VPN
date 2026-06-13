@@ -112,6 +112,58 @@ async def test_sync_does_not_recreate_squad_for_missing_node(test_services):
 
 
 @pytest.mark.asyncio
+async def test_sync_servers_keeps_new_node_when_internal_squad_api_fails(test_services, monkeypatch):
+    new_node = test_services.remnawave._build_node("new-node-with-squad-api-down", "Fresh Frankfurt", "DE")
+    test_services.remnawave.nodes[new_node.uuid] = new_node
+
+    async def broken_internal_squads():
+        raise httpx.ConnectError("internal squads endpoint unavailable")
+
+    monkeypatch.setattr(test_services.remnawave, "list_internal_squads", broken_internal_squads)
+
+    async with test_services.hub() as hub:
+        servers = await hub.catalog.sync_servers()
+
+    assert any(server.remnawave_node_uuid == new_node.uuid for server in servers)
+
+    async with test_services.hub() as hub:
+        refreshed_servers = await hub.catalog.list_servers()
+
+    assert any(server.remnawave_node_uuid == new_node.uuid for server in refreshed_servers)
+
+
+@pytest.mark.asyncio
+async def test_sync_servers_keeps_new_node_when_remote_user_squad_sync_fails(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3006,
+            username="freshnodeuser",
+            first_name="Fresh",
+            last_name="Node",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+
+    new_node = test_services.remnawave._build_node("new-node-with-user-sync-down", "Fresh Prague", "CZ")
+    test_services.remnawave.nodes[new_node.uuid] = new_node
+
+    async def broken_update_user(payload: dict):
+        raise ValueError("unexpected remote payload error")
+
+    monkeypatch.setattr(test_services.remnawave, "update_user", broken_update_user)
+
+    async with test_services.hub() as hub:
+        servers = await hub.catalog.sync_servers()
+
+    assert any(server.remnawave_node_uuid == new_node.uuid for server in servers)
+
+    async with test_services.hub() as hub:
+        refreshed_servers = await hub.catalog.list_servers()
+
+    assert any(server.remnawave_node_uuid == new_node.uuid for server in refreshed_servers)
+
+
+@pytest.mark.asyncio
 async def test_strict_squad_sync_error_identifies_problem_server(test_services, monkeypatch):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(

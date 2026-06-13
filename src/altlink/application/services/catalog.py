@@ -109,7 +109,15 @@ class CatalogService(BaseService):
             if key not in seen_node_ids:
                 removed_servers.append(await self._purge_server(server))
 
-        await self._sync_internal_squads()
+        try:
+            await self._sync_internal_squads()
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to sync Remnawave internal squads after server catalog sync.", exc_info=True)
+            await self.log_event(
+                level=SystemEventLevel.WARNING,
+                event_type="server_internal_squads_sync_failed",
+                message="Список серверов обновлён, но internal squads Remnawave синхронизировать не удалось.",
+            )
         await self.rebuild_user_access_matrix()
         if removed_servers:
             await self.log_event(
@@ -479,6 +487,9 @@ class CatalogService(BaseService):
                 )
             except httpx.HTTPError:
                 logger.warning("Failed to sync remote squads for user %s", user.id, exc_info=True)
+                continue
+            except Exception:  # noqa: BLE001
+                logger.warning("Unexpected failure while syncing remote squads for user %s", user.id, exc_info=True)
                 continue
 
     def _resolve_current_subscription(self, subscriptions: Sequence[Subscription]) -> Subscription | None:

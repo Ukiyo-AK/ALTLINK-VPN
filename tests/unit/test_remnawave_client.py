@@ -9,6 +9,69 @@ from altlink.infrastructure.remnawave_schemas import RemoteUser
 from altlink.settings import Settings
 
 
+def minimal_node_payload(node_uuid: str = "node-1") -> dict:
+    now = datetime(2026, 6, 13, 12, 0, tzinfo=UTC)
+    return {
+        "uuid": node_uuid,
+        "name": "Fresh Node",
+        "address": "fresh.example.com",
+        "port": 443,
+        "isConnected": True,
+        "isDisabled": False,
+        "isConnecting": False,
+        "lastStatusChange": now.isoformat(),
+        "lastStatusMessage": "ok",
+        "xrayVersion": "1.8.0",
+        "nodeVersion": "1.0.0",
+        "xrayUptime": "1d",
+        "isTrafficTrackingActive": True,
+        "trafficResetDay": 1,
+        "trafficLimitBytes": None,
+        "trafficUsedBytes": 0,
+        "notifyPercent": 80,
+        "usersOnline": 0,
+        "viewPosition": 1,
+        "countryCode": "DE",
+        "consumptionMultiplier": 1.0,
+        "tags": [],
+        "cpuCount": 4,
+        "cpuModel": "fake",
+        "totalRam": "2 GB",
+        "createdAt": now.isoformat(),
+        "updatedAt": now.isoformat(),
+        "configProfile": {
+            "activeConfigProfileUuid": "profile-1",
+            "activeInbounds": [],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_nodes_accepts_wrapped_remnawave_payload(monkeypatch):
+    client = RemnawaveClient(
+        Settings(
+            _env_file=None,
+            remnawave_base_url="https://remna.example",
+            remnawave_api_token="token",
+        )
+    )
+
+    async def fake_request(method: str, path: str, **kwargs):
+        assert method == "GET"
+        assert path == "/api/nodes"
+        return {"nodes": [minimal_node_payload("node-wrapped")], "total": 1}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+    try:
+        nodes = await client.list_nodes()
+    finally:
+        await client.aclose()
+
+    assert len(nodes) == 1
+    assert nodes[0].uuid == "node-wrapped"
+    assert nodes[0].name == "Fresh Node"
+
+
 @pytest.mark.asyncio
 async def test_get_node_user_usage_falls_back_to_legacy_nodes_usage_route(monkeypatch):
     client = RemnawaveClient(
