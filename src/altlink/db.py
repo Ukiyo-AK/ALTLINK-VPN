@@ -151,6 +151,18 @@ def _ensure_runtime_schema_sync(connection) -> None:
                 column_name,
             )
 
+    if "server_inbounds" in table_names:
+        server_inbound_columns = {column["name"] for column in inspector.get_columns("server_inbounds")}
+        if "access_type" not in server_inbound_columns:
+            compiled_type = String(32).compile(dialect=connection.dialect)
+            connection.execute(
+                text(
+                    "ALTER TABLE server_inbounds "
+                    f"ADD COLUMN access_type {compiled_type} NOT NULL DEFAULT 'regular'"
+                )
+            )
+            logger.warning("Added missing column access_type to server_inbounds table during runtime schema preparation.")
+
     if "traffic_snapshots" in table_names and connection.dialect.name != "sqlite":
         traffic_columns = {column["name"]: column for column in inspector.get_columns("traffic_snapshots")}
         for column_name in ("used_bytes", "lifetime_used_bytes"):

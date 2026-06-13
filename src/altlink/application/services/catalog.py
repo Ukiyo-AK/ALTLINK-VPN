@@ -21,7 +21,7 @@ from altlink.infrastructure.db.models import (
     User,
     UserServerAccess,
 )
-from altlink.utils.time import utc_now
+from altlink.utils.time import ensure_utc, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,16 @@ class CatalogService(BaseService):
                 active_tags.add(remote_inbound.tag)
                 inbound = inbound_map.get(remote_inbound.tag)
                 if inbound is None:
-                    inbound = ServerInbound(server_id=server.id, tag=remote_inbound.tag, type=remote_inbound.type)
+                    inbound = ServerInbound(
+                        server_id=server.id,
+                        tag=remote_inbound.tag,
+                        type=remote_inbound.type,
+                        access_type=ServerType.REGULAR.value,
+                    )
                     self.session.add(inbound)
                     inbound_map[remote_inbound.tag] = inbound
+                if not inbound.access_type:
+                    inbound.access_type = ServerType.REGULAR.value
                 inbound.remnawave_inbound_uuid = remote_inbound.uuid
                 inbound.type = remote_inbound.type
                 inbound.network = remote_inbound.network
@@ -482,6 +489,7 @@ class CatalogService(BaseService):
                 await self.session.scalars(select(Server).options(selectinload(Server.inbounds)))
             ).all()
         }
+        now = utc_now()
         for user in users:
             subscription = self._resolve_current_subscription(user.subscriptions)
             if not user.remnawave_user_uuid or subscription is None or subscription.plan is None:
@@ -494,6 +502,13 @@ class CatalogService(BaseService):
                 and server.remnawave_internal_squad_uuid
             ]
             expire_at = subscription.grace_until if subscription.status == SubscriptionStatus.GRACE else subscription.ends_at
+            if ensure_utc(expire_at) <= now:
+                logger.warning(
+                    "Skipping remote squad sync for expired subscription %s of user %s.",
+                    subscription.id,
+                    user.id,
+                )
+                continue
             try:
                 await self.remnawave.update_user(
                     {

@@ -53,6 +53,7 @@ class ServerInbound(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     remnawave_inbound_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tag: Mapped[str] = mapped_column(String(255), nullable=False)
     type: Mapped[str] = mapped_column(String(64), nullable=False)
+    access_type: Mapped[str] = mapped_column(String(32), default="regular", nullable=False)
     network: Mapped[str | None] = mapped_column(String(64), nullable=True)
     security: Mapped[str | None] = mapped_column(String(64), nullable=True)
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)

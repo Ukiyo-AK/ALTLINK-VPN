@@ -377,11 +377,22 @@ class BillingService(BaseService):
         active_user_statuses = {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE}
         errors = summary["errors"]
         assert isinstance(errors, list)
+        now = utc_now()
         for processed, subscription in enumerate(unique_subscriptions, start=1):
             user = subscription.user
             plan = subscription.plan
             if user is None or plan is None or user.status not in active_user_statuses:
                 summary["skipped"] = int(summary["skipped"]) + 1
+                await notify_progress("user_processed", processed=processed)
+                continue
+            expire_at = subscription.grace_until if subscription.status == SubscriptionStatus.GRACE else subscription.ends_at
+            if ensure_utc(expire_at) <= now:
+                summary["skipped"] = int(summary["skipped"]) + 1
+                logger.warning(
+                    "Skipping Remnawave node access sync for expired subscription %s of user %s.",
+                    subscription.id,
+                    user.id,
+                )
                 await notify_progress("user_processed", processed=processed)
                 continue
 

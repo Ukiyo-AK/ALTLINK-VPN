@@ -12,7 +12,7 @@ from altlink.application.services.base import ConflictError
 from altlink.domain.billing import compute_period_end, compute_prorated_daily_charge, quantize_money
 from altlink.domain.enums import BalanceTransactionType, NotificationType, PlanCode, SubscriptionStatus, UserStatus
 from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
-from altlink.infrastructure.db.models import BalanceTransaction
+from altlink.infrastructure.db.models import BalanceTransaction, Subscription
 from altlink.infrastructure.remnawave_schemas import RemoteSeriesPoint, RemoteUsageResponse, RemoteUsageTopNode
 from altlink.utils.time import utc_now
 
@@ -570,6 +570,32 @@ async def test_sync_users_with_available_nodes_ignores_unavailable_server_when_c
     assert disabled_squad_uuid not in remote_squad_ids
     assert remote_squad_ids == expected_squad_ids
     assert remote_squad_ids
+
+
+@pytest.mark.asyncio
+async def test_sync_users_with_available_nodes_skips_locally_expired_subscription(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13033,
+            username="expired_node_access",
+            first_name="Expired",
+            last_name="Access",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        subscription = await hub.session.scalar(select(Subscription).where(Subscription.user_id == user.id))
+        subscription.ends_at = utc_now() - timedelta(hours=1)
+
+        async def fail_update_user(payload: dict):
+            raise AssertionError("expired subscriptions must not be sent to Remnawave")
+
+        monkeypatch.setattr(test_services.remnawave, "update_user", fail_update_user)
+
+        summary = await hub.billing.sync_users_with_available_nodes()
+
+    assert summary["total"] == 1
+    assert summary["skipped"] == 1
+    assert summary["failed"] == 0
 
 
 @pytest.mark.asyncio

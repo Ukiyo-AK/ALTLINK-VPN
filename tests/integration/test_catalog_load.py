@@ -158,6 +158,7 @@ async def test_sync_servers_deduplicates_duplicate_active_inbound_tags(test_serv
     assert len(matching_inbounds) == 1
     assert matching_inbounds[0].remnawave_inbound_uuid == duplicate_inbound.uuid
     assert matching_inbounds[0].port == 8443
+    assert matching_inbounds[0].access_type == "regular"
 
 
 @pytest.mark.asyncio

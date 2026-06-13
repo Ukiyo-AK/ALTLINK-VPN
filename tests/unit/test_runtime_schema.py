@@ -178,3 +178,58 @@ async def test_runtime_schema_adds_missing_topup_provider_columns(tmp_path: Path
     assert "provider_code" in column_names
     assert "external_payment_id" in column_names
     assert "external_payment_url" in column_names
+
+
+@pytest.mark.asyncio
+async def test_runtime_schema_adds_missing_server_inbound_access_type(tmp_path: Path):
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy_inbounds.db'}"
+    engine = create_async_engine(database_url, future=True)
+
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                telegram_id BIGINT NOT NULL,
+                username VARCHAR(255),
+                first_name VARCHAR(255),
+                last_name VARCHAR(255),
+                language_code VARCHAR(16),
+                balance_rub NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                status VARCHAR(16) NOT NULL
+            )
+            """
+        )
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE server_inbounds (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                server_id TEXT NOT NULL,
+                remnawave_inbound_uuid VARCHAR(64),
+                tag VARCHAR(255) NOT NULL,
+                type VARCHAR(64) NOT NULL,
+                network VARCHAR(64),
+                security VARCHAR(64),
+                port INTEGER,
+                client_count INTEGER NOT NULL DEFAULT 0,
+                max_clients INTEGER NOT NULL DEFAULT 0,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                raw_payload JSON
+            )
+            """
+        )
+
+    await ensure_runtime_schema(engine)
+
+    async with engine.begin() as connection:
+        column_names = await connection.run_sync(
+            lambda sync_connection: {column["name"] for column in inspect(sync_connection).get_columns("server_inbounds")}
+        )
+
+    await engine.dispose()
+
+    assert "access_type" in column_names
