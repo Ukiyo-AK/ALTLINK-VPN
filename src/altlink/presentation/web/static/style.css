@@ -3310,16 +3310,58 @@ html[data-theme="dark"] .portal-section-nav a {
     min-height: auto;
     padding: 1.15rem;
     border-radius: 1.35rem;
+    overflow: hidden;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  body.landing-page .landing-copy,
+  body.landing-page .landing-actions,
+  body.landing-page .landing-actions > *,
+  body.landing-page .landing-feature-list,
+  body.landing-page .landing-feature-list .badge {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  body.landing-page .landing-copy h1 {
+    max-width: 100%;
+    font-size: clamp(2.25rem, 12vw, 3.55rem);
+    line-height: 0.94;
+    letter-spacing: -0.07em;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  body.landing-page .landing-copy p {
+    max-width: 100%;
+    overflow-wrap: break-word;
+  }
+
+  body.landing-page .landing-actions {
+    width: 100%;
+  }
+
+  body.landing-page .landing-actions .button {
+    width: 100%;
+    justify-content: center;
+    white-space: normal;
+    text-align: center;
   }
 
   body.landing-page .landing-feature-list {
     flex-direction: row;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 0.55rem;
+    flex-wrap: wrap;
   }
 
   body.landing-page .landing-feature-list .badge {
+    flex: 1 1 calc(50% - 0.55rem);
     width: auto;
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
   }
 
   body.landing-page .landing-feature-card,
