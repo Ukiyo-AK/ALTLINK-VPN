@@ -3302,6 +3302,10 @@ html[data-theme="dark"] .portal-section-nav a {
     padding-right: max(0.75rem, env(safe-area-inset-right));
   }
 
+  body.landing-page .landing-topbar-actions {
+    display: none;
+  }
+
   body.landing-page .landing-section {
     padding-block: 2.8rem;
   }
@@ -3326,9 +3330,9 @@ html[data-theme="dark"] .portal-section-nav a {
 
   body.landing-page .landing-copy h1 {
     max-width: 100%;
-    font-size: clamp(2.25rem, 12vw, 3.55rem);
-    line-height: 0.94;
-    letter-spacing: -0.07em;
+    font-size: clamp(1.95rem, 9.6vw, 2.85rem);
+    line-height: 0.98;
+    letter-spacing: -0.055em;
     overflow-wrap: anywhere;
     word-break: normal;
   }
@@ -3371,6 +3375,34 @@ html[data-theme="dark"] .portal-section-nav a {
   body.landing-page .landing-privacy {
     padding: 1.1rem;
     border-radius: 1.25rem;
+  }
+
+  body.landing-page .landing-privacy {
+    display: grid;
+    gap: 0.85rem;
+    overflow: hidden;
+  }
+
+  body.landing-page .landing-privacy .landing-section-head {
+    gap: 0.55rem;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  body.landing-page .landing-privacy .landing-section-head h2 {
+    max-width: 100%;
+    font-size: clamp(1.35rem, 6.4vw, 1.9rem);
+    line-height: 1.08;
+    letter-spacing: -0.045em;
+    overflow-wrap: break-word;
+  }
+
+  body.landing-page .landing-privacy p {
+    margin: 0;
+    max-width: 100%;
+    font-size: 0.96rem;
+    line-height: 1.55;
+    overflow-wrap: break-word;
   }
 }
 
