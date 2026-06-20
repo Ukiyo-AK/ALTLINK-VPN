@@ -12,6 +12,42 @@ from altlink.scheduler import jobs as scheduler_jobs
 
 
 @pytest.mark.asyncio
+async def test_user_abuse_monitor_job_ignores_many_active_ip_alerts(monkeypatch):
+    sent_messages: list[dict] = []
+    alert = MonitoringAlert(
+        kind="user_many_active_ips",
+        subject="@demo",
+        details={
+            "telegram_id": 43001,
+            "unique_ip_count": 5,
+            "unique_ip_threshold": 5,
+            "unique_ips": ["203.0.113.1", "203.0.113.2"],
+        },
+    )
+
+    async def fake_send_telegram_messages(*, bot_token: str, chat_ids, text: str, reply_markup=None):
+        sent_messages.append({"bot_token": bot_token, "chat_ids": list(chat_ids), "text": text})
+        return 1
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            monitoring=SimpleNamespace(capture_user_abuse_state=AsyncMock(return_value=[alert])),
+            accounts=SimpleNamespace(list_admin_telegram_ids=AsyncMock(return_value=[44001])),
+        )
+
+    monkeypatch.setattr(scheduler_jobs, "send_telegram_messages", fake_send_telegram_messages)
+    container = SimpleNamespace(
+        hub=fake_hub,
+        settings=SimpleNamespace(admin_bot_token="admin-token", client_bot_token="client-token"),
+    )
+
+    await scheduler_jobs.user_abuse_monitor_job(container)
+
+    assert sent_messages == []
+
+
+@pytest.mark.asyncio
 async def test_server_latency_job_uses_manual_domain_for_whitelist_servers(monkeypatch):
     calls: list[tuple[str, str | None, int | None]] = []
 

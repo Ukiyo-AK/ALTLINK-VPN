@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import defaultdict
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -282,27 +281,17 @@ class MonitoringService(BaseService):
         return alerts
 
     async def capture_user_abuse_state(self) -> list[MonitoringAlert]:
-        users = list((await self.session.scalars(select(User))).all())
         active_subscriptions = await self._list_active_subscriptions()
-
-        try:
-            ip_addresses_by_user_id, ip_state_available = await self._collect_active_user_ips(users)
-        except Exception:  # noqa: BLE001
-            logger.warning("Failed to collect active user IPs from Remnawave.", exc_info=True)
-            ip_addresses_by_user_id, ip_state_available = {}, False
-
         hwid_counts = await self._collect_hwid_device_counts(active_subscriptions)
-        subscription_by_user_id = {item.user_id: item for item in active_subscriptions}
         observations = []
-        for user in users:
-            subscription = subscription_by_user_id.get(user.id)
+        for subscription in active_subscriptions:
+            user = subscription.user
             plan = getattr(subscription, "plan", None)
             observations.append(
                 {
                     "user_id": user.id,
                     "telegram_id": user.telegram_id,
                     "username": user.username,
-                    "ips": sorted(ip_addresses_by_user_id.get(user.id, set())) if ip_state_available else None,
                     "hwid_device_count": hwid_counts.get(user.id),
                     "device_limit": getattr(plan, "device_limit", None),
                 }
@@ -312,7 +301,6 @@ class MonitoringService(BaseService):
     async def record_user_abuse_state(self, observations: list[dict]) -> list[MonitoringAlert]:
         previous = await self._read_setting(self.USER_ABUSE_STATUS_KEY)
         previous_users = previous.get("users", {}) if isinstance(previous, dict) else {}
-        threshold = max(int(self.settings.user_abuse_unique_ip_threshold), 2)
         checked_at = utc_now().isoformat()
         current_users: dict[str, dict] = {}
         alerts: list[MonitoringAlert] = []
@@ -328,22 +316,6 @@ class MonitoringService(BaseService):
                 "username": observation.get("username"),
                 "checked_at": checked_at,
             }
-
-            ips = observation.get("ips")
-            if ips is None:
-                unique_ips = list(previous_state.get("unique_ips", []))
-                ip_alert_active = bool(previous_state.get("ip_alert_active"))
-            else:
-                unique_ips = sorted({str(item).strip() for item in ips if str(item).strip()})
-                ip_alert_active = len(unique_ips) >= threshold
-            details.update(
-                {
-                    "unique_ips": unique_ips,
-                    "unique_ip_count": len(unique_ips),
-                    "unique_ip_threshold": threshold,
-                    "ip_alert_active": ip_alert_active,
-                }
-            )
 
             device_limit = observation.get("device_limit")
             hwid_device_count = observation.get("hwid_device_count")
@@ -365,11 +337,6 @@ class MonitoringService(BaseService):
                 }
             )
 
-            if ip_alert_active and (
-                not previous_state.get("ip_alert_active")
-                or details["unique_ip_count"] > int(previous_state.get("unique_ip_count") or 0)
-            ):
-                alerts.append(MonitoringAlert(kind="user_many_active_ips", subject=self._user_label(details), details=details))
             if device_alert_active and (
                 not previous_state.get("device_alert_active")
                 or int(hwid_device_count) > int(previous_state.get("hwid_device_count") or 0)
@@ -377,7 +344,7 @@ class MonitoringService(BaseService):
                 alerts.append(
                     MonitoringAlert(kind="user_hwid_limit_exceeded", subject=self._user_label(details), details=details)
                 )
-            if ip_alert_active or device_alert_active:
+            if device_alert_active:
                 current_users[user_id] = details
 
         await self._write_setting(
@@ -393,61 +360,6 @@ class MonitoringService(BaseService):
                 payload={"alerts": [{"kind": item.kind, **item.details} for item in alerts]},
             )
         return alerts
-
-    async def _collect_active_user_ips(self, users: list[User]) -> tuple[dict[str, set[str]], bool]:
-        if self.remnawave is None:
-            return {}, True
-
-        local_user_by_remote_uuid = {item.remnawave_user_uuid: item for item in users if item.remnawave_user_uuid}
-        remote_users = await self.remnawave.list_users()
-        local_user_by_remote_id = {
-            str(item.id): local_user_by_remote_uuid[item.uuid]
-            for item in remote_users
-            if item.uuid in local_user_by_remote_uuid
-        }
-        nodes = [
-            item
-            for item in await self.remnawave.list_nodes()
-            if getattr(item, "isConnected", False) and not getattr(item, "isDisabled", False)
-        ]
-        node_results = await asyncio.gather(
-            *(self._fetch_node_users_ips(item.uuid) for item in nodes),
-            return_exceptions=True,
-        )
-        failures = [item for item in node_results if isinstance(item, Exception) or item is None]
-        if failures:
-            logger.warning("Failed to collect active IPs from %s Remnawave node(s): %s", len(failures), failures)
-            return {}, False
-
-        ips_by_user_id: defaultdict[str, set[str]] = defaultdict(set)
-        for result in node_results:
-            for remote_user in result or []:
-                local_user = local_user_by_remote_id.get(str(remote_user.userId))
-                if local_user is None:
-                    continue
-                ips_by_user_id[local_user.id].update(item.ip for item in remote_user.ips if item.ip)
-        return dict(ips_by_user_id), True
-
-    async def _fetch_node_users_ips(self, node_uuid: str):
-        if self.remnawave is None:
-            return []
-        job_id = await self.remnawave.fetch_node_users_ips(node_uuid)
-        if not job_id:
-            raise RuntimeError(f"Remnawave did not return an IP Control job ID for node {node_uuid}.")
-
-        attempts = max(int(self.settings.user_abuse_ip_fetch_poll_attempts), 1)
-        delay = max(float(self.settings.user_abuse_ip_fetch_poll_delay_seconds), 0)
-        for attempt in range(attempts):
-            status = await self.remnawave.get_node_users_ips_result(job_id)
-            if status.isFailed:
-                raise RuntimeError(f"Remnawave IP Control job {job_id} failed.")
-            if status.isCompleted:
-                if status.result is None or not status.result.success:
-                    raise RuntimeError(f"Remnawave IP Control job {job_id} returned no successful result.")
-                return status.result.users
-            if attempt + 1 < attempts and delay:
-                await asyncio.sleep(delay)
-        raise TimeoutError(f"Remnawave IP Control job {job_id} did not finish in time.")
 
     async def _list_active_subscriptions(self) -> list[Subscription]:
         subscriptions = list(

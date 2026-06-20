@@ -125,6 +125,7 @@ async def user_abuse_monitor_job(container: AppContainer) -> None:
     alerts = []
     async with container.hub() as hub:
         alerts = await hub.monitoring.capture_user_abuse_state()
+        alerts = [item for item in alerts if item.kind != "user_many_active_ips"]
         if alerts:
             admin_ids = await hub.accounts.list_admin_telegram_ids()
     if alerts:
