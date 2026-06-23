@@ -11,296 +11,253 @@
   {% include "_theme_bootstrap.html" %}
   <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
-<body class="landing-page">
+<body class="landing-page landing-v2">
   <div class="landing-shell">
     <header class="landing-topbar">
-      <a class="brand" href="/" style="margin: 0;">
-        <img class="brand-logo" src="/media/logo.png" alt="ALTLINK">
+      <a class="brand" href="/" aria-label="ALTLINK">
+        <img class="brand-logo" src="/media/logo.png" alt="">
         <div>
           <strong>ALTLINK</strong>
           <div class="muted">Конфиденциальный доступ без ограничений</div>
         </div>
       </a>
+      <nav class="landing-nav-links" aria-label="Разделы страницы">
+        <a href="#features">Возможности</a>
+        <a href="#start">Подключение</a>
+        <a href="#locations">Локации</a>
+        <a href="#tariffs">Тарифы</a>
+      </nav>
       <div class="landing-topbar-actions">
         <a class="button ghost compact landing-cabinet-button" href="{{ portal_login_url }}">{{ landing_account_button_label }}</a>
       </div>
     </header>
 
-    <section class="landing-hero panel">
-      <div class="landing-copy">
-        <span class="badge highlight">Быстро, приватно, без ограничений</span>
-        <h1>Быстрый и конфиденциальный доступ к сети</h1>
-        <p class="muted">
-          Нажмите одну кнопку, получите ссылку и подключитесь через удобное приложение.
-          Кабинет и Telegram-бот помогут с тарифом, балансом и поддержкой.
-        </p>
-        <div class="landing-feature-list">
-          <span class="badge">2 дня теста</span>
-          <span class="badge">от 25 ₽ в неделю</span>
-          <span class="badge">безлимит трафика</span>
-          {% if landing_max_device_limit %}
-          <span class="badge">до {{ landing_max_device_limit }} устройств</span>
-          {% endif %}
-        </div>
-      </div>
-      <div class="landing-hero-glow" aria-hidden="true"></div>
-      <div class="landing-actions landing-actions-bottom">
-        <a class="button" href="{{ portal_login_url }}">{% if landing_portal_authenticated %}Открыть кабинет{% else %}Подключить{% endif %}</a>
-        {% if client_bot_url %}
-        <a class="button ghost" href="{{ client_bot_url }}" target="_blank" rel="noreferrer">Telegram bot</a>
-        {% endif %}
-      </div>
-    </section>
-
-    <section class="landing-section landing-benefits">
-      <div class="landing-section-head">
-        <span class="badge">Возможности</span>
-        <h2>Всё нужное для стабильного доступа каждый день</h2>
-      </div>
-      <div class="landing-feature-grid">
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 2.8 8.4 7 10 4.2-1.6 7-5.6 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>
-          </span>
-          <h3>Современное шифрование</h3>
-          <p class="muted">Подключение защищает данные в публичных и домашних сетях.</p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="14" y="3" width="7" height="18" rx="2"/><path d="M6 16h2M17 17h1"/></svg>
-          </span>
-          <h3>До {{ landing_max_device_limit or 8 }} устройств</h3>
-          <p class="muted">Один тариф можно использовать на телефоне, компьютере и других устройствах.</p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M5 6.5A4.5 4.5 0 0 1 9.5 2h5A4.5 4.5 0 0 1 19 6.5v4A4.5 4.5 0 0 1 14.5 15H11l-5 4v-4.4A4.5 4.5 0 0 1 5 10.5v-4Z"/><path d="M8 7h8M8 10h5"/></svg>
-          </span>
-          <h3>Поддержка на сайте и в Telegram</h3>
-          <p class="muted">Можно написать в личном кабинете или сразу перейти в Telegram-поддержку.</p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 15.2-3.5"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-15.2 3.5"/><path d="M4 20v-5h5"/></svg>
-          </span>
-          <h3>Без логов активности</h3>
-          <p class="muted">Не ведём историю действий в сети; технические данные нужны только для работы сервиса.</p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-2 8 10-13h-7l1-7Z"/></svg>
-          </span>
-          <h3>Серверы до 10 Гбит/с</h3>
-          <p class="muted">Высокоскоростные локации помогают сохранять быстрый отклик.</p>
-        </article>
-        <article class="landing-feature-card">
-          <span class="landing-feature-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z"/><path d="M7 10h4M7 14h7"/><path d="M17 11.5a1.5 1.5 0 1 0 0 3"/></svg>
-          </span>
-          <h3>Гибкие тарифы</h3>
-          <p class="muted">Можно выбрать короткий период или основной тариф для постоянного доступа.</p>
-        </article>
-      </div>
-    </section>
-
-    <section class="landing-section landing-steps">
-      <div class="landing-section-head">
-        <span class="badge">Как начать</span>
-        <h2>4 шага до подключения</h2>
-      </div>
-      <div class="landing-step-grid">
-        <article class="landing-step-card">
-          <span>1</span>
-          <h3>Нажмите «Подключить»</h3>
-          <p class="muted">Войдите через Telegram и откройте личный кабинет.</p>
-        </article>
-        <article class="landing-step-card">
-          <span>2</span>
-          <h3>Запустите тест или выберите тариф</h3>
-          <p class="muted">Можно начать с пробного периода и проверить качество.</p>
-        </article>
-        <article class="landing-step-card">
-          <span>3</span>
-          <h3>Скопируйте ссылку</h3>
-          <p class="muted">Ссылка доступна в кабинете и в Telegram-боте.</p>
-        </article>
-        <article class="landing-step-card">
-          <span>4</span>
-          <h3>Импортируйте в приложение</h3>
-          <p class="muted">Подойдут v2raytun, Happ, Throne, Hiddify, Streisand или другое совместимое приложение.</p>
-        </article>
-      </div>
-      <div class="landing-apps-panel">
-        <div class="landing-apps-head">
-          <span class="badge">Платформы</span>
-          <h3>Поддерживаемые платформы</h3>
-          <p class="muted">Рекомендуем Happ: он доступен на телефонах, компьютерах и TV. Выберите свою платформу, чтобы открыть страницу скачивания.</p>
-        </div>
-        <div class="landing-app-grid">
-          <article class="landing-app-card">
-            <div>
-              <strong>iOS и iPadOS</strong>
-              <p class="muted">Happ в App Store для iPhone и iPad.</p>
-            </div>
-            <div class="landing-platform-links">
-              <a href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer">Скачать Happ</a>
-            </div>
-          </article>
-          <article class="landing-app-card">
-            <div>
-              <strong>Android</strong>
-              <p class="muted">Happ в Google Play для смартфонов и планшетов.</p>
-            </div>
-            <div class="landing-platform-links">
-              <a href="https://play.google.com/store/apps/details?id=com.happproxy" target="_blank" rel="noreferrer">Скачать Happ</a>
-            </div>
-          </article>
-          <article class="landing-app-card">
-            <div>
-              <strong>Windows</strong>
-              <p class="muted">Desktop-версия Happ для ПК.</p>
-            </div>
-            <div class="landing-platform-links">
-              <a href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer">Скачать Happ</a>
-            </div>
-          </article>
-          <article class="landing-app-card">
-            <div>
-              <strong>macOS</strong>
-              <p class="muted">Happ для Mac через App Store или dmg.</p>
-            </div>
-            <div class="landing-platform-links">
-              <a href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer">Скачать Happ</a>
-            </div>
-          </article>
-          <article class="landing-app-card">
-            <div>
-              <strong>Linux</strong>
-              <p class="muted">Пакеты Happ для популярных Linux-дистрибутивов.</p>
-            </div>
-            <div class="landing-platform-links">
-              <a href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer">Скачать Happ</a>
-            </div>
-          </article>
-          <article class="landing-app-card">
-            <div>
-              <strong>TV</strong>
-              <p class="muted">Happ для Android TV и Apple TV.</p>
-            </div>
-            <div class="landing-platform-links">
-              <a href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer">Скачать Happ</a>
-            </div>
-          </article>
-        </div>
-        <p class="muted landing-apps-note">Также поддерживаем v2RayTun, Throne, INCY, Hiddify, Streisand и другие совместимые клиентские приложения.</p>
-      </div>
-    </section>
-
-    <section class="landing-section landing-latency landing-locations">
-      <div class="landing-latency-toolbar">
-        <div class="landing-section-head">
-          <span class="badge">Локации</span>
-          <h2>Страны и проверка пинга</h2>
-        </div>
-        <div class="landing-latency-actions">
-          <div class="landing-latency-metric" id="latency-card">
-            <span class="muted">Лучший пинг</span>
-            <strong id="latency-value">{{ landing_latency_best_label }}</strong>
+    <main>
+      <section class="landing-hero" id="home">
+        <div class="landing-hero-inner">
+          <span class="badge highlight">2 дня теста · безлимит трафика</span>
+          <h1>Быстрый и конфиденциальный доступ к сети</h1>
+          <p>
+            ALTLINK помогает подключиться за пару минут: получите ссылку, добавьте её в приложение и управляйте доступом в кабинете или Telegram-боте.
+          </p>
+          <div class="landing-actions">
+            <a class="button" href="{{ portal_login_url }}">{% if landing_portal_authenticated %}Открыть кабинет{% else %}Подключить{% endif %}</a>
+            {% if client_bot_url %}
+            <a class="button ghost" href="{{ client_bot_url }}" target="_blank" rel="noreferrer">Telegram bot</a>
+            {% endif %}
           </div>
-          <button class="button compact" type="button" id="latency-button">Проверить пинг</button>
+          <div class="landing-hero-badges" aria-label="Ключевые преимущества">
+            <span>от 25 ₽ в неделю</span>
+            <span>до {{ landing_max_device_limit or 8 }} устройств</span>
+            <span>серверы до 10 Гбит/с</span>
+            <span>поддержка в Telegram</span>
+          </div>
         </div>
-      </div>
-      <div class="muted landing-latency-hint" id="latency-hint">{{ landing_latency_initial_hint }}</div>
-      <div class="landing-location-carousel-shell" data-carousel-shell>
-        <button class="landing-carousel-button is-prev" type="button" data-scroll-prev aria-label="Прокрутить локации влево">‹</button>
-        <div class="landing-location-carousel" id="latency-list" aria-label="Страны ALTLINK" data-horizontal-scroll tabindex="0">
-          {% for item in landing_location_items %}
-          <article class="landing-location-card{% if item.display_state == 'error' %} is-error{% endif %}">
-            <div class="landing-location-card-top">
-              <span class="landing-country-flag flag-{{ item.country_code|lower }}" data-code="{{ item.country_code }}" aria-label="{{ item.country_name }}"></span>
-              <span class="landing-location-name">
-                <strong>{{ item.country_name }}</strong>
-                <small>{{ item.country_code }}{% if item.server_count and item.server_count > 1 %} · серверов: {{ item.server_count }}{% endif %}</small>
-              </span>
-            </div>
-            <div class="landing-location-card-bottom">
-              <strong>{{ item.display_label }}</strong>
-              <small>{{ item.quality_label }}</small>
-            </div>
+      </section>
+
+      <section class="landing-proof-strip" aria-label="Коротко о сервисе">
+        <article>
+          <span>01</span>
+          <strong>Бесплатный старт</strong>
+          <p>Проверьте качество на пробном периоде перед оплатой.</p>
+        </article>
+        <article>
+          <span>02</span>
+          <strong>Единая ссылка</strong>
+          <p>Скопируйте подписку один раз и добавьте её в совместимое приложение.</p>
+        </article>
+        <article>
+          <span>03</span>
+          <strong>Простое управление</strong>
+          <p>Тариф, баланс, поддержка и ссылка доступны в кабинете и боте.</p>
+        </article>
+      </section>
+
+      <section class="landing-section landing-benefits" id="features">
+        <div class="landing-section-head">
+          <span class="badge">Возможности</span>
+          <h2>Всё, что нужно для стабильного доступа каждый день</h2>
+          <p class="muted">Собрали ключевые функции без лишней технической сложности: подключение, скорость, поддержка и понятные тарифы.</p>
+        </div>
+        <div class="landing-feature-grid">
+          <article class="landing-feature-card">
+            <span class="landing-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 2.8 8.4 7 10 4.2-1.6 7-5.6 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>
+            </span>
+            <h3>Современное шифрование</h3>
+            <p class="muted">Защищает данные в публичных Wi‑Fi, мобильных и домашних сетях.</p>
           </article>
-          {% else %}
-          <article class="landing-location-card">
-            <div class="landing-location-card-top">
-              <span class="landing-country-flag" data-code="AL" aria-label="ALTLINK"></span>
-              <span class="landing-location-name">
-                <strong>Локации скоро появятся</strong>
-                <small>ALTLINK</small>
+          <article class="landing-feature-card">
+            <span class="landing-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="2"/><rect x="14" y="3" width="7" height="18" rx="2"/><path d="M6 16h2M17 17h1"/></svg>
+            </span>
+            <h3>До {{ landing_max_device_limit or 8 }} устройств</h3>
+            <p class="muted">Один тариф можно использовать на телефоне, компьютере и других устройствах.</p>
+          </article>
+          <article class="landing-feature-card">
+            <span class="landing-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M5 6.5A4.5 4.5 0 0 1 9.5 2h5A4.5 4.5 0 0 1 19 6.5v4A4.5 4.5 0 0 1 14.5 15H11l-5 4v-4.4A4.5 4.5 0 0 1 5 10.5v-4Z"/><path d="M8 7h8M8 10h5"/></svg>
+            </span>
+            <h3>Поддержка на сайте и в Telegram</h3>
+            <p class="muted">Можно написать в кабинете или перейти в Telegram-поддержку.</p>
+          </article>
+          <article class="landing-feature-card">
+            <span class="landing-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 15.2-3.5"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-15.2 3.5"/><path d="M4 20v-5h5"/></svg>
+            </span>
+            <h3>Без логов активности</h3>
+            <p class="muted">Не ведём историю действий в сети; технические данные нужны только для работы сервиса.</p>
+          </article>
+          <article class="landing-feature-card">
+            <span class="landing-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-2 8 10-13h-7l1-7Z"/></svg>
+            </span>
+            <h3>Серверы до 10 Гбит/с</h3>
+            <p class="muted">Высокоскоростные локации помогают сохранять быстрый отклик.</p>
+          </article>
+          <article class="landing-feature-card">
+            <span class="landing-feature-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z"/><path d="M7 10h4M7 14h7"/><path d="M17 11.5a1.5 1.5 0 1 0 0 3"/></svg>
+            </span>
+            <h3>Гибкие тарифы</h3>
+            <p class="muted">Можно выбрать короткий период или основной тариф для постоянного доступа.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="landing-section landing-start" id="start">
+        <div class="landing-start-copy">
+          <span class="badge">Как начать</span>
+          <h2>Подключение без лишних шагов</h2>
+          <p class="muted">Выберите тариф или тестовый период, скопируйте ссылку и добавьте её в приложение. Если что-то не получится, поддержка поможет.</p>
+          <div class="landing-start-steps">
+            <div><span>1</span><strong>Войдите через Telegram</strong><small>Кабинет откроется после подтверждения в боте.</small></div>
+            <div><span>2</span><strong>Активируйте тест или тариф</strong><small>Начните бесплатно или выберите подходящий период.</small></div>
+            <div><span>3</span><strong>Скопируйте ссылку</strong><small>Она доступна в кабинете и Telegram-боте.</small></div>
+            <div><span>4</span><strong>Добавьте в приложение</strong><small>Happ и другие совместимые клиенты поддерживают импорт по ссылке.</small></div>
+          </div>
+        </div>
+        <div class="landing-platform-panel">
+          <div class="landing-apps-head">
+            <span class="badge highlight">Платформы</span>
+            <h3>Рекомендуем Happ</h3>
+            <p class="muted">Выберите своё устройство, чтобы открыть страницу скачивания.</p>
+          </div>
+          <div class="landing-app-grid">
+            <a class="landing-platform-card" href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer"><strong>iOS и iPadOS</strong><span>App Store</span></a>
+            <a class="landing-platform-card" href="https://play.google.com/store/apps/details?id=com.happproxy" target="_blank" rel="noreferrer"><strong>Android</strong><span>Google Play</span></a>
+            <a class="landing-platform-card" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Windows</strong><span>Happ</span></a>
+            <a class="landing-platform-card" href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer"><strong>macOS</strong><span>App Store / dmg</span></a>
+            <a class="landing-platform-card" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Linux</strong><span>Happ</span></a>
+            <a class="landing-platform-card" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>TV</strong><span>Android TV / Apple TV</span></a>
+          </div>
+          <p class="muted landing-apps-note">Также поддерживаем v2RayTun, Throne, INCY, Hiddify, Streisand и другие совместимые клиентские приложения.</p>
+        </div>
+      </section>
+
+      <section class="landing-section landing-latency landing-locations" id="locations">
+        <div class="landing-latency-toolbar">
+          <div class="landing-section-head">
+            <span class="badge">Локации</span>
+            <h2>Страны и проверка пинга</h2>
+            <p class="muted">Проверьте задержку прямо из браузера. Чем ниже пинг, тем быстрее отклик.</p>
+          </div>
+          <div class="landing-latency-actions">
+            <div class="landing-latency-metric" id="latency-card">
+              <span class="muted">Лучший пинг</span>
+              <strong id="latency-value">{{ landing_latency_best_label }}</strong>
+            </div>
+            <button class="button compact" type="button" id="latency-button">Проверить пинг</button>
+          </div>
+        </div>
+        <div class="muted landing-latency-hint" id="latency-hint">{{ landing_latency_initial_hint }}</div>
+        <div class="landing-location-carousel-shell" data-carousel-shell>
+          <button class="landing-carousel-button is-prev" type="button" data-scroll-prev aria-label="Прокрутить локации влево">‹</button>
+          <div class="landing-location-carousel" id="latency-list" aria-label="Страны ALTLINK" data-horizontal-scroll tabindex="0">
+            {% for item in landing_location_items %}
+            <article class="landing-location-card{% if item.display_state == 'error' %} is-error{% endif %}">
+              <div class="landing-location-card-top">
+                <span class="landing-country-flag flag-{{ item.country_code|lower }}" data-code="{{ item.country_code }}" aria-label="{{ item.country_name }}"></span>
+                <span class="landing-location-name">
+                  <strong>{{ item.country_name }}</strong>
+                  <small>{{ item.country_code }}{% if item.server_count and item.server_count > 1 %} · серверов: {{ item.server_count }}{% endif %}</small>
+                </span>
+              </div>
+              <div class="landing-location-card-bottom">
+                <strong>{{ item.display_label }}</strong>
+                <small>{{ item.quality_label }}</small>
+              </div>
+            </article>
+            {% else %}
+            <article class="landing-location-card">
+              <div class="landing-location-card-top">
+                <span class="landing-country-flag" data-code="AL" aria-label="ALTLINK"></span>
+                <span class="landing-location-name">
+                  <strong>Локации скоро появятся</strong>
+                  <small>ALTLINK</small>
+                </span>
+              </div>
+              <div class="landing-location-card-bottom">
+                <strong>—</strong>
+                <small>Скоро</small>
+              </div>
+            </article>
+            {% endfor %}
+          </div>
+          <button class="landing-carousel-button is-next" type="button" data-scroll-next aria-label="Прокрутить локации вправо">›</button>
+        </div>
+        <p class="muted latency-disclaimer">Пинг зависит от вашей сети и маршрута, поэтому значения могут немного меняться.</p>
+      </section>
+
+      <section class="landing-section landing-tariffs" id="tariffs">
+        <div class="landing-section-head">
+          <span class="badge highlight">Тарифы</span>
+          <h2>Выберите удобный формат</h2>
+          <p class="muted">Start подойдёт для короткого старта, Pro — основной тариф для ежедневного использования.</p>
+        </div>
+        <div class="landing-plan-grid">
+          {% for group in portal_plan_groups %}
+          <article class="landing-plan-card{% if group.family == 'unlimited' %} is-featured{% endif %}">
+            <div class="split">
+              <h3>{{ group.title }}</h3>
+              <span class="badge{% if group.family == 'unlimited' %} highlight{% endif %}">
+                {% if group.family == 'unlimited' %}Рекомендуем{% else %}Старт{% endif %}
               </span>
             </div>
-            <div class="landing-location-card-bottom">
-              <strong>—</strong>
-              <small>Скоро</small>
+            <div class="landing-plan-devices">до {{ group.device_limit or '—' }} устройств</div>
+            <p class="muted">
+              {% if group.family == 'unlimited' %}
+                Для постоянного использования, семьи, ПК и телефона.
+              {% else %}
+                Для быстрого старта, теста качества и коротких периодов оплаты.
+              {% endif %}
+            </p>
+            <div class="landing-periods">
+              {% for period in group.periods %}
+              <div class="plan-period landing-plan-period">
+                <div><strong>{{ period.label }}</strong></div>
+                <div class="plan-period-price">{{ period.price_label }} ₽</div>
+              </div>
+              {% endfor %}
             </div>
+            <a class="button{% if group.family != 'unlimited' %} ghost{% endif %} full" href="{{ portal_login_url }}">Выбрать {{ group.title }}</a>
           </article>
           {% endfor %}
         </div>
-        <button class="landing-carousel-button is-next" type="button" data-scroll-next aria-label="Прокрутить локации вправо">›</button>
-      </div>
-      <p class="muted latency-disclaimer">Пинг зависит от вашей сети и маршрута, поэтому значения могут немного меняться.</p>
-    </section>
+      </section>
 
-    <section class="landing-section landing-tariffs">
-      <div class="landing-section-head">
-        <span class="badge highlight">Тарифы</span>
-        <h2>Тарифы</h2>
-        <p class="muted">Start подойдет для короткого старта, Pro — основной тариф для ежедневного использования.</p>
-      </div>
-      <div class="landing-plan-grid">
-        {% for group in portal_plan_groups %}
-        <article class="landing-plan-card{% if group.family == 'unlimited' %} is-featured{% endif %}">
-          <div class="split">
-            <h3>{{ group.title }}</h3>
-            <span class="badge{% if group.family == 'unlimited' %} highlight{% endif %}">
-              {% if group.family == 'unlimited' %}Рекомендуем{% else %}Старт{% endif %}
-            </span>
-          </div>
-          <div class="landing-plan-devices">до {{ group.device_limit or '—' }} устройств</div>
-          <p class="muted">
-            {% if group.family == 'unlimited' %}
-              Для постоянного использования, семьи, ПК и телефона.
-            {% else %}
-              Для быстрого старта, теста качества и коротких периодов оплаты.
-            {% endif %}
-          </p>
-          <div class="landing-periods">
-            {% for period in group.periods %}
-            <div class="plan-period landing-plan-period">
-              <div>
-                <strong>{{ period.label }}</strong>
-              </div>
-              <div class="plan-period-price">{{ period.price_label }} ₽</div>
-            </div>
-            {% endfor %}
-          </div>
-          <a class="button{% if group.family != 'unlimited' %} ghost{% endif %} full" href="{{ portal_login_url }}">Выбрать {{ group.title }}</a>
-        </article>
-        {% endfor %}
-      </div>
-    </section>
-
-    <section class="landing-section landing-help">
-      <div class="landing-section-head">
-        <span class="badge">Помощь</span>
-        <h2>Если что-то не получилось, мы рядом</h2>
-      </div>
-      <div class="landing-help-card">
-        <p class="muted">Есть инструкция по подключению, Telegram-бот и поддержка. Не нужно угадывать, куда нажимать: начните с кнопки ниже, а если возникнет вопрос — напишите нам.</p>
+      <section class="landing-section landing-final-cta">
+        <div>
+          <span class="badge">Помощь</span>
+          <h2>Если что-то не получилось, мы рядом</h2>
+          <p class="muted">Откройте инструкцию или напишите в поддержку. Мы поможем подобрать приложение и добавить ссылку.</p>
+        </div>
         <div class="landing-actions">
           <a class="button ghost" href="{{ connection_help_url }}">Открыть инструкцию</a>
           <a class="button" href="{{ support_url }}" target="_blank" rel="noreferrer">Написать в поддержку</a>
         </div>
-      </div>
-    </section>
+      </section>
+    </main>
 
     <footer class="landing-footer">
       <div>
@@ -320,7 +277,7 @@
   <script>
     (() => {
       const revealItems = document.querySelectorAll(
-        ".landing-hero, .landing-section, .landing-feature-card, .landing-step-card, .landing-app-card, .landing-location-card, .landing-plan-card, .landing-help-card, .landing-footer"
+        ".landing-hero, .landing-proof-strip, .landing-section, .landing-feature-card, .landing-start-steps > div, .landing-platform-card, .landing-location-card, .landing-plan-card, .landing-final-cta, .landing-footer"
       );
       revealItems.forEach((item, index) => {
         item.classList.add("landing-reveal");
@@ -379,42 +336,6 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
 
-      const groupLocations = (items) => {
-        const locations = new Map();
-
-        items.forEach((item) => {
-          const code = String(item.country_code || "").toUpperCase();
-          const key = code || item.server_id || item.name;
-          if (!key) {
-            return;
-          }
-
-          const current = locations.get(key);
-          const latency = typeof item.latency_ms === "number" ? item.latency_ms : null;
-          const shouldReplace = !current
-            || (latency !== null && (typeof current.latency_ms !== "number" || latency < current.latency_ms));
-
-          if (shouldReplace) {
-            locations.set(key, {
-              country_code: code,
-              country_name: item.country_name || code || "Локация",
-              country_flag: item.country_flag || "🌐",
-              latency_ms: latency,
-              display_label: item.display_label || "Не измерен",
-              display_state: item.display_state || "muted",
-              quality_label: item.quality_label || qualityLabel(latency),
-              server_count: current ? (current.server_count || 1) + 1 : 1,
-            });
-            return;
-          }
-
-          current.server_count = (current.server_count || 1) + 1;
-        });
-
-        return Array.from(locations.values())
-          .sort((left, right) => String(left.country_name).localeCompare(String(right.country_name), "ru"));
-      };
-
       const qualityLabel = (latency) => {
         if (typeof latency !== "number") {
           return "Проверьте пинг";
@@ -435,6 +356,37 @@
           return "Дальняя локация";
         }
         return "Временно высокая задержка";
+      };
+
+      const groupLocations = (items) => {
+        const locations = new Map();
+        items.forEach((item) => {
+          const code = String(item.country_code || "").toUpperCase();
+          const key = code || item.server_id || item.name;
+          if (!key) {
+            return;
+          }
+          const current = locations.get(key);
+          const latency = typeof item.latency_ms === "number" ? item.latency_ms : null;
+          const shouldReplace = !current
+            || (latency !== null && (typeof current.latency_ms !== "number" || latency < current.latency_ms));
+          if (shouldReplace) {
+            locations.set(key, {
+              country_code: code,
+              country_name: item.country_name || code || "Локация",
+              country_flag: item.country_flag || "🌐",
+              latency_ms: latency,
+              display_label: item.display_label || "Не измерен",
+              display_state: item.display_state || "muted",
+              quality_label: item.quality_label || qualityLabel(latency),
+              server_count: current ? (current.server_count || 1) + 1 : 1,
+            });
+            return;
+          }
+          current.server_count = (current.server_count || 1) + 1;
+        });
+        return Array.from(locations.values())
+          .sort((left, right) => String(left.country_name).localeCompare(String(right.country_name), "ru"));
       };
 
       const renderList = (items) => {
@@ -613,7 +565,6 @@
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }
-
           const payload = await response.json();
           const targets = Array.isArray(payload.probes) ? payload.probes : [];
           const probes = await Promise.all(
@@ -655,7 +606,6 @@
               quality_label: "Проверьте пинг",
             };
           });
-
           value.textContent = bestLatencyLabel(mergedItems);
           const fallbackUsed = mergedItems.some((item) => {
             const measured = probesByServerId.get(item.server_id);
