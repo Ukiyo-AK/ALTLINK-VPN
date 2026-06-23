@@ -15,7 +15,7 @@
   <div class="landing-shell">
     <header class="landing-topbar">
       <a class="brand" href="/" aria-label="ALTLINK">
-        <img class="brand-logo" src="/media/logo.png" alt="">
+        <img class="brand-logo" src="/media/altlink%20icon.svg" alt="">
         <div>
           <strong>ALTLINK</strong>
           <div class="muted">Конфиденциальный доступ без ограничений</div>
@@ -61,7 +61,7 @@
               <span class="landing-route-line is-pc"></span>
               <span class="landing-route-line is-tv"></span>
               <div class="landing-connect-core">
-                <img src="/media/logo.png" alt="">
+                <img src="/media/altlink%20icon%20for%20hero%20block.svg" alt="">
                 <strong>ALTLINK</strong>
                 <span>доступ активен</span>
               </div>
@@ -437,9 +437,7 @@
           </article>
         `).join("");
         list.scrollLeft = 0;
-        userTouchedCarousel = false;
-        suppressEdgeWrap = false;
-        window.clearTimeout(edgeWrapTimer);
+        setupInfiniteCarousel();
       };
 
       const bestLatencyLabel = (items) => {
@@ -454,15 +452,19 @@
         return cardNode ? Math.round(cardNode.getBoundingClientRect().width * 1.35) : 320;
       };
 
-      let userTouchedCarousel = false;
-      let suppressEdgeWrap = false;
-      let edgeWrapTimer = null;
+      let carouselSegmentWidth = 0;
+      let carouselReady = false;
+      let normalizeFrame = 0;
+
+      const clearCarouselClones = () => {
+        list.querySelectorAll("[data-carousel-clone]").forEach((node) => node.remove());
+      };
 
       const updateCarouselState = () => {
         if (!carouselShell) {
           return;
         }
-        const canLoop = list.scrollWidth > list.clientWidth + 2;
+        const canLoop = carouselReady && carouselSegmentWidth > 0;
         carouselShell.classList.toggle("can-loop", canLoop);
         if (prevButton) {
           prevButton.disabled = !canLoop;
@@ -472,108 +474,93 @@
         }
       };
 
-      const wrapCarouselEdge = () => {
-        if (!userTouchedCarousel || suppressEdgeWrap) {
+      const setupInfiniteCarousel = () => {
+        window.cancelAnimationFrame(normalizeFrame);
+        clearCarouselClones();
+        carouselReady = false;
+        carouselSegmentWidth = 0;
+        const originals = Array.from(list.querySelectorAll(".landing-location-card"));
+        if (originals.length < 2 || list.scrollWidth <= list.clientWidth + 2) {
+          updateCarouselState();
           return;
         }
-        const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
-        if (maxScroll <= 2) {
+        const before = document.createDocumentFragment();
+        const after = document.createDocumentFragment();
+        originals.forEach((node) => {
+          const beforeClone = node.cloneNode(true);
+          const afterClone = node.cloneNode(true);
+          [beforeClone, afterClone].forEach((clone) => {
+            clone.dataset.carouselClone = "true";
+            clone.setAttribute("aria-hidden", "true");
+            clone.classList.remove("landing-reveal");
+            clone.classList.add("is-visible");
+            clone.style.removeProperty("--reveal-delay");
+          });
+          before.appendChild(beforeClone);
+          after.appendChild(afterClone);
+        });
+        list.insertBefore(before, originals[0]);
+        list.appendChild(after);
+        requestAnimationFrame(() => {
+          carouselSegmentWidth = list.scrollWidth / 3;
+          carouselReady = carouselSegmentWidth > 0;
+          if (carouselReady) {
+            list.scrollLeft = carouselSegmentWidth;
+          }
+          updateCarouselState();
+        });
+      };
+
+      const normalizeInfiniteScroll = () => {
+        if (!carouselReady || carouselSegmentWidth <= 0) {
           return;
         }
-        if (list.scrollLeft >= maxScroll - 2) {
-          suppressEdgeWrap = true;
-          list.scrollTo({ left: 1, behavior: "auto" });
-          window.setTimeout(() => {
-            suppressEdgeWrap = false;
-          }, 120);
+        if (list.scrollLeft < carouselSegmentWidth * 0.5) {
+          list.scrollLeft += carouselSegmentWidth;
           return;
         }
-        if (list.scrollLeft <= 2) {
-          suppressEdgeWrap = true;
-          list.scrollTo({ left: maxScroll - 1, behavior: "auto" });
-          window.setTimeout(() => {
-            suppressEdgeWrap = false;
-          }, 120);
+        if (list.scrollLeft > carouselSegmentWidth * 1.5) {
+          list.scrollLeft -= carouselSegmentWidth;
         }
       };
 
-      const scheduleCarouselWrap = () => {
-        if (!userTouchedCarousel || suppressEdgeWrap) {
-          return;
-        }
-        window.clearTimeout(edgeWrapTimer);
-        edgeWrapTimer = window.setTimeout(wrapCarouselEdge, 140);
+      const scheduleInfiniteNormalize = () => {
+        window.cancelAnimationFrame(normalizeFrame);
+        normalizeFrame = window.requestAnimationFrame(normalizeInfiniteScroll);
       };
 
       const scrollCarousel = (direction) => {
-        userTouchedCarousel = true;
-        const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
-        if (maxScroll <= 2) {
+        if (!carouselReady) {
           return;
         }
-        const nextLeft = list.scrollLeft + direction * scrollAmount();
-        if (direction > 0 && nextLeft >= maxScroll - 2) {
-          suppressEdgeWrap = true;
-          list.scrollTo({ left: 0, behavior: "smooth" });
-          window.setTimeout(() => {
-            suppressEdgeWrap = false;
-          }, 450);
-          return;
-        }
-        if (direction < 0 && nextLeft <= 2) {
-          suppressEdgeWrap = true;
-          list.scrollTo({ left: maxScroll, behavior: "smooth" });
-          window.setTimeout(() => {
-            suppressEdgeWrap = false;
-          }, 450);
-          return;
-        }
-        list.scrollTo({ left: nextLeft, behavior: "smooth" });
+        list.scrollBy({ left: direction * scrollAmount(), behavior: "smooth" });
       };
 
       prevButton?.addEventListener("click", () => scrollCarousel(-1));
       nextButton?.addEventListener("click", () => scrollCarousel(1));
       list.addEventListener("scroll", () => {
         updateCarouselState();
-        scheduleCarouselWrap();
+        scheduleInfiniteNormalize();
       }, { passive: true });
-      window.addEventListener("resize", updateCarouselState);
+      window.addEventListener("resize", () => {
+        setupInfiniteCarousel();
+      });
       list.addEventListener("wheel", (event) => {
         if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
           return;
         }
         event.preventDefault();
-        userTouchedCarousel = true;
-        const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
-        if (maxScroll <= 2) {
+        if (!carouselReady) {
           return;
         }
-        const nextLeft = list.scrollLeft + event.deltaY;
-        if (nextLeft >= maxScroll - 2) {
-          suppressEdgeWrap = true;
-          list.scrollLeft = 0;
-          window.setTimeout(() => {
-            suppressEdgeWrap = false;
-          }, 120);
-          return;
-        }
-        if (nextLeft <= 2) {
-          suppressEdgeWrap = true;
-          list.scrollLeft = maxScroll;
-          window.setTimeout(() => {
-            suppressEdgeWrap = false;
-          }, 120);
-          return;
-        }
-        list.scrollLeft = nextLeft;
+        list.scrollLeft += event.deltaY;
       }, { passive: false });
 
       let isDragging = false;
       let dragStartX = 0;
       let dragStartScroll = 0;
       list.addEventListener("pointerdown", (event) => {
-        userTouchedCarousel = true;
-        if (event.pointerType === "touch") {
+        if (event.pointerType === "touch" || !carouselReady) {
           return;
         }
         isDragging = true;
@@ -746,7 +733,9 @@
         }
       });
 
-      restoreMonitoringState();
+      if (!restoreMonitoringState()) {
+        setupInfiniteCarousel();
+      }
       updateCarouselState();
     })();
   </script>
