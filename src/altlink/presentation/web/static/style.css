@@ -5510,13 +5510,13 @@ body.landing-v2 .landing-hero-inner {
 }
 
 body.landing-v2 .landing-hero h1 {
-  max-width: 12.6ch;
+  max-width: 15ch;
   margin: 0;
   color: var(--accent-strong);
   font-family: "Unbounded", "Onest", sans-serif;
-  font-size: clamp(3.45rem, 6.8vw, 7.25rem);
-  line-height: 0.9;
-  letter-spacing: -0.085em;
+  font-size: clamp(2.85rem, 5.75vw, 6.05rem);
+  line-height: 0.94;
+  letter-spacing: -0.078em;
   background: linear-gradient(115deg, var(--accent-strong), var(--accent), #58c9aa);
   background-clip: text;
   -webkit-background-clip: text;
@@ -5530,11 +5530,11 @@ html[data-theme="dark"] body.landing-v2 .landing-hero h1 {
 }
 
 body.landing-v2 .landing-hero p {
-  max-width: 44rem;
+  max-width: 41rem;
   margin: 0;
   color: var(--muted);
-  font-size: clamp(1.05rem, 1.55vw, 1.28rem);
-  line-height: 1.72;
+  font-size: clamp(1rem, 1.32vw, 1.16rem);
+  line-height: 1.66;
 }
 
 body.landing-v2 .landing-hero-badges {
@@ -6031,9 +6031,43 @@ body.landing-v2 .landing-latency-hint:empty {
   display: none;
 }
 
+body.landing-v2 .landing-location-carousel-shell.is-at-start::before,
+body.landing-v2 .landing-location-carousel-shell.is-at-end::after {
+  opacity: 1;
+}
+
+body.landing-v2 .landing-location-number {
+  position: absolute;
+  top: 0.82rem;
+  right: 0.82rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.55rem;
+  padding-inline: 0.48rem;
+  border: 1px solid rgba(7, 148, 127, 0.16);
+  border-radius: 999px;
+  background: rgba(7, 148, 127, 0.08);
+  color: var(--accent-strong);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+html[data-theme="dark"] body.landing-v2 .landing-location-number {
+  border-color: rgba(114, 232, 196, 0.18);
+  background: rgba(114, 232, 196, 0.08);
+}
+
 body.landing-v2 .landing-location-card {
+  position: relative;
   flex-basis: clamp(15.5rem, 22vw, 19rem);
   background: rgba(255, 255, 255, 0.62);
+}
+
+body.landing-v2 .landing-location-card-top {
+  padding-right: 5.4rem;
 }
 
 html[data-theme="dark"] body.landing-v2 .landing-location-card {
@@ -6177,14 +6211,14 @@ body.landing-v2 .landing-reveal.is-visible {
 
   body.landing-v2 .landing-hero h1 {
     max-width: 100%;
-    font-size: clamp(2.25rem, 11vw, 3.45rem);
-    letter-spacing: -0.07em;
+    font-size: clamp(2rem, 9.4vw, 3rem);
+    letter-spacing: -0.062em;
   }
 
   body.landing-v2 .landing-hero p {
     max-width: 34rem;
-    font-size: 1rem;
-    line-height: 1.58;
+    font-size: 0.96rem;
+    line-height: 1.55;
   }
 
   body.landing-v2 .landing-hero-badges span {

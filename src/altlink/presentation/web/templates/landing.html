@@ -206,6 +206,7 @@
             {% for item in landing_location_items %}
             <article class="landing-location-card{% if item.display_state == 'error' %} is-error{% endif %}">
               <div class="landing-location-card-top">
+                <span class="landing-location-number">Сервер {{ '%02d'|format(loop.index) }}</span>
                 <span class="landing-country-flag flag-{{ item.country_code|lower }}" data-code="{{ item.country_code }}" aria-label="{{ item.country_name }}"></span>
                 <span class="landing-location-name">
                   <strong>{{ item.country_name }}</strong>
@@ -220,6 +221,7 @@
             {% else %}
             <article class="landing-location-card">
               <div class="landing-location-card-top">
+                <span class="landing-location-number">Сервер 01</span>
                 <span class="landing-country-flag" data-code="AL" aria-label="ALTLINK"></span>
                 <span class="landing-location-name">
                   <strong>Локации скоро появятся</strong>
@@ -418,9 +420,10 @@
 
       const renderList = (items) => {
         const locations = groupLocations(items);
-        list.innerHTML = locations.map((item) => `
+        list.innerHTML = locations.map((item, index) => `
           <article class="landing-location-card${item.display_state === "error" ? " is-error" : ""}">
             <div class="landing-location-card-top">
+              <span class="landing-location-number">Сервер ${String(index + 1).padStart(2, "0")}</span>
               <span class="landing-country-flag flag-${escapeHtml(String(item.country_code || "").toLowerCase())}" data-code="${escapeHtml(item.country_code || "")}" aria-label="${escapeHtml(item.country_name)}"></span>
               <span class="landing-location-name">
                 <strong>${escapeHtml(item.country_name)}</strong>
@@ -433,6 +436,10 @@
             </div>
           </article>
         `).join("");
+        list.scrollLeft = 0;
+        userTouchedCarousel = false;
+        suppressEdgeWrap = false;
+        window.clearTimeout(edgeWrapTimer);
       };
 
       const bestLatencyLabel = (items) => {
@@ -447,43 +454,125 @@
         return cardNode ? Math.round(cardNode.getBoundingClientRect().width * 1.35) : 320;
       };
 
+      let userTouchedCarousel = false;
+      let suppressEdgeWrap = false;
+      let edgeWrapTimer = null;
+
       const updateCarouselState = () => {
         if (!carouselShell) {
           return;
         }
-        const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
-        const atStart = list.scrollLeft <= 2;
-        const atEnd = list.scrollLeft >= maxScroll - 2;
-        carouselShell.classList.toggle("is-at-start", atStart);
-        carouselShell.classList.toggle("is-at-end", atEnd);
+        const canLoop = list.scrollWidth > list.clientWidth + 2;
+        carouselShell.classList.toggle("can-loop", canLoop);
         if (prevButton) {
-          prevButton.disabled = atStart;
+          prevButton.disabled = !canLoop;
         }
         if (nextButton) {
-          nextButton.disabled = atEnd;
+          nextButton.disabled = !canLoop;
         }
       };
 
+      const wrapCarouselEdge = () => {
+        if (!userTouchedCarousel || suppressEdgeWrap) {
+          return;
+        }
+        const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
+        if (maxScroll <= 2) {
+          return;
+        }
+        if (list.scrollLeft >= maxScroll - 2) {
+          suppressEdgeWrap = true;
+          list.scrollTo({ left: 1, behavior: "auto" });
+          window.setTimeout(() => {
+            suppressEdgeWrap = false;
+          }, 120);
+          return;
+        }
+        if (list.scrollLeft <= 2) {
+          suppressEdgeWrap = true;
+          list.scrollTo({ left: maxScroll - 1, behavior: "auto" });
+          window.setTimeout(() => {
+            suppressEdgeWrap = false;
+          }, 120);
+        }
+      };
+
+      const scheduleCarouselWrap = () => {
+        if (!userTouchedCarousel || suppressEdgeWrap) {
+          return;
+        }
+        window.clearTimeout(edgeWrapTimer);
+        edgeWrapTimer = window.setTimeout(wrapCarouselEdge, 140);
+      };
+
       const scrollCarousel = (direction) => {
-        list.scrollBy({ left: direction * scrollAmount(), behavior: "smooth" });
+        userTouchedCarousel = true;
+        const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
+        if (maxScroll <= 2) {
+          return;
+        }
+        const nextLeft = list.scrollLeft + direction * scrollAmount();
+        if (direction > 0 && nextLeft >= maxScroll - 2) {
+          suppressEdgeWrap = true;
+          list.scrollTo({ left: 0, behavior: "smooth" });
+          window.setTimeout(() => {
+            suppressEdgeWrap = false;
+          }, 450);
+          return;
+        }
+        if (direction < 0 && nextLeft <= 2) {
+          suppressEdgeWrap = true;
+          list.scrollTo({ left: maxScroll, behavior: "smooth" });
+          window.setTimeout(() => {
+            suppressEdgeWrap = false;
+          }, 450);
+          return;
+        }
+        list.scrollTo({ left: nextLeft, behavior: "smooth" });
       };
 
       prevButton?.addEventListener("click", () => scrollCarousel(-1));
       nextButton?.addEventListener("click", () => scrollCarousel(1));
-      list.addEventListener("scroll", updateCarouselState, { passive: true });
+      list.addEventListener("scroll", () => {
+        updateCarouselState();
+        scheduleCarouselWrap();
+      }, { passive: true });
       window.addEventListener("resize", updateCarouselState);
       list.addEventListener("wheel", (event) => {
         if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
           return;
         }
         event.preventDefault();
-        list.scrollLeft += event.deltaY;
+        userTouchedCarousel = true;
+        const maxScroll = Math.max(0, list.scrollWidth - list.clientWidth);
+        if (maxScroll <= 2) {
+          return;
+        }
+        const nextLeft = list.scrollLeft + event.deltaY;
+        if (nextLeft >= maxScroll - 2) {
+          suppressEdgeWrap = true;
+          list.scrollLeft = 0;
+          window.setTimeout(() => {
+            suppressEdgeWrap = false;
+          }, 120);
+          return;
+        }
+        if (nextLeft <= 2) {
+          suppressEdgeWrap = true;
+          list.scrollLeft = maxScroll;
+          window.setTimeout(() => {
+            suppressEdgeWrap = false;
+          }, 120);
+          return;
+        }
+        list.scrollLeft = nextLeft;
       }, { passive: false });
 
       let isDragging = false;
       let dragStartX = 0;
       let dragStartScroll = 0;
       list.addEventListener("pointerdown", (event) => {
+        userTouchedCarousel = true;
         if (event.pointerType === "touch") {
           return;
         }
@@ -514,8 +603,8 @@
         value.textContent = bestLatencyLabel(fallbackProbes);
         hint.textContent = message || (
           fallbackCheckedAt
-            ? "Проверьте задержку до серверов ALTLINK прямо из браузера. Чем ниже пинг, тем быстрее отклик."
-            : "Проверьте задержку до серверов ALTLINK прямо из браузера. Чем ниже пинг, тем быстрее отклик."
+            ? "Показываем последние сохранённые значения."
+            : ""
         );
         renderList(fallbackProbes);
         updateCarouselState();
