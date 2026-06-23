@@ -6212,6 +6212,10 @@ body.landing-v2 .landing-reveal.is-visible {
     border-radius: 0;
   }
 
+  body.landing-v2 .landing-hero::after {
+    display: none;
+  }
+
   body.landing-v2 .landing-hero-layout {
     gap: 1.1rem;
   }
@@ -6288,6 +6292,42 @@ body.landing-v2 .landing-reveal.is-visible {
     scroll-padding-inline: 12px;
     scroll-snap-type: x mandatory;
     scrollbar-width: none;
+  }
+
+  body.landing-v2 .landing-benefits,
+  body.landing-v2 .landing-tariffs,
+  body.landing-v2 .landing-start-copy,
+  body.landing-v2 .landing-platform-panel {
+    position: relative;
+  }
+
+  body.landing-v2 .landing-benefits::after,
+  body.landing-v2 .landing-tariffs::after,
+  body.landing-v2 .landing-start-copy::after,
+  body.landing-v2 .landing-platform-panel::after {
+    content: "свайп →";
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.65rem;
+    margin-top: -0.35rem;
+    padding-inline: 0.62rem;
+    border: 1px solid rgba(7, 148, 127, 0.16);
+    border-radius: 999px;
+    background: rgba(7, 148, 127, 0.07);
+    color: var(--accent-strong);
+    font-size: 0.72rem;
+    font-weight: 900;
+  }
+
+  body.landing-v2 .landing-proof-strip,
+  body.landing-v2 .landing-feature-grid,
+  body.landing-v2 .landing-start-steps,
+  body.landing-v2 .landing-app-grid,
+  body.landing-v2 .landing-plan-grid,
+  body.landing-v2 .landing-location-carousel {
+    mask-image: linear-gradient(90deg, #000 calc(100% - 3.6rem), transparent);
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 3.6rem), transparent);
   }
 
   body.landing-v2 .landing-proof-strip::-webkit-scrollbar,
