@@ -34,23 +34,45 @@
 
     <main>
       <section class="landing-hero" id="home">
-        <div class="landing-hero-inner">
-          <span class="badge highlight">2 дня теста · безлимит трафика</span>
-          <h1>Быстрый и конфиденциальный доступ к сети</h1>
-          <p>
-            ALTLINK помогает подключиться за пару минут: получите ссылку, добавьте её в приложение и управляйте доступом в кабинете или Telegram-боте.
-          </p>
-          <div class="landing-actions">
-            <a class="button" href="{{ portal_login_url }}">{% if landing_portal_authenticated %}Открыть кабинет{% else %}Подключить{% endif %}</a>
-            {% if client_bot_url %}
-            <a class="button ghost" href="{{ client_bot_url }}" target="_blank" rel="noreferrer">Telegram bot</a>
-            {% endif %}
+        <div class="landing-hero-layout">
+          <div class="landing-hero-inner">
+            <h1>Быстрый и конфиденциальный доступ к сети</h1>
+            <p>
+              ALTLINK помогает подключиться за пару минут: получите ссылку, добавьте её в приложение и управляйте доступом в кабинете или Telegram-боте.
+            </p>
+            <div class="landing-actions">
+              <a class="button" href="{{ portal_login_url }}">{% if landing_portal_authenticated %}Открыть кабинет{% else %}Подключить{% endif %}</a>
+              {% if client_bot_url %}
+              <a class="button ghost" href="{{ client_bot_url }}" target="_blank" rel="noreferrer">Telegram bot</a>
+              {% endif %}
+            </div>
+            <div class="landing-hero-badges" aria-label="Ключевые преимущества">
+              <span>2 дня теста</span>
+              <span>безлимит трафика</span>
+              <span>от 25 ₽ в неделю</span>
+              <span>до {{ landing_max_device_limit or 8 }} устройств</span>
+            </div>
           </div>
-          <div class="landing-hero-badges" aria-label="Ключевые преимущества">
-            <span>от 25 ₽ в неделю</span>
-            <span>до {{ landing_max_device_limit or 8 }} устройств</span>
-            <span>серверы до 10 Гбит/с</span>
-            <span>поддержка в Telegram</span>
+          <div class="landing-planet-stage" data-planet aria-hidden="true">
+            <div class="landing-planet-orbit is-outer"></div>
+            <div class="landing-planet-orbit is-inner"></div>
+            <div class="landing-planet">
+              <span class="landing-planet-glow"></span>
+              <span class="landing-planet-line is-a"></span>
+              <span class="landing-planet-line is-b"></span>
+              <span class="landing-planet-line is-c"></span>
+              <img src="/media/logo.png" alt="">
+            </div>
+            <div class="landing-satellite is-one"></div>
+            <div class="landing-satellite is-two"></div>
+            <div class="landing-planet-metric is-speed">
+              <span>Скорость</span>
+              <strong>до 10 Гбит/с</strong>
+            </div>
+            <div class="landing-planet-metric is-devices">
+              <span>Устройства</span>
+              <strong>до {{ landing_max_device_limit or 8 }}</strong>
+            </div>
           </div>
         </div>
       </section>
@@ -75,7 +97,6 @@
 
       <section class="landing-section landing-benefits" id="features">
         <div class="landing-section-head">
-          <span class="badge">Возможности</span>
           <h2>Всё, что нужно для стабильного доступа каждый день</h2>
           <p class="muted">Собрали ключевые функции без лишней технической сложности: подключение, скорость, поддержка и понятные тарифы.</p>
         </div>
@@ -127,7 +148,6 @@
 
       <section class="landing-section landing-start" id="start">
         <div class="landing-start-copy">
-          <span class="badge">Как начать</span>
           <h2>Подключение без лишних шагов</h2>
           <p class="muted">Выберите тариф или тестовый период, скопируйте ссылку и добавьте её в приложение. Если что-то не получится, поддержка поможет.</p>
           <div class="landing-start-steps">
@@ -139,7 +159,6 @@
         </div>
         <div class="landing-platform-panel">
           <div class="landing-apps-head">
-            <span class="badge highlight">Платформы</span>
             <h3>Рекомендуем Happ</h3>
             <p class="muted">Выберите своё устройство, чтобы открыть страницу скачивания.</p>
           </div>
@@ -158,7 +177,6 @@
       <section class="landing-section landing-latency landing-locations" id="locations">
         <div class="landing-latency-toolbar">
           <div class="landing-section-head">
-            <span class="badge">Локации</span>
             <h2>Страны и проверка пинга</h2>
             <p class="muted">Проверьте задержку прямо из браузера. Чем ниже пинг, тем быстрее отклик.</p>
           </div>
@@ -211,7 +229,6 @@
 
       <section class="landing-section landing-tariffs" id="tariffs">
         <div class="landing-section-head">
-          <span class="badge highlight">Тарифы</span>
           <h2>Выберите удобный формат</h2>
           <p class="muted">Start подойдёт для короткого старта, Pro — основной тариф для ежедневного использования.</p>
         </div>
@@ -248,7 +265,6 @@
 
       <section class="landing-section landing-final-cta">
         <div>
-          <span class="badge">Помощь</span>
           <h2>Если что-то не получилось, мы рядом</h2>
           <p class="muted">Откройте инструкцию или напишите в поддержку. Мы поможем подобрать приложение и добавить ссылку.</p>
         </div>
@@ -276,8 +292,29 @@
 
   <script>
     (() => {
+      const planet = document.querySelector("[data-planet]");
+      if (!planet || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        return;
+      }
+
+      const setTilt = (event) => {
+        const rect = planet.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
+        const y = ((event.clientY - rect.top) / rect.height - 0.5) * 2;
+        planet.style.setProperty("--planet-tilt-x", `${(-y * 10).toFixed(2)}deg`);
+        planet.style.setProperty("--planet-tilt-y", `${(x * 12).toFixed(2)}deg`);
+      };
+
+      planet.addEventListener("pointermove", setTilt);
+      planet.addEventListener("pointerleave", () => {
+        planet.style.setProperty("--planet-tilt-x", "0deg");
+        planet.style.setProperty("--planet-tilt-y", "0deg");
+      });
+    })();
+
+    (() => {
       const revealItems = document.querySelectorAll(
-        ".landing-hero, .landing-proof-strip, .landing-section, .landing-feature-card, .landing-start-steps > div, .landing-platform-card, .landing-location-card, .landing-plan-card, .landing-final-cta, .landing-footer"
+        ".landing-hero, .landing-planet-stage, .landing-proof-strip, .landing-section, .landing-feature-card, .landing-start-steps > div, .landing-platform-card, .landing-location-card, .landing-plan-card, .landing-final-cta, .landing-footer"
       );
       revealItems.forEach((item, index) => {
         item.classList.add("landing-reveal");
