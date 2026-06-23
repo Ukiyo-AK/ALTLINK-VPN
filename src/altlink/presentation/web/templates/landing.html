@@ -43,30 +43,6 @@
           {% endif %}
         </div>
       </div>
-      <div class="landing-hero-visual" aria-hidden="true">
-        <div class="landing-orbit">
-          <span class="landing-orbit-ring is-outer"></span>
-          <span class="landing-orbit-ring is-inner"></span>
-          <span class="landing-orbit-dot is-dot-one"></span>
-          <span class="landing-orbit-dot is-dot-two"></span>
-          <span class="landing-orbit-dot is-dot-three"></span>
-          <div class="landing-orbit-core">
-            <img src="/media/logo.png" alt="">
-          </div>
-        </div>
-        <div class="landing-hero-note is-speed">
-          <span>Скорость</span>
-          <strong>до 10 Гбит/с</strong>
-        </div>
-        <div class="landing-hero-note is-devices">
-          <span>Устройства</span>
-          <strong>до {{ landing_max_device_limit or 8 }}</strong>
-        </div>
-        <div class="landing-hero-note is-status">
-          <span>Доступ</span>
-          <strong>24/7</strong>
-        </div>
-      </div>
       <div class="landing-hero-glow" aria-hidden="true"></div>
       <div class="landing-actions landing-actions-bottom">
         <a class="button" href="{{ portal_login_url }}">{% if landing_portal_authenticated %}Открыть кабинет{% else %}Подключить{% endif %}</a>
@@ -153,6 +129,63 @@
           <h3>Импортируйте в приложение</h3>
           <p class="muted">Подойдут v2raytun, Happ, Throne, Hiddify, Streisand или другое совместимое приложение.</p>
         </article>
+      </div>
+      <div class="landing-apps-panel">
+        <div class="landing-apps-head">
+          <span class="badge">Платформы</span>
+          <h3>Поддерживаемые приложения</h3>
+          <p class="muted">Выберите приложение под своё устройство. Нажатие на платформу откроет страницу скачивания.</p>
+        </div>
+        <div class="landing-app-grid">
+          <article class="landing-app-card">
+            <div>
+              <strong>Happ</strong>
+              <p class="muted">Универсальный клиент для телефона, компьютера и TV.</p>
+            </div>
+            <div class="landing-platform-links">
+              <a href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer">iOS</a>
+              <a href="https://play.google.com/store/apps/details?id=com.happproxy" target="_blank" rel="noreferrer">Android</a>
+              <a href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer">Windows</a>
+              <a href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer">macOS</a>
+              <a href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer">Linux</a>
+              <a href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer">TV</a>
+            </div>
+          </article>
+          <article class="landing-app-card">
+            <div>
+              <strong>v2RayTun</strong>
+              <p class="muted">Популярный мобильный клиент с импортом по ссылке.</p>
+            </div>
+            <div class="landing-platform-links">
+              <a href="https://apps.apple.com/us/app/v2raytun/id6476628951" target="_blank" rel="noreferrer">iOS</a>
+              <a href="https://apps.apple.com/us/app/v2raytun/id6476628951" target="_blank" rel="noreferrer">macOS</a>
+              <a href="https://play.google.com/store/apps/details?id=com.v2raytun.android" target="_blank" rel="noreferrer">Android</a>
+            </div>
+          </article>
+          <article class="landing-app-card">
+            <div>
+              <strong>Throne</strong>
+              <p class="muted">Настольный клиент для Windows, macOS и Linux.</p>
+            </div>
+            <div class="landing-platform-links">
+              <a href="https://github.com/throneproj/Throne/releases" target="_blank" rel="noreferrer">Windows</a>
+              <a href="https://github.com/throneproj/Throne/releases" target="_blank" rel="noreferrer">macOS</a>
+              <a href="https://github.com/throneproj/Throne/releases" target="_blank" rel="noreferrer">Linux</a>
+            </div>
+          </article>
+          <article class="landing-app-card">
+            <div>
+              <strong>INCY</strong>
+              <p class="muted">Современный клиент для мобильных устройств и Mac.</p>
+            </div>
+            <div class="landing-platform-links">
+              <a href="https://apps.apple.com/us/app/incy/id6756943388" target="_blank" rel="noreferrer">iOS</a>
+              <a href="https://apps.apple.com/us/app/incy/id6756943388" target="_blank" rel="noreferrer">macOS</a>
+              <a href="https://play.google.com/store/apps/details?id=llc.itdev.incy" target="_blank" rel="noreferrer">Android</a>
+            </div>
+          </article>
+        </div>
+        <p class="muted landing-apps-note">Также подойдут Hiddify, Streisand и другие совместимые клиенты.</p>
       </div>
     </section>
 
