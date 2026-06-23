@@ -36,9 +36,9 @@
       <section class="landing-hero" id="home">
         <div class="landing-hero-layout">
           <div class="landing-hero-inner">
-            <h1>Быстрый и конфиденциальный доступ к сети</h1>
+            <h1>Подключитесь за минуту. Доступ без ограничений каждый день</h1>
             <p>
-              ALTLINK помогает подключиться за пару минут: получите ссылку, добавьте её в приложение и управляйте доступом в кабинете или Telegram-боте.
+              2 дня бесплатно, безлимитный трафик и одна ссылка для телефона, компьютера и TV. Нажмите «Подключить» — бот выдаст доступ и короткую инструкцию.
             </p>
             <div class="landing-actions">
               <a class="button" href="{{ portal_login_url }}">{% if landing_portal_authenticated %}Открыть кабинет{% else %}Подключить{% endif %}</a>
@@ -53,25 +53,38 @@
               <span>до {{ landing_max_device_limit or 8 }} устройств</span>
             </div>
           </div>
-          <div class="landing-planet-stage" data-planet aria-hidden="true">
-            <div class="landing-planet-orbit is-outer"></div>
-            <div class="landing-planet-orbit is-inner"></div>
-            <div class="landing-planet">
-              <span class="landing-planet-glow"></span>
-              <span class="landing-planet-line is-a"></span>
-              <span class="landing-planet-line is-b"></span>
-              <span class="landing-planet-line is-c"></span>
-              <img src="/media/logo.png" alt="">
+          <div class="landing-hero-showcase" aria-hidden="true">
+            <div class="landing-route-map">
+              <span class="landing-route-orbit is-outer"></span>
+              <span class="landing-route-orbit is-inner"></span>
+              <span class="landing-route-line is-phone"></span>
+              <span class="landing-route-line is-pc"></span>
+              <span class="landing-route-line is-tv"></span>
+              <div class="landing-connect-core">
+                <img src="/media/logo.png" alt="">
+                <strong>ALTLINK</strong>
+                <span>доступ активен</span>
+              </div>
+              <div class="landing-route-node is-phone">
+                <span></span>
+                <strong>Телефон</strong>
+              </div>
+              <div class="landing-route-node is-pc">
+                <span></span>
+                <strong>ПК</strong>
+              </div>
+              <div class="landing-route-node is-tv">
+                <span></span>
+                <strong>TV</strong>
+              </div>
             </div>
-            <div class="landing-satellite is-one"></div>
-            <div class="landing-satellite is-two"></div>
-            <div class="landing-planet-metric is-speed">
-              <span>Скорость</span>
+            <div class="landing-hero-stat is-test">
+              <span>Тест</span>
+              <strong>2 дня</strong>
+            </div>
+            <div class="landing-hero-stat is-speed">
+              <span>Серверы</span>
               <strong>до 10 Гбит/с</strong>
-            </div>
-            <div class="landing-planet-metric is-devices">
-              <span>Устройства</span>
-              <strong>до {{ landing_max_device_limit or 8 }}</strong>
             </div>
           </div>
         </div>
@@ -98,7 +111,7 @@
       <section class="landing-section landing-benefits" id="features">
         <div class="landing-section-head">
           <h2>Всё, что нужно для стабильного доступа каждый день</h2>
-          <p class="muted">Собрали ключевые функции без лишней технической сложности: подключение, скорость, поддержка и понятные тарифы.</p>
+          <p class="muted">Ключевые функции ALTLINK: скорость, поддержка, приватность и понятные тарифы.</p>
         </div>
         <div class="landing-feature-grid">
           <article class="landing-feature-card">
@@ -160,15 +173,13 @@
         <div class="landing-platform-panel">
           <div class="landing-apps-head">
             <h3>Рекомендуем Happ</h3>
-            <p class="muted">Выберите своё устройство, чтобы открыть страницу скачивания.</p>
+            <p class="muted">Три быстрых варианта для популярных устройств. Остальные клиенты тоже поддерживаются.</p>
           </div>
           <div class="landing-app-grid">
-            <a class="landing-platform-card" href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer"><strong>iOS и iPadOS</strong><span>App Store</span></a>
             <a class="landing-platform-card" href="https://play.google.com/store/apps/details?id=com.happproxy" target="_blank" rel="noreferrer"><strong>Android</strong><span>Google Play</span></a>
+            <a class="landing-platform-card" href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer"><strong>iPhone и iPad</strong><span>App Store</span></a>
             <a class="landing-platform-card" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Windows</strong><span>Happ</span></a>
-            <a class="landing-platform-card" href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer"><strong>macOS</strong><span>App Store / dmg</span></a>
-            <a class="landing-platform-card" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Linux</strong><span>Happ</span></a>
-            <a class="landing-platform-card" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>TV</strong><span>Android TV / Apple TV</span></a>
+            <a class="landing-platform-card is-muted" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Другие устройства</strong><span>macOS, Linux, TV</span></a>
           </div>
           <p class="muted landing-apps-note">Также поддерживаем v2RayTun, Throne, INCY, Hiddify, Streisand и другие совместимые клиентские приложения.</p>
         </div>
@@ -188,7 +199,7 @@
             <button class="button compact" type="button" id="latency-button">Проверить пинг</button>
           </div>
         </div>
-        <div class="muted landing-latency-hint" id="latency-hint">{{ landing_latency_initial_hint }}</div>
+        <div class="muted landing-latency-hint" id="latency-hint" aria-live="polite"></div>
         <div class="landing-location-carousel-shell" data-carousel-shell>
           <button class="landing-carousel-button is-prev" type="button" data-scroll-prev aria-label="Прокрутить локации влево">‹</button>
           <div class="landing-location-carousel" id="latency-list" aria-label="Страны ALTLINK" data-horizontal-scroll tabindex="0">
@@ -292,29 +303,8 @@
 
   <script>
     (() => {
-      const planet = document.querySelector("[data-planet]");
-      if (!planet || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        return;
-      }
-
-      const setTilt = (event) => {
-        const rect = planet.getBoundingClientRect();
-        const x = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
-        const y = ((event.clientY - rect.top) / rect.height - 0.5) * 2;
-        planet.style.setProperty("--planet-tilt-x", `${(-y * 10).toFixed(2)}deg`);
-        planet.style.setProperty("--planet-tilt-y", `${(x * 12).toFixed(2)}deg`);
-      };
-
-      planet.addEventListener("pointermove", setTilt);
-      planet.addEventListener("pointerleave", () => {
-        planet.style.setProperty("--planet-tilt-x", "0deg");
-        planet.style.setProperty("--planet-tilt-y", "0deg");
-      });
-    })();
-
-    (() => {
       const revealItems = document.querySelectorAll(
-        ".landing-hero, .landing-planet-stage, .landing-proof-strip, .landing-section, .landing-feature-card, .landing-start-steps > div, .landing-platform-card, .landing-location-card, .landing-plan-card, .landing-final-cta, .landing-footer"
+        ".landing-hero, .landing-hero-showcase, .landing-proof-strip, .landing-section, .landing-feature-card, .landing-start-steps > div, .landing-platform-card, .landing-location-card, .landing-plan-card, .landing-final-cta, .landing-footer"
       );
       revealItems.forEach((item, index) => {
         item.classList.add("landing-reveal");
