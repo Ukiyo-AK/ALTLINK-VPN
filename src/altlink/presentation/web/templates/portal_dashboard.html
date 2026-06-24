@@ -1056,7 +1056,21 @@
         const page = hashToPage[window.location.hash] || "home";
         return isMobilePortal() && page === "balance" ? "settings" : page;
       };
+      const showDesktopPages = () => {
+        pages.forEach((section) => {
+          const isMobileOnly = section.classList.contains("portal-mobile-settings-page");
+          section.classList.toggle("is-portal-page-hidden", isMobileOnly);
+          section.classList.toggle("is-active-page", section.dataset.portalPage === "home");
+        });
+        links.forEach((link) => {
+          link.classList.remove("is-active", "is-active-page");
+        });
+      };
       const activate = (page, options = {}) => {
+        if (!isMobilePortal()) {
+          showDesktopPages();
+          return;
+        }
         const active = known.has(page) ? page : "home";
         pages.forEach((section) => {
           const selected = section.dataset.portalPage === active;
@@ -1085,12 +1099,35 @@
 
       links.forEach((link) => {
         link.addEventListener("click", (event) => {
+          if (!isMobilePortal()) {
+            return;
+          }
           event.preventDefault();
           activate(link.dataset.portalPageLink, { updateHash: true, scrollTop: true });
         });
       });
-      window.addEventListener("hashchange", () => activate(pageFromHash(), { scrollTop: true }));
-      activate(pageFromHash());
+      window.addEventListener("hashchange", () => {
+        if (isMobilePortal()) {
+          activate(pageFromHash(), { scrollTop: true });
+        }
+      });
+      window.addEventListener("resize", () => {
+        if (isMobilePortal()) {
+          activate(pageFromHash());
+          return;
+        }
+        showDesktopPages();
+      });
+      if (isMobilePortal()) {
+        activate(pageFromHash());
+        return;
+      }
+      showDesktopPages();
+      if (window.location.hash) {
+        requestAnimationFrame(() => {
+          document.getElementById(window.location.hash.slice(1))?.scrollIntoView({ block: "start" });
+        });
+      }
     })();
 
     (() => {
