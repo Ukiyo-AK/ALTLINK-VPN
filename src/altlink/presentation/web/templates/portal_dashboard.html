@@ -308,46 +308,6 @@
           {% endif %}
         </section>
 
-        <section class="panel stack portal-plan-section">
-          <div class="split">
-            <h2>Выбор тарифа</h2>
-            <span class="badge">Цены без копеек</span>
-          </div>
-          <div class="grid-two">
-            {% for group in portal_plan_groups %}
-            <article class="panel plan-card{% if group.family == portal_current_plan_family %} selected{% endif %}{% if group.family == 'unlimited' %} is-featured{% endif %}">
-              <div class="split">
-                <h3>{{ group.title }}</h3>
-                <span class="badge{% if group.family == 'unlimited' %} highlight{% endif %}">
-                  {% if group.family == 'unlimited' %}Рекомендуем · {% endif %}до {{ group.device_limit or '—' }} устройств
-                </span>
-              </div>
-              <p class="muted">{{ group.description }}</p>
-              <div class="stack compact">
-                {% for period in group.periods %}
-                <form method="post" action="/portal/plan" class="plan-period tariff-option{% if period.plan_code == portal_current_plan_code %} selected is-selected{% endif %}">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <input type="hidden" name="plan_code" value="{{ period.plan_code }}">
-                  <div>
-                    <strong>{{ period.label }}</strong>
-                    <div class="muted">{{ period.caption }}{% if period.plan_code == portal_current_plan_code %} · выбрано{% endif %}</div>
-                  </div>
-                  <div class="plan-period-price">{{ period.price_label }} ₽</div>
-                  <button
-                    type="submit"
-                    class="button compact{% if period.plan_code == portal_current_plan_code %} ghost{% endif %}"
-                    {% if not portal_channel_ok or period.plan_code == portal_current_plan_code %}disabled{% endif %}
-                  >
-                    {% if period.plan_code == portal_current_plan_code %}Выбрано{% else %}Выбрать{% endif %}
-                  </button>
-                </form>
-                {% endfor %}
-              </div>
-            </article>
-            {% endfor %}
-          </div>
-        </section>
-
         <section class="panel stack subscription-card">
           <div class="split">
             <h2>Ваша персональная ссылка</h2>
