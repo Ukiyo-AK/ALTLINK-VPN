@@ -167,6 +167,60 @@ async def test_process_due_subscriptions_queues_trial_followup_for_expired_trial
 
 
 @pytest.mark.asyncio
+async def test_process_due_subscriptions_queues_setup_help_for_inactive_trial(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13006,
+            username="trial_no_connection",
+            first_name="Trial",
+            last_name="NoConnection",
+            language_code="ru",
+        )
+        subscription = await hub.billing.activate_trial(user.id)
+        started_at = utc_now() - timedelta(hours=4)
+        subscription.started_at = started_at
+        subscription.ends_at = started_at + timedelta(days=2)
+        subscription.next_billing_at = subscription.ends_at
+        subscription.billing_anchor_at = started_at
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    notification = next(
+        item
+        for item in pending
+        if item.user_id == user.id and item.dedupe_key == f"trial-setup-help:{subscription.id}:3h"
+    )
+    assert notification.type == NotificationType.BROADCAST
+    assert "@altlink_support" in notification.message
+    assert notification.payload["cta"] == "trial_setup_help"
+
+
+@pytest.mark.asyncio
+async def test_process_due_subscriptions_skips_setup_help_for_trial_with_traffic(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13007,
+            username="trial_with_traffic",
+            first_name="Trial",
+            last_name="Connected",
+            language_code="ru",
+        )
+        subscription = await hub.billing.activate_trial(user.id)
+        started_at = utc_now() - timedelta(hours=4)
+        subscription.started_at = started_at
+        subscription.ends_at = started_at + timedelta(days=2)
+        subscription.next_billing_at = subscription.ends_at
+        subscription.billing_anchor_at = started_at
+        subscription.traffic_used_bytes = 1024
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    assert not any(item.user_id == user.id and item.dedupe_key == f"trial-setup-help:{subscription.id}:3h" for item in pending)
+
+
+@pytest.mark.asyncio
 async def test_process_due_subscriptions_queues_monthly_promo_for_registered_users_without_paid_history(
     test_services,
 ):

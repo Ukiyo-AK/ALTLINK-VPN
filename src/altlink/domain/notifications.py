@@ -107,6 +107,17 @@ def trial_followup_message(promo_code: str = "ALT10", discount_percent: int = 10
     )
 
 
+def trial_setup_help_message(support_username: str = "@altlink_support") -> str:
+    support = support_username.strip() or "@altlink_support"
+    if not support.startswith("@"):
+        support = f"@{support}"
+    return (
+        "👋 Видим, что пробный период уже активирован, но подключение пока не появилось.\n\n"
+        "Если вы столкнулись с трудностями при настройке, вы всегда можете обратиться в нашу поддержку: "
+        f"{support}"
+    )
+
+
 def traffic_threshold_message(percent: int, used_gb: float, limit_gb: float) -> str:
     return (
         f"📊 Использовано {percent}% лимита трафика.\n\n"

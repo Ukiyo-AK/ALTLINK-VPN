@@ -68,6 +68,7 @@ from altlink.presentation.bots.admin_keyboards import (
     USERS_SYNC_NODE_ACCESS,
     USER_SUBSCRIPTIONS_PREFIX,
     USER_TRIAL_PREFIX,
+    BROADCAST_AUDIENCE_PREFIX,
     admin_menu,
     broadcast_media_actions,
     database_backup_actions,
@@ -119,6 +120,18 @@ ADMIN_MENU_TEXTS = {
     "База данных",
     "Техработы",
     "Помощь",
+}
+
+BROADCAST_AUDIENCE_LABELS = {
+    "all": "все пользователи",
+    "trial": "только пользователи тестового периода",
+    "blocked": "только заблокированные пользователи",
+    "start": "все тарифы Start",
+    "pro": "все тарифы Pro",
+    PlanCode.SINGLE_10GBIT.value: "тариф Start, ежемесячно",
+    PlanCode.SINGLE_10GBIT_WEEKLY.value: "тариф Start, еженедельно",
+    PlanCode.UNLIMITED.value: "тариф Pro, ежемесячно",
+    PlanCode.UNLIMITED_WEEKLY.value: "тариф Pro, еженедельно",
 }
 TOP_METRIC_LABELS = {
     "traffic": "общему трафику",
@@ -1504,6 +1517,15 @@ def broadcast_failure_reason(exc: Exception) -> str:
     return compact_text(exc, 72)
 
 
+def normalize_broadcast_audience(value: str | None) -> str:
+    normalized = (value or "all").strip()
+    return normalized if normalized in BROADCAST_AUDIENCE_LABELS else "all"
+
+
+def broadcast_audience_label(value: str | None) -> str:
+    return BROADCAST_AUDIENCE_LABELS[normalize_broadcast_audience(value)]
+
+
 async def load_broadcast_media_bytes(callback: CallbackQuery, file_id: str | None) -> bytes | None:
     if not file_id:
         return None
@@ -1536,11 +1558,18 @@ async def show_broadcast_preview(
         if use_default_logo
         else "нет"
     )
+    audience = normalize_broadcast_audience(data.get("broadcast_audience"))
     preview_text = "Предпросмотр рассылки\n\n"
     if text:
         preview_text += f"{text}\n\n"
-    preview_text += f"Вложение: {attachment_label}"
-    await render_admin(target, preview_text, reply_markup=broadcast_preview_actions().as_markup(), force_new=True)
+    preview_text += f"Вложение: {attachment_label}\n"
+    preview_text += f"Аудитория: {broadcast_audience_label(audience)}"
+    await render_admin(
+        target,
+        preview_text,
+        reply_markup=broadcast_preview_actions(audience).as_markup(),
+        force_new=True,
+    )
 
 
 @router.message(CommandStart())
@@ -2461,6 +2490,7 @@ async def broadcast_prompt(message: Message, state: FSMContext, container: AppCo
         broadcast_file_id=None,
         broadcast_attachment=None,
         broadcast_use_default=False,
+        broadcast_audience="all",
     )
     await render_admin(
         message,
@@ -2527,6 +2557,17 @@ async def broadcast_cancel(callback: CallbackQuery, state: FSMContext, container
     await render_admin(callback, "Создание рассылки отменено.")
 
 
+@router.callback_query(F.data.startswith(f"{BROADCAST_AUDIENCE_PREFIX}:"))
+async def broadcast_audience_select(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    audience = normalize_broadcast_audience((callback.data or "").rsplit(":", 1)[-1])
+    data = await state.get_data()
+    await state.update_data(broadcast_audience=audience)
+    await show_broadcast_preview(callback, state, use_default_logo=bool(data.get("broadcast_use_default")))
+    await callback.answer(f"Аудитория: {broadcast_audience_label(audience)}")
+
+
 @router.message(BroadcastStates.waiting_for_media)
 async def broadcast_media_submit(message: Message, state: FSMContext, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
@@ -2561,6 +2602,7 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
     attachment = data.get("broadcast_attachment")
     file_id = data.get("broadcast_file_id")
     use_default_logo = bool(data.get("broadcast_use_default"))
+    audience = normalize_broadcast_audience(data.get("broadcast_audience"))
     if attachment is None and file_id:
         attachment = {
             "kind": "photo",
@@ -2577,7 +2619,10 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
     failure_examples: list[str] = []
 
     async with container.hub() as hub:
-        users = await hub.accounts.list_user_targets()
+        users = await hub.accounts.list_user_targets(audience_filter=audience)
+        if not users:
+            await callback.answer("Для выбранного фильтра нет получателей.", show_alert=True)
+            return
         sent_count = 0
         failed_count = 0
         logo = broadcast_logo_path() if use_default_logo and not file_id else None
@@ -2610,6 +2655,9 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
             payload={
                 "sent": sent_count,
                 "failed": failed_count,
+                "audience_filter": audience,
+                "audience_label": broadcast_audience_label(audience),
+                "recipient_count": len(users),
                 "failure_reasons": dict(failure_counts),
                 "attachment_kind": attachment.get("kind") if attachment else ("photo" if logo is not None else None),
             },
@@ -2618,6 +2666,8 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
     lines = [
         "Рассылка завершена.",
         "",
+        f"Аудитория: {broadcast_audience_label(audience)}",
+        f"Получателей: {len(users)}",
         f"Отправлено: {sent_count}",
         f"Ошибок: {failed_count}",
     ]

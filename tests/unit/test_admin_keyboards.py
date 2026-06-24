@@ -3,10 +3,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from altlink.presentation.bots.admin_keyboards import (
+    BROADCAST_AUDIENCE_PREFIX,
     SERVER_DELETE_CONFIRM_PREFIX,
     SERVER_DELETE_PREFIX,
     SERVER_OPEN_PREFIX,
     USERS_SYNC_NODE_ACCESS,
+    broadcast_preview_actions,
     payment_browser_actions,
     payment_request_actions,
     server_actions,
@@ -42,6 +44,22 @@ def test_payment_request_actions_keep_manual_buttons_for_support_topups():
 
 def inline_buttons(markup) -> list[dict]:
     return [button.model_dump(exclude_none=True) for row in markup.inline_keyboard for button in row]
+
+
+def test_broadcast_preview_actions_exposes_audience_filters():
+    buttons = inline_buttons(broadcast_preview_actions("pro").as_markup())
+    callback_data = [button["callback_data"] for button in buttons if "callback_data" in button]
+    labels = [button["text"] for button in buttons]
+
+    assert f"{BROADCAST_AUDIENCE_PREFIX}:all" in callback_data
+    assert f"{BROADCAST_AUDIENCE_PREFIX}:trial" in callback_data
+    assert f"{BROADCAST_AUDIENCE_PREFIX}:blocked" in callback_data
+    assert f"{BROADCAST_AUDIENCE_PREFIX}:start" in callback_data
+    assert f"{BROADCAST_AUDIENCE_PREFIX}:pro" in callback_data
+    assert f"{BROADCAST_AUDIENCE_PREFIX}:single_10gbit" in callback_data
+    assert f"{BROADCAST_AUDIENCE_PREFIX}:unlimited_weekly" in callback_data
+    assert "✓ Все Pro" in labels
+    assert "Отправить выбранным" in labels
 
 
 def test_user_actions_styles_destructive_and_primary_buttons():

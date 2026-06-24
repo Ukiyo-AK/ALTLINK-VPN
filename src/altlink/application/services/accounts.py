@@ -859,8 +859,52 @@ class AccountService(BaseService):
         await self.session.flush()
         return True
 
-    async def list_user_targets(self) -> list[User]:
-        return list((await self.session.scalars(select(User).order_by(User.created_at.asc()))).all())
+    async def list_user_targets(self, audience_filter: str | None = None) -> list[User]:
+        normalized_filter = (audience_filter or "all").strip()
+        query = select(User).order_by(User.created_at.asc())
+        if normalized_filter == "all":
+            return list((await self.session.scalars(query)).all())
+
+        latest_subscription_rank = (
+            select(
+                Subscription.id.label("subscription_id"),
+                Subscription.user_id.label("user_id"),
+                func.row_number()
+                .over(partition_by=Subscription.user_id, order_by=Subscription.created_at.desc())
+                .label("row_number"),
+            )
+            .subquery()
+        )
+        latest_subscription = aliased(Subscription)
+        latest_plan = aliased(Plan)
+
+        query = (
+            query.outerjoin(
+                latest_subscription_rank,
+                and_(
+                    latest_subscription_rank.c.user_id == User.id,
+                    latest_subscription_rank.c.row_number == 1,
+                ),
+            )
+            .outerjoin(latest_subscription, latest_subscription.id == latest_subscription_rank.c.subscription_id)
+            .outerjoin(latest_plan, latest_plan.id == latest_subscription.plan_id)
+        )
+
+        if normalized_filter == "trial":
+            query = query.where(or_(User.status == UserStatus.TRIAL, latest_subscription.status == SubscriptionStatus.TRIAL))
+        elif normalized_filter == "blocked":
+            query = query.where(or_(User.status == UserStatus.BLOCKED, latest_subscription.status == SubscriptionStatus.BLOCKED))
+        elif normalized_filter == "start":
+            query = query.where(latest_plan.code.in_([PlanCode.SINGLE_10GBIT, PlanCode.SINGLE_10GBIT_WEEKLY]))
+        elif normalized_filter == "pro":
+            query = query.where(latest_plan.code.in_([PlanCode.UNLIMITED, PlanCode.UNLIMITED_WEEKLY]))
+        else:
+            try:
+                query = query.where(latest_plan.code == PlanCode(normalized_filter))
+            except ValueError:
+                query = select(User).order_by(User.created_at.asc())
+
+        return list((await self.session.scalars(query)).all())
 
     async def list_admin_telegram_ids(self) -> list[int]:
         ids = {int(item) for item in self.settings.admin_allowed_telegram_ids if int(item) > 0}

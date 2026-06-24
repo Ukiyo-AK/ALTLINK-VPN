@@ -214,4 +214,12 @@ class NotificationService(BaseService):
                     [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="client:promo_prompt")],
                 ]
             )
+        if cta == "trial_setup_help":
+            support_url = payload.get("support_url")
+            if isinstance(support_url, str) and support_url:
+                return InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="💬 Написать в поддержку", url=support_url)],
+                    ]
+                )
         return None

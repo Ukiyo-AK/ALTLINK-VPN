@@ -509,7 +509,7 @@ async def test_broadcast_confirm_uses_client_bot_and_reports_failures(monkeypatc
     async def fake_is_admin(telegram_id: int, container) -> bool:
         return True
 
-    async def fake_list_user_targets():
+    async def fake_list_user_targets(audience_filter: str | None = None):
         return [
             SimpleNamespace(id="u1", telegram_id=101, username="first"),
             SimpleNamespace(id="u2", telegram_id=202, username="second"),
@@ -581,13 +581,80 @@ async def test_broadcast_confirm_uses_client_bot_and_reports_failures(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_broadcast_confirm_uses_selected_audience_filter(monkeypatch):
+    selected_filters: list[str | None] = []
+    sent_messages: list[tuple[str, int, str]] = []
+    logged_payloads: list[dict] = []
+    rendered: list[str] = []
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_list_user_targets(audience_filter: str | None = None):
+        selected_filters.append(audience_filter)
+        return [SimpleNamespace(id="u1", telegram_id=101, username="pro_user")]
+
+    async def fake_log_event(**payload):
+        logged_payloads.append(payload)
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    class DummyClientBot:
+        def __init__(self, token: str):
+            self.token = token
+            self.session = SimpleNamespace(close=self.close)
+
+        async def send_message(self, chat_id: int, text: str):
+            sent_messages.append((self.token, chat_id, text))
+
+        async def close(self):
+            return None
+
+    class DummyCallback:
+        from_user = SimpleNamespace(id=42)
+        bot = SimpleNamespace()
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    class DummyState:
+        async def get_data(self):
+            return {
+                "broadcast_text": "pro update",
+                "broadcast_file_id": None,
+                "broadcast_use_default": False,
+                "broadcast_audience": "pro",
+            }
+
+        async def clear(self):
+            return None
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(accounts=SimpleNamespace(list_user_targets=fake_list_user_targets, log_event=fake_log_event))
+
+    container = SimpleNamespace(settings=SimpleNamespace(client_bot_token="client-token"), hub=fake_hub)
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+    monkeypatch.setattr(admin_handlers, "Bot", DummyClientBot)
+
+    await admin_handlers.broadcast_confirm(DummyCallback(), DummyState(), container)
+
+    assert selected_filters == ["pro"]
+    assert sent_messages == [("client-token", 101, "pro update")]
+    assert "Аудитория: все тарифы Pro" in rendered[0]
+    assert logged_payloads[0]["payload"]["audience_filter"] == "pro"
+
+
+@pytest.mark.asyncio
 async def test_broadcast_confirm_downloads_admin_photo_for_client_bot(monkeypatch):
     sent_photos: list[tuple[str, int, str, str]] = []
 
     async def fake_is_admin(telegram_id: int, container) -> bool:
         return True
 
-    async def fake_list_user_targets():
+    async def fake_list_user_targets(audience_filter: str | None = None):
         return [SimpleNamespace(id="u1", telegram_id=303, username="photo_user")]
 
     async def fake_log_event(**payload):
@@ -661,7 +728,7 @@ async def test_broadcast_confirm_sends_sticker_and_text(monkeypatch):
     async def fake_is_admin(telegram_id: int, container) -> bool:
         return True
 
-    async def fake_list_user_targets():
+    async def fake_list_user_targets(audience_filter: str | None = None):
         return [SimpleNamespace(id="u1", telegram_id=707, username="sticker_user")]
 
     async def fake_log_event(**payload):

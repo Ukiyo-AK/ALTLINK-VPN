@@ -6,7 +6,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import joinedload
 
 from altlink.application.services.accounts import AccountService
@@ -32,10 +32,19 @@ from altlink.domain.notifications import (
     trial_followup_message,
     trial_expiring_message,
     trial_ended_message,
+    trial_setup_help_message,
     upcoming_renewal_message,
 )
 from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code
-from altlink.infrastructure.db.models import Plan, Server, Subscription, TrafficSnapshot, TrialPeriod, User
+from altlink.infrastructure.db.models import (
+    OnlineSessionCache,
+    Plan,
+    Server,
+    Subscription,
+    TrafficSnapshot,
+    TrialPeriod,
+    User,
+)
 from altlink.utils.time import ensure_utc, utc_now
 
 LOW_BALANCE_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] = (
@@ -49,6 +58,7 @@ TRIAL_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] = (
     ("3h", timedelta(hours=3), timedelta(hours=1), "3 часа"),
     ("1h", timedelta(hours=1), timedelta(0), "1 час"),
 )
+TRIAL_SETUP_HELP_DELAY = timedelta(hours=3)
 
 logger = logging.getLogger(__name__)
 SyncProgressCallback = Callable[[dict[str, object]], Awaitable[None]]
@@ -991,6 +1001,9 @@ class BillingService(BaseService):
             return False
 
         trial_ends_at = ensure_utc(subscription.ends_at)
+        if trial_ends_at > now:
+            await self._queue_trial_setup_help_if_needed(subscription, user, now)
+
         trial_reminder_window = self._trial_reminder_window(trial_ends_at - now)
         if trial_reminder_window is not None:
             reminder_key, reminder_label = trial_reminder_window
@@ -1016,6 +1029,60 @@ class BillingService(BaseService):
             dedupe_key=f"trial-ended:{subscription.id}",
         )
         return True
+
+    async def _queue_trial_setup_help_if_needed(self, subscription: Subscription, user: User, now: datetime) -> None:
+        started_at = ensure_utc(subscription.started_at)
+        if now < started_at + TRIAL_SETUP_HELP_DELAY:
+            return
+        if await self._trial_has_connection_activity(subscription, started_at):
+            return
+
+        support_username = self.settings.support_username or "@altlink_support"
+        support_handle = support_username if support_username.startswith("@") else f"@{support_username}"
+        support_url = f"https://t.me/{support_handle.lstrip('@')}"
+        await self.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.BROADCAST,
+            message=trial_setup_help_message(support_handle),
+            payload={
+                "kind": "trial_setup_help",
+                "cta": "trial_setup_help",
+                "support_username": support_handle,
+                "support_url": support_url,
+            },
+            dedupe_key=f"trial-setup-help:{subscription.id}:3h",
+        )
+
+    async def _trial_has_connection_activity(
+        self,
+        subscription: Subscription,
+        started_at: datetime,
+    ) -> bool:
+        if int(subscription.traffic_used_bytes or 0) > 0 or int(subscription.whitelist_traffic_used_bytes or 0) > 0:
+            return True
+
+        online_activity_id = await self.session.scalar(
+            select(OnlineSessionCache.id)
+            .where(
+                OnlineSessionCache.user_id == subscription.user_id,
+                OnlineSessionCache.last_activity_at.is_not(None),
+                OnlineSessionCache.last_activity_at >= started_at,
+            )
+            .limit(1)
+        )
+        if online_activity_id is not None:
+            return True
+
+        traffic_snapshot_id = await self.session.scalar(
+            select(TrafficSnapshot.id)
+            .where(
+                TrafficSnapshot.user_id == subscription.user_id,
+                TrafficSnapshot.created_at >= started_at,
+                or_(TrafficSnapshot.used_bytes > 0, TrafficSnapshot.lifetime_used_bytes > 0),
+            )
+            .limit(1)
+        )
+        return traffic_snapshot_id is not None
 
     async def _disable_remote_user_best_effort(self, user: User, *, event_type: str) -> None:
         if self.remnawave is None or not user.remnawave_user_uuid:

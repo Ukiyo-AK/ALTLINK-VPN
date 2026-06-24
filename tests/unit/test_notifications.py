@@ -14,6 +14,7 @@ from altlink.domain.notifications import (
     low_balance_message,
     trial_followup_message,
     trial_expiring_message,
+    trial_setup_help_message,
 )
 
 
@@ -64,6 +65,14 @@ def test_trial_followup_message_contains_copyable_code_and_emoji():
     assert "💡" in message
     assert "<code>ALT10</code>" in message
     assert "10%" in message
+
+
+def test_trial_setup_help_message_points_to_support():
+    message = trial_setup_help_message("@altlink_support")
+    assert "👋" in message
+    assert "пробный период" in message
+    assert "@altlink_support" in message
+    assert "поддерж" in message.casefold()
 
 
 @pytest.mark.asyncio

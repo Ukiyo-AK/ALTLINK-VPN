@@ -47,6 +47,7 @@ SERVER_DELETE_PREFIX = "adm:sd"
 SERVER_DELETE_CONFIRM_PREFIX = "adm:sc"
 SUPPORT_REPLY_PREFIX = "adm:sr"
 SUPPORT_RESOLVE_PREFIX = "adm:ss"
+BROADCAST_AUDIENCE_PREFIX = "adm:ba"
 
 
 def admin_menu() -> ReplyKeyboardMarkup:
@@ -395,9 +396,27 @@ def broadcast_media_actions() -> InlineKeyboardBuilder:
     return builder
 
 
-def broadcast_preview_actions() -> InlineKeyboardBuilder:
+def broadcast_preview_actions(selected_audience: str = "all") -> InlineKeyboardBuilder:
+    def marker(value: str, label: str) -> str:
+        return f"✓ {label}" if selected_audience == value else label
+
     builder = InlineKeyboardBuilder()
-    builder.button(text="Отправить всем", callback_data="admin:broadcast:confirm", style="success")
+    builder.button(text=marker("all", "Все пользователи"), callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:all")
+    builder.button(text=marker("trial", "Только тест"), callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:trial")
+    builder.button(text=marker("blocked", "Только заблокированные"), callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:blocked")
+    builder.button(text=marker("start", "Все Start"), callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:start")
+    builder.button(text=marker("pro", "Все Pro"), callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:pro")
+    builder.button(text=marker("single_10gbit", "Start месяц"), callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:single_10gbit")
+    builder.button(
+        text=marker("single_10gbit_weekly", "Start неделя"),
+        callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:single_10gbit_weekly",
+    )
+    builder.button(text=marker("unlimited", "Pro месяц"), callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:unlimited")
+    builder.button(
+        text=marker("unlimited_weekly", "Pro неделя"),
+        callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:unlimited_weekly",
+    )
+    builder.button(text="Отправить выбранным", callback_data="admin:broadcast:confirm", style="success")
     builder.button(text="Отмена", callback_data="admin:broadcast:cancel", style="danger")
-    builder.adjust(1, 1)
+    builder.adjust(1, 2, 2, 2, 2, 1, 1)
     return builder
