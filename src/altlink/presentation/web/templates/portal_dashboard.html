@@ -258,7 +258,7 @@
           <p class="muted">Управляйте тарифом, персональной ссылкой, VLESS-ключами и устройствами.</p>
         </div>
 
-        <section class="grid-two">
+        <section class="grid-two portal-current-plan-grid{% if not portal_trial_available %} is-single{% endif %}">
           <article class="panel stack">
             <div class="split">
               <h2>Текущий тариф</h2>
@@ -293,21 +293,19 @@
             </button>
           </article>
 
+          {% if portal_trial_available %}
           <article class="panel stack portal-trial-panel">
             <div class="split">
               <h2>Тест</h2>
               <span class="badge">2 дня</span>
             </div>
-            {% if portal_trial_available %}
             <p class="muted">Можно бесплатно попробовать сервис перед покупкой тарифа.</p>
             <form method="post" action="/portal/trial">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <button type="submit" class="button full" {% if not portal_channel_ok %}disabled{% endif %}>Запустить тест на 2 дня</button>
             </form>
-            {% else %}
-            <p class="muted">Тест доступен только для нового аккаунта без транзакций.</p>
-            {% endif %}
           </article>
+          {% endif %}
         </section>
 
         <section class="panel stack portal-plan-section">

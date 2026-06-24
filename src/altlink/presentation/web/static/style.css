@@ -318,11 +318,16 @@
 
 .portal-mobile-home,
 .portal-page.portal-mobile-settings-page,
-.portal-support-fab {
+.portal-support-fab,
+.portal-mobile-plan-trigger {
   display: none;
 }
 
 @media (min-width: 981px) {
+  .portal-current-plan-grid.is-single {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .portal-app-page .portal-page.is-portal-page-hidden:not(.portal-mobile-settings-page) {
     display: grid !important;
   }
@@ -3969,6 +3974,7 @@ html[data-theme="dark"] .portal-section-nav a {
   }
 
   .portal-mobile-plan-trigger {
+    display: inline-flex;
     margin-top: 0.85rem;
   }
 
