@@ -183,34 +183,15 @@
             <div class="split">
               <div>
                 <span class="badge">Аккаунт</span>
-                <h2>{{ portal_user.first_name or portal_user.username or 'Пользователь' }}</h2>
+                <h2>Статус и быстрые действия</h2>
               </div>
               <span class="badge highlight">{{ portal_user.status|user_status }}</span>
             </div>
-            <div class="portal-metrics-grid">
-              <div class="portal-metric">
-                <span>Баланс</span>
-                <strong>{{ portal_user.balance_rub|rub }} ₽</strong>
-              </div>
-              <div class="portal-metric">
-                <span>Тариф</span>
-                <strong>{{ portal_subscription.plan.name if portal_subscription and portal_subscription.plan else 'Не выбран' }}</strong>
-              </div>
-              <div class="portal-metric">
-                <span>Следующее списание</span>
-                <strong>{{ portal_subscription.next_billing_at.strftime('%d.%m.%Y') if portal_subscription and portal_subscription.next_billing_at else '—' }}</strong>
-              </div>
-              <div class="portal-metric">
-                <span>Устройства</span>
-                <strong>до {{ portal_subscription.plan.device_limit if portal_subscription and portal_subscription.plan else '—' }}</strong>
-              </div>
-            </div>
+            <p class="muted">Быстрые переходы к подписке, балансу и обновлению данных кабинета.</p>
             <div class="toolbar portal-card-actions">
               <a class="button compact" href="#portal-subscription" data-portal-page-link="subscription">Перейти к подписке</a>
+              <a class="button ghost compact" href="#portal-balance" data-portal-page-link="balance">Перейти к балансу</a>
               <a class="button ghost compact" href="{{ portal_url }}">Обновить данные</a>
-              {% if support_url %}
-              <a class="button ghost compact" href="{{ support_url }}" target="_blank" rel="noreferrer">Открыть поддержку</a>
-              {% endif %}
             </div>
           </article>
         </section>
@@ -502,7 +483,7 @@
       <section class="portal-page is-portal-page-hidden" id="portal-balance" data-portal-page="balance">
         <div class="portal-page-head">
           <span class="badge highlight">Баланс</span>
-          <h1>{{ portal_user.balance_rub|rub }} ₽</h1>
+          <h1>Баланс и платежи</h1>
           <p class="muted">Пополнение, промокоды, реферальная программа и история платежей.</p>
         </div>
 
