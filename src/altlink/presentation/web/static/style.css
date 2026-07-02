@@ -6421,9 +6421,26 @@ body.landing-v2 .landing-reveal.is-visible {
     min-width: 0;
   }
 
+  body.landing-v2 .landing-proof-strip,
+  body.landing-v2 .landing-feature-grid {
+    --landing-mobile-card-width: min(82vw, 22rem);
+  }
+
+  body.landing-v2 .landing-start-steps {
+    --landing-mobile-card-width: min(84vw, 24rem);
+  }
+
+  body.landing-v2 .landing-app-grid {
+    --landing-mobile-card-width: min(72vw, 18rem);
+  }
+
+  body.landing-v2 .landing-plan-grid {
+    --landing-mobile-card-width: min(86vw, 25rem);
+  }
+
   body.landing-v2 .landing-mobile-scroll-shell > [data-mobile-scroll-track] {
-    padding-inline: 3.1rem;
-    scroll-padding-inline: 3.1rem;
+    padding-inline: calc((100vw - var(--landing-mobile-card-width)) / 2);
+    scroll-padding-inline: 0;
   }
 
   body.landing-v2 .landing-mobile-scroll-shell.is-scrollable .landing-mobile-scroll-button {
@@ -6472,15 +6489,15 @@ body.landing-v2 .landing-reveal.is-visible {
   }
 
   body.landing-v2 .landing-proof-strip article {
-    flex: 0 0 min(82vw, 22rem);
+    flex: 0 0 var(--landing-mobile-card-width);
     min-height: 8.6rem;
-    scroll-snap-align: start;
+    scroll-snap-align: center;
   }
 
   body.landing-v2 .landing-feature-card {
-    flex: 0 0 min(82vw, 22rem);
+    flex: 0 0 var(--landing-mobile-card-width);
     min-height: 12rem;
-    scroll-snap-align: start;
+    scroll-snap-align: center;
   }
 
   body.landing-v2 .landing-start {
@@ -6488,19 +6505,19 @@ body.landing-v2 .landing-reveal.is-visible {
   }
 
   body.landing-v2 .landing-start-steps > div {
-    flex: 0 0 min(84vw, 24rem);
-    scroll-snap-align: start;
+    flex: 0 0 var(--landing-mobile-card-width);
+    scroll-snap-align: center;
   }
 
   body.landing-v2 .landing-platform-card {
-    flex: 0 0 min(72vw, 18rem);
+    flex: 0 0 var(--landing-mobile-card-width);
     min-height: 5rem;
-    scroll-snap-align: start;
+    scroll-snap-align: center;
   }
 
   body.landing-v2 .landing-plan-card {
-    flex: 0 0 min(86vw, 25rem);
-    scroll-snap-align: start;
+    flex: 0 0 var(--landing-mobile-card-width);
+    scroll-snap-align: center;
   }
 
   body.landing-v2 .landing-plan-card.is-featured {
@@ -6524,6 +6541,10 @@ body.landing-v2 .landing-reveal.is-visible {
     display: inline-grid;
     width: 2.75rem;
     height: 2.75rem;
+  }
+
+  body.landing-v2 .landing-location-card {
+    scroll-snap-align: center;
   }
 
   body.landing-v2 .landing-location-carousel-shell .landing-carousel-button.is-prev {

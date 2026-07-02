@@ -584,7 +584,10 @@
           carouselSegmentWidth = list.scrollWidth / 3;
           carouselReady = carouselSegmentWidth > 0;
           if (carouselReady) {
-            list.scrollLeft = carouselSegmentWidth;
+            const isMobile = window.matchMedia("(max-width: 780px)").matches;
+            list.scrollLeft = isMobile
+              ? originals[0].offsetLeft - Math.max(0, (list.clientWidth - originals[0].clientWidth) / 2)
+              : carouselSegmentWidth;
           }
           updateCarouselState();
         });
