@@ -70,6 +70,10 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     topup_requests: Mapped[list["TopupRequest"]] = relationship(back_populates="user")
     trial_period: Mapped["TrialPeriod | None"] = relationship(back_populates="user", uselist=False)
     promo_redemptions: Mapped[list["PromoCodeRedemption"]] = relationship(back_populates="user")
+    assigned_promo_codes: Mapped[list["PromoCode"]] = relationship(
+        back_populates="assigned_user",
+        foreign_keys="PromoCode.assigned_user_id",
+    )
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user")
     support_requests: Mapped[list["SupportRequest"]] = relationship(back_populates="user")
     support_messages: Mapped[list["SupportMessage"]] = relationship(back_populates="user")

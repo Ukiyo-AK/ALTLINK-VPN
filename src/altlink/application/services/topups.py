@@ -256,7 +256,10 @@ class TopupService(BaseService):
         await self.notifications.queue(
             user_id=item.user_id,
             notification_type=NotificationType.TOPUP_REJECTED,
-            message=topup_rejected_message(Decimal(item.amount_rub), comment),
+            message=topup_rejected_message(
+                Decimal(item.amount_rub),
+                None if self._request_provider(item) == "yookassa" else comment,
+            ),
             dedupe_key=f"topup-rejected:{item.id}",
         )
         await self.log_event(

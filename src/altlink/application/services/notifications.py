@@ -207,11 +207,30 @@ class NotificationService(BaseService):
                     [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
                 ]
             )
-        if cta in {"inactive_promo", "trial_followup"}:
+        if cta == "renewal_disabled_expiring":
             return InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="🧾 Выбрать тариф", callback_data="client:plan_menu")],
-                    [InlineKeyboardButton(text="🎟 Ввести промокод", callback_data="client:promo_prompt")],
+                    [
+                        InlineKeyboardButton(
+                            text="🔄 Включить автопродление",
+                            callback_data="client:subscription_resume",
+                        )
+                    ],
+                    [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
+                ]
+            )
+        if cta in {"inactive_promo", "trial_followup"}:
+            promo_code = payload.get("promo_code")
+            if not isinstance(promo_code, str) or not promo_code or len(promo_code) > 40:
+                return None
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🎟 Использовать промокод",
+                            callback_data=f"client:promo_apply:{promo_code}",
+                        )
+                    ],
                 ]
             )
         if cta == "trial_setup_help":

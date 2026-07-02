@@ -139,12 +139,21 @@ class PromoCode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     new_users_only: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    assigned_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     created_by_admin_id: Mapped[str | None] = mapped_column(
         ForeignKey("admin_users.id", ondelete="SET NULL"),
         nullable=True,
     )
 
     created_by_admin: Mapped["AdminUser | None"] = relationship(back_populates="promo_codes")
+    assigned_user: Mapped["User | None"] = relationship(
+        back_populates="assigned_promo_codes",
+        foreign_keys=[assigned_user_id],
+    )
     redemptions: Mapped[list["PromoCodeRedemption"]] = relationship(back_populates="promo_code")
 
 

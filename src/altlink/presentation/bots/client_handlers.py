@@ -18,6 +18,7 @@ from altlink.application.services.base import ConflictError, NotFoundError, Serv
 from altlink.application.services.registry import AppContainer
 from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.domain.billing import bytes_to_gb_cost, quantize_money
+from altlink.domain.enums import PromoRewardKind
 from altlink.domain.plans import (
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
@@ -2579,10 +2580,11 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
                 await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
             return
         response_parse_mode = None
-        if "следующей покупке тарифа" in result_text and promo is not None:
+        if promo is not None and promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT:
             result_text = (
                 f"Промокод <code>{promo.code}</code> активирован. "
-                f"Скидка {Decimal(promo.reward_value):.2f}% применится при следующей покупке тарифа.\n\n"
+                f"Скидка {Decimal(promo.reward_value):.2f}% применится при следующей оплате тарифа, "
+                "включая автоматическое продление.\n\n"
                 f"🎟 В разделе «Подписка» цены уже будут показаны со скидкой по коду <code>{promo.code}</code>."
             )
             response_parse_mode = "HTML"
@@ -2612,6 +2614,32 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
         result_text,
         reply_markup=balance_actions().as_markup(),
         parse_mode=response_parse_mode,
+    )
+
+
+@router.callback_query(F.data.startswith("client:promo_apply:"))
+async def promo_apply_and_open_plans(callback: CallbackQuery, container: AppContainer):
+    promo_code = (callback.data or "").split(":", 2)[-1]
+    result_text: str
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        try:
+            promo, _, _ = await hub.promos.redeem_code(user.id, promo_code)
+            result_text = (
+                f"✅ Промокод <code>{html.escape(promo.code)}</code> активирован.\n"
+                f"Скидка {format_percent_compact(Decimal(promo.reward_value))} будет использована один раз "
+                "при ближайшей оплате тарифа, включая автоматическое продление."
+            )
+        except ConflictError as exc:
+            result_text = f"⚠️ {html.escape(str(exc))}"
+
+    await answer_or_edit(
+        callback,
+        f"{result_text}\n\n{plan_menu_text()}",
+        reply_markup=plan_actions().as_markup(),
+        parse_mode="HTML",
     )
 
 

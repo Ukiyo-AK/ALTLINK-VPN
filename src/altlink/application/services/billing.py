@@ -18,6 +18,7 @@ from altlink.domain.billing import bytes_to_gb_cost, compute_period_end, quantiz
 from altlink.domain.enums import (
     AccessStatus,
     BalanceTransactionType,
+    NotificationStatus,
     NotificationType,
     PlanCode,
     ServerType,
@@ -29,6 +30,7 @@ from altlink.domain.notifications import (
     blocked_message,
     inactive_subscription_promo_message,
     low_balance_message,
+    renewal_disabled_expiring_message,
     trial_followup_message,
     trial_expiring_message,
     trial_ended_message,
@@ -503,7 +505,15 @@ class BillingService(BaseService):
             await self._refresh_whitelist_usage(user, subscription)
             await self._apply_instant_whitelist_charges(user, subscription)
 
-        renewal_charge = self._compute_renewal_charge(subscription, plan)
+        discount_rub, discount_promo, discount_redemption = await self.promos.calculate_discount(
+            user.id,
+            Decimal(plan.price_rub),
+        )
+        renewal_charge = self._compute_renewal_charge(
+            subscription,
+            plan,
+            plan_discount_rub=discount_rub,
+        )
         due_at = ensure_utc(subscription.next_billing_at)
         if due_at <= now:
             if not subscription.auto_renew:
@@ -515,27 +525,80 @@ class BillingService(BaseService):
                 return True
 
             if renewal_charge > 0:
+                description = self._charge_description(plan)
+                if discount_promo is not None and discount_rub > 0:
+                    description += f" с промокодом {discount_promo.code}"
                 await self.accounts.adjust_balance(
                     user_id=user.id,
                     amount_rub=-renewal_charge,
                     transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
-                    description=self._charge_description(plan),
+                    description=description,
                 )
-            await self._start_next_billing_cycle(subscription, plan)
+            await self._start_next_billing_cycle(subscription, plan, renewed_at=now)
             user.status = UserStatus.ACTIVE
-            await self._sync_user_remote_access(user, subscription, plan, enable=True, reset_traffic=True)
+            remote_user = await self._sync_user_remote_access(
+                user,
+                subscription,
+                plan,
+                enable=True,
+                reset_traffic=True,
+            )
+            self._ensure_remote_expiration_synced(remote_user, subscription.ends_at)
+            if discount_redemption is not None and discount_rub > 0:
+                await self.promos.consume_discount(
+                    discount_redemption,
+                    subscription_id=subscription.id,
+                    applied_amount=discount_rub,
+                )
+                discount_note = f"Автопродление с промокодом {discount_promo.code}: скидка {discount_rub:.2f} ₽."
+                subscription.notes = " ".join(filter(None, [subscription.notes, discount_note]))
+            await self.log_event(
+                level=SystemEventLevel.INFO,
+                event_type="subscription_auto_renewed",
+                message="Подписка автоматически продлена и синхронизирована с Remnawave.",
+                payload={
+                    "user_id": user.id,
+                    "subscription_id": subscription.id,
+                    "plan_code": plan.code.value,
+                    "charged_rub": str(renewal_charge),
+                    "discount_rub": str(discount_rub),
+                    "promo_code": discount_promo.code if discount_promo is not None else None,
+                    "ends_at": subscription.ends_at.isoformat(),
+                },
+            )
             return True
 
-        if due_at - now <= timedelta(days=1):
+        balance_rub = Decimal(user.balance_rub)
+        if not subscription.auto_renew and due_at - now <= timedelta(days=1):
+            await self.notifications.queue(
+                user_id=user.id,
+                notification_type=NotificationType.BROADCAST,
+                message=renewal_disabled_expiring_message(
+                    balance_rub,
+                    renewal_charge,
+                    due_at,
+                ),
+                payload={
+                    "kind": "renewal_disabled_expiring",
+                    "cta": "renewal_disabled_expiring",
+                },
+                dedupe_key=f"renewal-disabled-expiring:{subscription.id}:{due_at.isoformat()}",
+            )
+        needs_topup_for_renewal = subscription.auto_renew and balance_rub < renewal_charge
+        if needs_topup_for_renewal and due_at - now <= timedelta(days=1):
             await self.notifications.queue(
                 user_id=user.id,
                 notification_type=NotificationType.UPCOMING_RENEWAL,
-                message=upcoming_renewal_message(renewal_charge, due_at),
+                message=upcoming_renewal_message(balance_rub, renewal_charge, due_at),
                 dedupe_key=f"renewal:{subscription.id}:{now.date().isoformat()}",
             )
         threshold = Decimal(self.settings.low_balance_threshold_rub)
         reminder_window = self._low_balance_reminder_window(due_at - now)
-        if Decimal(user.balance_rub) <= max(threshold, renewal_charge) and reminder_window is not None:
+        if (
+            needs_topup_for_renewal
+            and balance_rub <= max(threshold, renewal_charge)
+            and reminder_window is not None
+        ):
             reminder_key, reminder_label = reminder_window
             await self.notifications.queue(
                 user_id=user.id,
@@ -676,8 +739,15 @@ class BillingService(BaseService):
             dedupe_key=f"blocked:{subscription.id}",
         )
 
-    async def _start_next_billing_cycle(self, subscription: Subscription, plan: Plan) -> None:
-        subscription.started_at = ensure_utc(subscription.ends_at)
+    async def _start_next_billing_cycle(
+        self,
+        subscription: Subscription,
+        plan: Plan,
+        *,
+        renewed_at: datetime | None = None,
+    ) -> None:
+        current_time = ensure_utc(renewed_at or utc_now())
+        subscription.started_at = max(ensure_utc(subscription.ends_at), current_time)
         subscription.ends_at = compute_period_end(subscription.started_at, plan.period_days)
         subscription.next_billing_at = subscription.ends_at
         subscription.billing_anchor_at = subscription.started_at
@@ -689,8 +759,6 @@ class BillingService(BaseService):
         subscription.whitelist_traffic_used_bytes = 0
         subscription.whitelist_traffic_billed_bytes = 0
         subscription.last_traffic_reset_at = utc_now()
-        if self.remnawave and subscription.user and subscription.user.remnawave_user_uuid:
-            await self.remnawave.reset_user_traffic(subscription.user.remnawave_user_uuid)
 
     async def _refresh_whitelist_usage(
         self,
@@ -813,11 +881,31 @@ class BillingService(BaseService):
         except ValueError:
             return None
 
-    def _compute_renewal_charge(self, subscription: Subscription, plan: Plan) -> Decimal:
+    def _compute_renewal_charge(
+        self,
+        subscription: Subscription,
+        plan: Plan,
+        *,
+        plan_discount_rub: Decimal = Decimal("0.00"),
+    ) -> Decimal:
         whitelist_charge = Decimal("0.00")
         if is_metered_plan_code(plan.code):
             whitelist_charge = self._compute_unbilled_whitelist_charge(subscription)
-        return quantize_money(Decimal(plan.price_rub) + whitelist_charge)
+        discounted_plan_price = max(
+            quantize_money(Decimal(plan.price_rub) - Decimal(plan_discount_rub)),
+            Decimal("0.00"),
+        )
+        return quantize_money(discounted_plan_price + whitelist_charge)
+
+    @staticmethod
+    def _ensure_remote_expiration_synced(remote_user, expected_ends_at: datetime) -> None:
+        if remote_user is None:
+            return
+        remote_expire_at = getattr(remote_user, "expireAt", None)
+        if remote_expire_at is None:
+            raise ConflictError("Remnawave не подтвердила новый срок подписки.")
+        if ensure_utc(remote_expire_at) + timedelta(seconds=1) < ensure_utc(expected_ends_at):
+            raise ConflictError("Remnawave вернула старый срок подписки после автопродления.")
 
     async def _apply_instant_whitelist_charges(self, user: User, subscription: Subscription) -> None:
         if subscription.plan is None or not is_metered_plan_code(subscription.plan.code):
@@ -917,39 +1005,74 @@ class BillingService(BaseService):
         return None
 
     async def _queue_inactive_user_promos(self, now: datetime) -> None:
-        registered_before = now - timedelta(days=2)
-        paid_subscription_exists = (
+        registered_before = now - timedelta(days=3)
+        active_paid_subscription_exists = (
             select(Subscription.id)
             .join(Plan, Subscription.plan_id == Plan.id)
-            .where(Subscription.user_id == User.id, Plan.is_trial.is_(False))
+            .where(
+                Subscription.user_id == User.id,
+                Plan.is_trial.is_(False),
+                Subscription.status.in_(
+                    [
+                        SubscriptionStatus.ACTIVE,
+                        SubscriptionStatus.GRACE,
+                    ]
+                ),
+            )
+            .exists()
+        )
+        paid_subscription_history_exists = (
+            select(Subscription.id)
+            .join(Plan, Subscription.plan_id == Plan.id)
+            .where(
+                Subscription.user_id == User.id,
+                Plan.is_trial.is_(False),
+            )
             .exists()
         )
         users = list(
             (
-                await self.session.scalars(
-                    select(User).where(
+                await self.session.execute(
+                    select(
+                        User,
+                        paid_subscription_history_exists.label("has_paid_history"),
+                    ).where(
                         User.registration_completed_at.is_not(None),
                         User.registration_completed_at < registered_before,
-                        ~paid_subscription_exists,
+                        ~active_paid_subscription_exists,
                     )
                 )
             ).all()
         )
         month_key = now.strftime("%Y-%m")
-        for user in users:
-            await self.notifications.queue(
+        for user, has_paid_history in users:
+            campaign_kind = "lapsed" if has_paid_history else "new"
+            promo = await self.promos.get_or_create_personal_discount_code(
+                user.id,
+                campaign_key=f"inactive:{campaign_kind}:{month_key}",
+            )
+            message = inactive_subscription_promo_message(promo.code, 10)
+            payload = {
+                "promo_code": promo.code,
+                "discount_percent": 10,
+                "campaign": "inactive_monthly",
+                "cta": "inactive_promo",
+                "parse_mode": "HTML",
+            }
+            notification = await self.notifications.queue(
                 user_id=user.id,
                 notification_type=NotificationType.PROMO_CODE,
-                message=inactive_subscription_promo_message("ALT10", 10),
-                payload={
-                    "promo_code": "ALT10",
-                    "discount_percent": 10,
-                    "campaign": "inactive_monthly",
-                    "cta": "inactive_promo",
-                    "parse_mode": "HTML",
-                },
-                dedupe_key=f"inactive-promo:{user.id}:{month_key}",
+                message=message,
+                payload=payload,
+                dedupe_key=(
+                    f"inactive-promo-lapsed:{user.id}:{month_key}"
+                    if has_paid_history
+                    else f"inactive-promo:{user.id}:{month_key}"
+                ),
             )
+            if notification.status == NotificationStatus.PENDING:
+                notification.message = message
+                notification.payload = payload
 
     async def _queue_post_trial_followups(self, now: datetime) -> None:
         followup_ready_at = now - timedelta(hours=12)
@@ -981,19 +1104,28 @@ class BillingService(BaseService):
                 continue
             if await self.accounts.get_current_subscription(user.id) is not None:
                 continue
-            await self.notifications.queue(
+            promo = await self.promos.get_or_create_personal_discount_code(
+                user.id,
+                campaign_key=f"trial-followup:{subscription.id}:12h",
+            )
+            message = trial_followup_message(promo.code, 10)
+            payload = {
+                "promo_code": promo.code,
+                "discount_percent": 10,
+                "kind": "trial_followup",
+                "cta": "trial_followup",
+                "parse_mode": "HTML",
+            }
+            notification = await self.notifications.queue(
                 user_id=user.id,
                 notification_type=NotificationType.BROADCAST,
-                message=trial_followup_message("ALT10", 10),
-                payload={
-                    "promo_code": "ALT10",
-                    "discount_percent": 10,
-                    "kind": "trial_followup",
-                    "cta": "trial_followup",
-                    "parse_mode": "HTML",
-                },
+                message=message,
+                payload=payload,
                 dedupe_key=f"trial-followup:{subscription.id}:12h",
             )
+            if notification.status == NotificationStatus.PENDING:
+                notification.message = message
+                notification.payload = payload
 
     async def _sync_trial_subscription_state(self, subscription: Subscription, now: datetime) -> bool:
         user = subscription.user

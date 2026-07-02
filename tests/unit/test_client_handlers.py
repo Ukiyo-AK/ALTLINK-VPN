@@ -1031,6 +1031,42 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_personal_promo_button_applies_code_and_opens_plan_menu(monkeypatch):
+    captured: dict[str, object] = {}
+    promo = SimpleNamespace(
+        code="ALT10-PERSONAL",
+        reward_value=Decimal("10"),
+    )
+    redeem_code = AsyncMock(return_value=(promo, SimpleNamespace(), "activated"))
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["text"] = text
+        captured["reply_markup"] = reply_markup
+        captured["kwargs"] = kwargs
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-42")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(promos=SimpleNamespace(redeem_code=redeem_code))
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    callback = SimpleNamespace(data="client:promo_apply:ALT10-PERSONAL")
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.promo_apply_and_open_plans(callback, container)
+
+    redeem_code.assert_awaited_once_with("user-42", "ALT10-PERSONAL")
+    assert "Промокод <code>ALT10-PERSONAL</code> активирован" in str(captured["text"])
+    assert "автоматическое продление" in str(captured["text"])
+    assert "<b>🌍 Тарифы ALTLINK</b>" in str(captured["text"])
+    assert captured["kwargs"]["parse_mode"] == "HTML"
+
+
+@pytest.mark.asyncio
 async def test_plan_family_menu_uses_updated_copy(monkeypatch):
     captured: dict[str, object] = {}
 

@@ -233,3 +233,56 @@ async def test_runtime_schema_adds_missing_server_inbound_access_type(tmp_path: 
     await engine.dispose()
 
     assert "access_type" in column_names
+
+
+@pytest.mark.asyncio
+async def test_runtime_schema_adds_personal_promo_owner_column(tmp_path: Path):
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy_promos.db'}"
+    engine = create_async_engine(database_url, future=True)
+
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                telegram_id BIGINT NOT NULL,
+                balance_rub NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                status VARCHAR(16) NOT NULL
+            )
+            """
+        )
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE promo_codes (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                code VARCHAR(64) NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                reward_kind VARCHAR(32) NOT NULL,
+                reward_value NUMERIC(12, 2) NOT NULL,
+                usage_limit INTEGER,
+                used_count INTEGER NOT NULL DEFAULT 0,
+                expires_at DATETIME,
+                new_users_only BOOLEAN NOT NULL DEFAULT 0,
+                is_active BOOLEAN NOT NULL DEFAULT 1,
+                created_by_admin_id TEXT
+            )
+            """
+        )
+
+    await ensure_runtime_schema(engine)
+
+    async with engine.begin() as connection:
+        column_names = await connection.run_sync(
+            lambda sync_connection: {
+                column["name"]
+                for column in inspect(sync_connection).get_columns("promo_codes")
+            }
+        )
+
+    await engine.dispose()
+
+    assert "assigned_user_id" in column_names

@@ -10,11 +10,19 @@ from sqlalchemy import select
 from altlink.application.services.billing import BillingService
 from altlink.application.services.base import ConflictError
 from altlink.domain.billing import compute_period_end, compute_prorated_daily_charge, quantize_money
-from altlink.domain.enums import BalanceTransactionType, NotificationType, PlanCode, SubscriptionStatus, UserStatus
+from altlink.domain.enums import (
+    BalanceTransactionType,
+    NotificationStatus,
+    NotificationType,
+    PlanCode,
+    PromoRewardKind,
+    SubscriptionStatus,
+    UserStatus,
+)
 from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
-from altlink.infrastructure.db.models import BalanceTransaction, Subscription
+from altlink.infrastructure.db.models import BalanceTransaction, PromoCodeRedemption, Subscription
 from altlink.infrastructure.remnawave_schemas import RemoteSeriesPoint, RemoteUsageResponse, RemoteUsageTopNode
-from altlink.utils.time import utc_now
+from altlink.utils.time import ensure_utc, utc_now
 
 
 def test_compute_period_end_uses_fixed_day_window():
@@ -163,7 +171,8 @@ async def test_process_due_subscriptions_queues_trial_followup_for_expired_trial
 
     followup = next(item for item in pending if item.user_id == user.id and item.dedupe_key == f"trial-followup:{subscription.id}:12h")
     assert followup.type == NotificationType.BROADCAST
-    assert "ALT10" in followup.message
+    assert followup.payload["promo_code"].startswith("ALT10-")
+    assert f"<code>{followup.payload['promo_code']}</code>" in followup.message
 
 
 @pytest.mark.asyncio
@@ -232,7 +241,7 @@ async def test_process_due_subscriptions_queues_monthly_promo_for_registered_use
             last_name="Waiting",
             language_code="ru",
         )
-        registered_at = utc_now() - timedelta(days=3)
+        registered_at = utc_now() - timedelta(days=4)
         user.registration_completed_at = registered_at
         user.consent_accepted_at = registered_at
 
@@ -244,13 +253,111 @@ async def test_process_due_subscriptions_queues_monthly_promo_for_registered_use
 
     promo = next(item for item in pending if item.user_id == user.id and item.type == NotificationType.PROMO_CODE)
     assert promo.dedupe_key == f"inactive-promo:{user.id}:{utc_now().strftime('%Y-%m')}"
-    assert "ALT10" in promo.message
+    assert promo.payload["promo_code"].startswith("ALT10-")
+    assert promo.payload["promo_code"] != "ALT10"
+    assert f"<code>{promo.payload['promo_code']}</code>" in promo.message
     assert "10%" in promo.message
     assert len([item for item in pending_again if item.user_id == user.id and item.type == NotificationType.PROMO_CODE]) == 1
 
 
 @pytest.mark.asyncio
-async def test_process_due_subscriptions_skips_promo_for_users_with_paid_subscription_history(test_services):
+async def test_first_inactive_promo_waits_three_full_days_after_registration(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13036,
+            username="promo_three_day_delay",
+            first_name="Promo",
+            last_name="Delay",
+            language_code="ru",
+        )
+        not_ready_at = utc_now() - timedelta(days=2, hours=23)
+        user.registration_completed_at = not_ready_at
+        user.consent_accepted_at = not_ready_at
+
+        await hub.billing.process_due_subscriptions()
+        pending_before = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+        ready_at = utc_now() - timedelta(days=3, minutes=1)
+        user.registration_completed_at = ready_at
+        user.consent_accepted_at = ready_at
+        await hub.billing.process_due_subscriptions()
+        pending_after = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    assert not any(
+        item.user_id == user.id and item.type == NotificationType.PROMO_CODE
+        for item in pending_before
+    )
+    assert any(
+        item.user_id == user.id and item.type == NotificationType.PROMO_CODE
+        for item in pending_after
+    )
+
+
+@pytest.mark.asyncio
+async def test_personal_campaign_codes_are_unique_for_different_users(test_services):
+    async with test_services.hub() as hub:
+        users = []
+        for telegram_id in (13030, 13031):
+            user = await hub.accounts.get_or_create_user(
+                telegram_id=telegram_id,
+                username=f"promo_{telegram_id}",
+                first_name="Promo",
+                last_name="Unique",
+                language_code="ru",
+            )
+            registered_at = utc_now() - timedelta(days=4)
+            user.registration_completed_at = registered_at
+            user.consent_accepted_at = registered_at
+            users.append(user)
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    promo_codes = {
+        item.user_id: item.payload["promo_code"]
+        for item in pending
+        if item.type == NotificationType.PROMO_CODE
+    }
+    assert promo_codes[users[0].id] != promo_codes[users[1].id]
+
+
+@pytest.mark.asyncio
+async def test_pending_legacy_alt10_notification_is_upgraded_to_personal_code(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13034,
+            username="legacy_alt10_pending",
+            first_name="Legacy",
+            last_name="Promo",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=4)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+        dedupe_key = f"inactive-promo:{user.id}:{utc_now().strftime('%Y-%m')}"
+        legacy = await hub.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.PROMO_CODE,
+            message="Промокод: <code>ALT10</code>",
+            payload={
+                "promo_code": "ALT10",
+                "cta": "inactive_promo",
+                "parse_mode": "HTML",
+            },
+            dedupe_key=dedupe_key,
+        )
+
+        await hub.billing.process_due_subscriptions()
+        refreshed = await hub.session.get(type(legacy), legacy.id)
+
+    assert refreshed is not None
+    assert refreshed.payload["promo_code"].startswith("ALT10-")
+    assert refreshed.payload["promo_code"] != "ALT10"
+    assert f"<code>{refreshed.payload['promo_code']}</code>" in refreshed.message
+
+
+@pytest.mark.asyncio
+async def test_process_due_subscriptions_skips_promo_for_users_with_active_paid_subscription(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=13003,
@@ -259,7 +366,7 @@ async def test_process_due_subscriptions_skips_promo_for_users_with_paid_subscri
             last_name="Paid",
             language_code="ru",
         )
-        registered_at = utc_now() - timedelta(days=3)
+        registered_at = utc_now() - timedelta(days=4)
         user.registration_completed_at = registered_at
         user.consent_accepted_at = registered_at
         await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
@@ -269,6 +376,59 @@ async def test_process_due_subscriptions_skips_promo_for_users_with_paid_subscri
         pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
 
     assert not any(item.user_id == user.id and item.type == NotificationType.PROMO_CODE for item in pending)
+
+
+@pytest.mark.asyncio
+async def test_lapsed_paid_user_receives_new_personal_discount_code(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13035,
+            username="promo_lapsed_paid",
+            first_name="Promo",
+            last_name="Lapsed",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=60)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+
+        old_promo = await hub.promos.get_or_create_personal_discount_code(
+            user.id,
+            campaign_key="inactive:previous",
+        )
+        previous_campaign = await hub.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.PROMO_CODE,
+            message="Предыдущая скидка",
+            payload={"promo_code": old_promo.code},
+            dedupe_key=f"inactive-promo:{user.id}:{utc_now().strftime('%Y-%m')}",
+        )
+        previous_campaign.status = NotificationStatus.SENT
+        await hub.promos.redeem_code(user.id, old_promo.code)
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        subscription.status = SubscriptionStatus.BLOCKED
+        subscription.blocked_at = utc_now()
+        user.status = UserStatus.BLOCKED
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    notification = next(
+        item
+        for item in pending
+        if item.user_id == user.id and item.type == NotificationType.PROMO_CODE
+    )
+    assert notification.payload["promo_code"].startswith("ALT10-")
+    assert notification.payload["promo_code"] != old_promo.code
+    assert notification.dedupe_key == (
+        f"inactive-promo-lapsed:{user.id}:{utc_now().strftime('%Y-%m')}"
+    )
+    assert "ближайшую оплату тарифа" in notification.message
 
 
 @pytest.mark.asyncio
@@ -406,6 +566,178 @@ async def test_start_renewal_charge_does_not_repeat_whitelist_usage_that_was_alr
     assert refreshed_subscription is not None
     assert Decimal(refreshed_user.balance_rub) == Decimal("23.00")
     assert renewal_charge == SINGLE_10GBIT_MONTHLY_PRICE_RUB
+
+
+@pytest.mark.asyncio
+async def test_renewal_reminders_require_enabled_autorenew_and_insufficient_balance(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13037,
+            username="renewal_reminder_balance",
+            first_name="Renewal",
+            last_name="Reminder",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("200"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        subscription.ends_at = utc_now() + timedelta(hours=20)
+        subscription.next_billing_at = subscription.ends_at
+        user.balance_rub = Decimal(subscription.plan.price_rub)
+
+        await hub.billing.process_due_subscriptions()
+        sufficient_balance_notifications = list(
+            (await hub.session.scalars(await hub.notifications.pending_query(limit=30))).all()
+        )
+
+        user.balance_rub = Decimal("0")
+        subscription.auto_renew = False
+        await hub.billing.process_due_subscriptions()
+        disabled_autorenew_notifications = list(
+            (await hub.session.scalars(await hub.notifications.pending_query(limit=30))).all()
+        )
+        disabled_autorenew_notice = next(
+            item
+            for item in disabled_autorenew_notifications
+            if item.user_id == user.id
+            and item.type == NotificationType.BROADCAST
+            and item.payload.get("kind") == "renewal_disabled_expiring"
+        )
+
+        subscription.auto_renew = True
+        await hub.billing.process_due_subscriptions()
+        insufficient_balance_notifications = list(
+            (await hub.session.scalars(await hub.notifications.pending_query(limit=30))).all()
+        )
+
+    reminder_types = {NotificationType.UPCOMING_RENEWAL, NotificationType.LOW_BALANCE}
+    assert not any(
+        item.user_id == user.id and item.type in reminder_types
+        for item in sufficient_balance_notifications
+    )
+    assert not any(
+        item.user_id == user.id and item.type in reminder_types
+        for item in disabled_autorenew_notifications
+    )
+    assert "Автопродление сейчас отключено" in disabled_autorenew_notice.message
+    assert disabled_autorenew_notice.payload["cta"] == "renewal_disabled_expiring"
+    assert {
+        item.type
+        for item in insufficient_balance_notifications
+        if item.user_id == user.id and item.type in reminder_types
+    } == reminder_types
+
+
+@pytest.mark.asyncio
+async def test_auto_renewal_consumes_one_time_discount_and_syncs_future_remnawave_expiration(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13032,
+            username="discounted_auto_renewal",
+            first_name="Discounted",
+            last_name="Renewal",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        promo = await hub.promos.create_code(
+            code="RENEW10",
+            name="Renewal discount",
+            reward_kind=PromoRewardKind.PLAN_DISCOUNT,
+            reward_value=Decimal("10"),
+            usage_limit=1,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+            assigned_user_id=user.id,
+        )
+        _, redemption, _ = await hub.promos.redeem_code(user.id, promo.code)
+
+        subscription.ends_at = utc_now() - timedelta(days=45)
+        subscription.next_billing_at = subscription.ends_at
+        balance_before = Decimal(user.balance_rub)
+        renewal_started_after = utc_now()
+
+        await hub.billing.process_due_subscriptions()
+
+        refreshed_user = await hub.accounts.get_user(user.id)
+        refreshed_subscription = await hub.accounts.get_current_subscription(user.id)
+        refreshed_redemption = await hub.session.get(PromoCodeRedemption, redemption.id)
+        remote_user = await test_services.remnawave.get_user(user.remnawave_user_uuid)
+        renewal_transactions = list(
+            (
+                await hub.session.scalars(
+                    select(BalanceTransaction)
+                    .where(
+                        BalanceTransaction.user_id == user.id,
+                        BalanceTransaction.type == BalanceTransactionType.SUBSCRIPTION_CHARGE,
+                    )
+                    .order_by(BalanceTransaction.created_at.asc())
+                )
+            ).all()
+        )
+
+    assert refreshed_subscription is not None
+    assert ensure_utc(refreshed_subscription.started_at) >= renewal_started_after
+    assert ensure_utc(refreshed_subscription.ends_at) > utc_now()
+    assert ensure_utc(remote_user.expireAt) == ensure_utc(refreshed_subscription.ends_at)
+    assert Decimal(refreshed_user.balance_rub) == balance_before - Decimal("62.10")
+    assert refreshed_redemption is not None
+    assert refreshed_redemption.applied_at is not None
+    assert refreshed_redemption.applied_subscription_id == refreshed_subscription.id
+    assert refreshed_redemption.reward_value_applied == Decimal("6.90")
+    assert renewal_transactions[-1].amount_rub == Decimal("-62.10")
+    assert "RENEW10" in (renewal_transactions[-1].description or "")
+
+
+@pytest.mark.asyncio
+async def test_consumed_discount_is_not_reused_on_second_automatic_renewal(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13033,
+            username="single_use_auto_renewal",
+            first_name="Single",
+            last_name="Use",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        promo = await hub.promos.create_code(
+            code="ONCE10",
+            name="Single renewal discount",
+            reward_kind=PromoRewardKind.PLAN_DISCOUNT,
+            reward_value=Decimal("10"),
+            usage_limit=1,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+            assigned_user_id=user.id,
+        )
+        await hub.promos.redeem_code(user.id, promo.code)
+
+        subscription.ends_at = utc_now() - timedelta(minutes=1)
+        subscription.next_billing_at = subscription.ends_at
+        await hub.billing.process_due_subscriptions()
+        balance_after_discounted_renewal = Decimal(user.balance_rub)
+
+        subscription.ends_at = utc_now() - timedelta(minutes=1)
+        subscription.next_billing_at = subscription.ends_at
+        await hub.billing.process_due_subscriptions()
+
+        refreshed_user = await hub.accounts.get_user(user.id)
+
+    assert balance_after_discounted_renewal - Decimal(refreshed_user.balance_rub) == Decimal("69.00")
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from html import escape
 
 
 def rub(amount: Decimal | int | float) -> str:
@@ -28,11 +29,31 @@ def low_balance_message(
     )
 
 
-def upcoming_renewal_message(next_charge: Decimal, due_at: datetime) -> str:
+def upcoming_renewal_message(
+    balance: Decimal,
+    next_charge: Decimal,
+    due_at: datetime,
+) -> str:
     return (
         "📅 Скоро будет следующее списание.\n\n"
+        f"Текущий баланс: {rub(balance)}\n"
         f"К списанию: {rub(next_charge)}\n"
         f"Дата: {format_datetime(due_at)}"
+    )
+
+
+def renewal_disabled_expiring_message(
+    balance: Decimal,
+    next_charge: Decimal,
+    due_at: datetime,
+) -> str:
+    return (
+        "⚠️ Срок действия подписки скоро истечёт.\n\n"
+        "Автопродление сейчас отключено.\n"
+        f"Подписка действует до: {format_datetime(due_at)}\n"
+        f"Баланс: {rub(balance)}\n"
+        f"Для продления потребуется: {rub(next_charge)}\n\n"
+        "Пополните баланс при необходимости и включите автопродление, чтобы не потерять доступ."
     )
 
 
@@ -67,7 +88,7 @@ def topup_approved_message(amount: Decimal) -> str:
 
 def topup_rejected_message(amount: Decimal, comment: str | None = None) -> str:
     suffix = f"\nКомментарий: {comment}" if comment else ""
-    return f"❌ Платёж на сумму {rub(amount)} не прошёл.{suffix}"
+    return f"❌ Не удалось оплатить {rub(amount)}. Попробуйте ещё раз.{suffix}"
 
 
 def trial_ended_message() -> str:
@@ -88,22 +109,24 @@ def trial_expiring_message(ends_at: datetime, reminder_window: str) -> str:
 
 
 def inactive_subscription_promo_message(promo_code: str = "ALT10", discount_percent: int = 10) -> str:
+    copyable_code = escape(promo_code)
     return (
-        "🎁 Для вас есть скидка на первый платный тариф.\n\n"
-        f"Промокод: <code>{promo_code}</code>\n"
+        "🎁 Для вас есть скидка на ближайшую оплату тарифа.\n\n"
+        f"Промокод: <code>{copyable_code}</code>\n"
         f"Скидка: {discount_percent}%\n\n"
-        "Откройте раздел «Подписка» → «Выбрать тариф» и примените промокод при покупке.\n\n"
+        "Нажмите на промокод, чтобы скопировать его, или используйте кнопку ниже — скидка применится сразу.\n\n"
         "✨ Start — для повседневного использования.\n"
         "🚀 Pro — для максимальной скорости и всех доступных серверов."
     )
 
 
 def trial_followup_message(promo_code: str = "ALT10", discount_percent: int = 10) -> str:
+    copyable_code = escape(promo_code)
     return (
         "💡 Пробный период уже завершился, но подключение можно вернуть за пару минут.\n\n"
-        f"Промокод: <code>{promo_code}</code>\n"
-        f"Скидка: {discount_percent}% на первый платный тариф\n\n"
-        "Откройте «Подписка», выберите Start или Pro и при покупке примените промокод."
+        f"Промокод: <code>{copyable_code}</code>\n"
+        f"Скидка: {discount_percent}% на ближайшую оплату тарифа\n\n"
+        "Нажмите на промокод, чтобы скопировать его, или используйте кнопку ниже и выберите Start или Pro."
     )
 
 

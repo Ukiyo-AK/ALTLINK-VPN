@@ -151,6 +151,15 @@ def _ensure_runtime_schema_sync(connection) -> None:
                 column_name,
             )
 
+    if "promo_codes" in table_names:
+        promo_columns = {column["name"] for column in inspector.get_columns("promo_codes")}
+        if "assigned_user_id" not in promo_columns:
+            compiled_type = String(36).compile(dialect=connection.dialect)
+            connection.execute(text(f"ALTER TABLE promo_codes ADD COLUMN assigned_user_id {compiled_type}"))
+            logger.warning(
+                "Added missing column assigned_user_id to promo_codes table during runtime schema preparation."
+            )
+
     if "server_inbounds" in table_names:
         server_inbound_columns = {column["name"] for column in inspector.get_columns("server_inbounds")}
         if "access_type" not in server_inbound_columns:

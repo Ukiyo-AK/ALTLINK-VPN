@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from altlink.application.services.base import ConflictError
 from altlink.application.services.topups import TopupService
-from altlink.domain.enums import BalanceTransactionType, PlanCode
+from altlink.domain.enums import BalanceTransactionType, NotificationType, PlanCode
 from altlink.infrastructure.db.models import BalanceTransaction
 from altlink.scheduler.jobs import topups_job
 from altlink.utils.time import utc_now
@@ -284,6 +284,40 @@ async def test_yookassa_scheduler_auto_approves_without_admin_confirmation(test_
     assert str(stored_request.status) == "approved"
     assert stored_request.approved_by_admin_id is None
     assert Decimal(refreshed.balance_rub) == Decimal("510")
+
+
+@pytest.mark.asyncio
+async def test_yookassa_rejection_hides_technical_reason_from_user_notification(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3012,
+            username="yookassa_rejected",
+            first_name="Yoo",
+            last_name="Rejected",
+            language_code="ru",
+        )
+        request = await hub.topups.create_request(
+            user.id,
+            Decimal("300"),
+            auto_complete=False,
+            provider_code="yookassa",
+        )
+        rejected = await hub.topups.reject(
+            request.id,
+            admin_id=None,
+            comment="yookassa:expired_on_confirmation",
+        )
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    notification = next(
+        item
+        for item in pending
+        if item.user_id == user.id and item.type == NotificationType.TOPUP_REJECTED
+    )
+    assert rejected.admin_comment == "yookassa:expired_on_confirmation"
+    assert "Не удалось оплатить" in notification.message
+    assert "yookassa" not in notification.message.casefold()
+    assert "expired_on_confirmation" not in notification.message
 
 
 @pytest.mark.asyncio
