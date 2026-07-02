@@ -6201,6 +6201,24 @@ body.landing-v2 .landing-footer {
   padding: 1.35rem 0.2rem 0.35rem;
 }
 
+body.landing-v2 .landing-mobile-scroll-shell {
+  display: contents;
+}
+
+body.landing-v2 .landing-mobile-scroll-button {
+  display: none;
+}
+
+body.landing-v2 .landing-mobile-scroll-button svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 body.landing-v2 .landing-reveal {
   opacity: 0;
   transform: translateY(1.25rem);
@@ -6278,12 +6296,18 @@ body.landing-v2 .landing-reveal.is-visible {
     display: none;
   }
 
-  body.landing-v2 .landing-hero {
+  body.landing-v2 .landing-hero,
+  html[data-theme="light"] body.landing-v2 .landing-hero,
+  html[data-theme="dark"] body.landing-v2 .landing-hero {
     min-height: auto;
     padding: 0.55rem 0 0.9rem;
     border-radius: 0;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
   }
 
+  body.landing-v2 .landing-hero::before,
   body.landing-v2 .landing-hero::after {
     display: none;
   }
@@ -6377,19 +6401,8 @@ body.landing-v2 .landing-reveal.is-visible {
   body.landing-v2 .landing-tariffs::after,
   body.landing-v2 .landing-start-copy::after,
   body.landing-v2 .landing-platform-panel::after {
-    content: "свайп →";
-    justify-self: start;
-    display: inline-flex;
-    align-items: center;
-    min-height: 1.65rem;
-    margin-top: -0.35rem;
-    padding-inline: 0.62rem;
-    border: 1px solid rgba(7, 148, 127, 0.16);
-    border-radius: 999px;
-    background: rgba(7, 148, 127, 0.07);
-    color: var(--accent-strong);
-    font-size: 0.72rem;
-    font-weight: 900;
+    content: none;
+    display: none;
   }
 
   body.landing-v2 .landing-proof-strip,
@@ -6398,8 +6411,56 @@ body.landing-v2 .landing-reveal.is-visible {
   body.landing-v2 .landing-app-grid,
   body.landing-v2 .landing-plan-grid,
   body.landing-v2 .landing-location-carousel {
-    mask-image: linear-gradient(90deg, #000 calc(100% - 3.6rem), transparent);
-    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 3.6rem), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 3.15rem, #000 calc(100% - 3.15rem), transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 3.15rem, #000 calc(100% - 3.15rem), transparent);
+  }
+
+  body.landing-v2 .landing-mobile-scroll-shell {
+    position: relative;
+    display: block;
+    min-width: 0;
+  }
+
+  body.landing-v2 .landing-mobile-scroll-shell > [data-mobile-scroll-track] {
+    padding-inline: 3.1rem;
+    scroll-padding-inline: 3.1rem;
+  }
+
+  body.landing-v2 .landing-mobile-scroll-shell.is-scrollable .landing-mobile-scroll-button {
+    position: absolute;
+    top: 50%;
+    z-index: 6;
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    padding: 0;
+    border: 1px solid rgba(7, 148, 127, 0.24);
+    border-radius: 999px;
+    background: rgba(249, 255, 252, 0.94);
+    color: var(--accent-strong);
+    box-shadow: 0 0.75rem 1.8rem rgba(6, 74, 65, 0.16);
+    transform: translateY(-50%);
+    backdrop-filter: blur(12px);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body.landing-v2 .landing-mobile-scroll-button.is-prev {
+    left: 0.15rem;
+  }
+
+  body.landing-v2 .landing-mobile-scroll-button.is-next {
+    right: 0.15rem;
+  }
+
+  body.landing-v2 .landing-mobile-scroll-button:disabled {
+    opacity: 0.34;
+  }
+
+  html[data-theme="dark"] body.landing-v2 .landing-mobile-scroll-button {
+    border-color: rgba(114, 232, 196, 0.24);
+    background: rgba(9, 28, 24, 0.92);
+    color: #72e8c4;
   }
 
   body.landing-v2 .landing-proof-strip::-webkit-scrollbar,
@@ -6457,6 +6518,20 @@ body.landing-v2 .landing-reveal.is-visible {
 
   body.landing-v2 .landing-latency-actions .button {
     width: 100%;
+  }
+
+  body.landing-v2 .landing-location-carousel-shell.can-loop .landing-carousel-button {
+    display: inline-grid;
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  body.landing-v2 .landing-location-carousel-shell .landing-carousel-button.is-prev {
+    left: 0.15rem;
+  }
+
+  body.landing-v2 .landing-location-carousel-shell .landing-carousel-button.is-next {
+    right: 0.15rem;
   }
 }
 

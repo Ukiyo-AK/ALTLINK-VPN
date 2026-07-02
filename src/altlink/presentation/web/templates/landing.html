@@ -90,30 +90,42 @@
         </div>
       </section>
 
-      <section class="landing-proof-strip" aria-label="Коротко о сервисе">
-        <article>
-          <span>01</span>
-          <strong>Бесплатный старт</strong>
-          <p>Проверьте качество на пробном периоде перед оплатой.</p>
-        </article>
-        <article>
-          <span>02</span>
-          <strong>Единая ссылка</strong>
-          <p>Скопируйте подписку один раз и добавьте её в совместимое приложение.</p>
-        </article>
-        <article>
-          <span>03</span>
-          <strong>Простое управление</strong>
-          <p>Тариф, баланс, поддержка и ссылка доступны в кабинете и боте.</p>
-        </article>
-      </section>
+      <div class="landing-mobile-scroll-shell" data-mobile-scroll-shell>
+        <button class="landing-mobile-scroll-button is-prev" type="button" data-mobile-scroll-prev aria-label="Прокрутить преимущества влево">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <section class="landing-proof-strip" id="landing-proof-track" aria-label="Коротко о сервисе" data-mobile-scroll-track>
+          <article>
+            <span>01</span>
+            <strong>Бесплатный старт</strong>
+            <p>Проверьте качество на пробном периоде перед оплатой.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <strong>Единая ссылка</strong>
+            <p>Скопируйте подписку один раз и добавьте её в совместимое приложение.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <strong>Простое управление</strong>
+            <p>Тариф, баланс, поддержка и ссылка доступны в кабинете и боте.</p>
+          </article>
+        </section>
+        <button class="landing-mobile-scroll-button is-next" type="button" data-mobile-scroll-next aria-label="Прокрутить преимущества вправо">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </button>
+      </div>
 
       <section class="landing-section landing-benefits" id="features">
         <div class="landing-section-head">
           <h2>Всё, что нужно для стабильного доступа каждый день</h2>
           <p class="muted">Ключевые функции ALTLINK: скорость, поддержка, приватность и понятные тарифы.</p>
         </div>
-        <div class="landing-feature-grid">
+        <div class="landing-mobile-scroll-shell" data-mobile-scroll-shell>
+          <button class="landing-mobile-scroll-button is-prev" type="button" data-mobile-scroll-prev aria-label="Прокрутить возможности влево">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+          <div class="landing-feature-grid" id="landing-feature-track" data-mobile-scroll-track>
           <article class="landing-feature-card">
             <span class="landing-feature-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 2.8 8.4 7 10 4.2-1.6 7-5.6 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>
@@ -156,6 +168,10 @@
             <h3>Гибкие тарифы</h3>
             <p class="muted">Можно выбрать короткий период или основной тариф для постоянного доступа.</p>
           </article>
+          </div>
+          <button class="landing-mobile-scroll-button is-next" type="button" data-mobile-scroll-next aria-label="Прокрутить возможности вправо">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
         </div>
       </section>
 
@@ -163,11 +179,19 @@
         <div class="landing-start-copy">
           <h2>Подключение без лишних шагов</h2>
           <p class="muted">Выберите тариф или тестовый период, скопируйте ссылку и добавьте её в приложение. Если что-то не получится, поддержка поможет.</p>
-          <div class="landing-start-steps">
-            <div><span>1</span><strong>Войдите через Telegram</strong><small>Кабинет откроется после подтверждения в боте.</small></div>
-            <div><span>2</span><strong>Активируйте тест или тариф</strong><small>Начните бесплатно или выберите подходящий период.</small></div>
-            <div><span>3</span><strong>Скопируйте ссылку</strong><small>Она доступна в кабинете и Telegram-боте.</small></div>
-            <div><span>4</span><strong>Добавьте в приложение</strong><small>Happ и другие совместимые клиенты поддерживают импорт по ссылке.</small></div>
+          <div class="landing-mobile-scroll-shell" data-mobile-scroll-shell>
+            <button class="landing-mobile-scroll-button is-prev" type="button" data-mobile-scroll-prev aria-label="Прокрутить шаги влево">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div class="landing-start-steps" id="landing-steps-track" data-mobile-scroll-track>
+              <div><span>1</span><strong>Войдите через Telegram</strong><small>Кабинет откроется после подтверждения в боте.</small></div>
+              <div><span>2</span><strong>Активируйте тест или тариф</strong><small>Начните бесплатно или выберите подходящий период.</small></div>
+              <div><span>3</span><strong>Скопируйте ссылку</strong><small>Она доступна в кабинете и Telegram-боте.</small></div>
+              <div><span>4</span><strong>Добавьте в приложение</strong><small>Happ и другие совместимые клиенты поддерживают импорт по ссылке.</small></div>
+            </div>
+            <button class="landing-mobile-scroll-button is-next" type="button" data-mobile-scroll-next aria-label="Прокрутить шаги вправо">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
           </div>
         </div>
         <div class="landing-platform-panel">
@@ -175,11 +199,19 @@
             <h3>Рекомендуем Happ</h3>
             <p class="muted">Три быстрых варианта для популярных устройств. Остальные клиенты тоже поддерживаются.</p>
           </div>
-          <div class="landing-app-grid">
-            <a class="landing-platform-card" href="https://play.google.com/store/apps/details?id=com.happproxy" target="_blank" rel="noreferrer"><strong>Android</strong><span>Google Play</span></a>
-            <a class="landing-platform-card" href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer"><strong>iPhone и iPad</strong><span>App Store</span></a>
-            <a class="landing-platform-card" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Windows</strong><span>Happ</span></a>
-            <a class="landing-platform-card is-muted" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Другие устройства</strong><span>macOS, Linux, TV</span></a>
+          <div class="landing-mobile-scroll-shell" data-mobile-scroll-shell>
+            <button class="landing-mobile-scroll-button is-prev" type="button" data-mobile-scroll-prev aria-label="Прокрутить приложения влево">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <div class="landing-app-grid" id="landing-app-track" data-mobile-scroll-track>
+              <a class="landing-platform-card" href="https://play.google.com/store/apps/details?id=com.happproxy" target="_blank" rel="noreferrer"><strong>Android</strong><span>Google Play</span></a>
+              <a class="landing-platform-card" href="https://apps.apple.com/us/app/happ-proxy-utility/id6504287215" target="_blank" rel="noreferrer"><strong>iPhone и iPad</strong><span>App Store</span></a>
+              <a class="landing-platform-card" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Windows</strong><span>Happ</span></a>
+              <a class="landing-platform-card is-muted" href="https://www.happ.su/main/ru" target="_blank" rel="noreferrer"><strong>Другие устройства</strong><span>macOS, Linux, TV</span></a>
+            </div>
+            <button class="landing-mobile-scroll-button is-next" type="button" data-mobile-scroll-next aria-label="Прокрутить приложения вправо">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
           </div>
           <p class="muted landing-apps-note">Также поддерживаем v2RayTun, Throne, INCY, Hiddify, Streisand и другие совместимые клиентские приложения.</p>
         </div>
@@ -245,7 +277,11 @@
           <h2>Выберите удобный формат</h2>
           <p class="muted">Start подойдёт для короткого старта, Pro — основной тариф для ежедневного использования.</p>
         </div>
-        <div class="landing-plan-grid">
+        <div class="landing-mobile-scroll-shell" data-mobile-scroll-shell>
+          <button class="landing-mobile-scroll-button is-prev" type="button" data-mobile-scroll-prev aria-label="Прокрутить тарифы влево">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+          </button>
+          <div class="landing-plan-grid" id="landing-plan-track" data-mobile-scroll-track>
           {% for group in portal_plan_groups %}
           <article class="landing-plan-card{% if group.family == 'unlimited' %} is-featured{% endif %}">
             <div class="split">
@@ -273,6 +309,10 @@
             <a class="button{% if group.family != 'unlimited' %} ghost{% endif %} full" href="{{ portal_login_url }}">Выбрать {{ group.title }}</a>
           </article>
           {% endfor %}
+          </div>
+          <button class="landing-mobile-scroll-button is-next" type="button" data-mobile-scroll-next aria-label="Прокрутить тарифы вправо">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
         </div>
       </section>
 
@@ -332,6 +372,45 @@
       );
 
       revealItems.forEach((item) => observer.observe(item));
+    })();
+
+    (() => {
+      document.querySelectorAll("[data-mobile-scroll-shell]").forEach((shell) => {
+        const track = shell.querySelector("[data-mobile-scroll-track]");
+        const previous = shell.querySelector("[data-mobile-scroll-prev]");
+        const next = shell.querySelector("[data-mobile-scroll-next]");
+        if (!track || !previous || !next) {
+          return;
+        }
+
+        if (track.id) {
+          previous.setAttribute("aria-controls", track.id);
+          next.setAttribute("aria-controls", track.id);
+        }
+
+        const updateControls = () => {
+          const maxScroll = Math.max(0, track.scrollWidth - track.clientWidth);
+          const canScroll = maxScroll > 2;
+          shell.classList.toggle("is-scrollable", canScroll);
+          previous.disabled = !canScroll || track.scrollLeft <= 2;
+          next.disabled = !canScroll || track.scrollLeft >= maxScroll - 2;
+        };
+
+        const scrollTrack = (direction) => {
+          const firstItem = track.firstElementChild;
+          const gap = Number.parseFloat(window.getComputedStyle(track).columnGap) || 0;
+          const distance = firstItem
+            ? firstItem.getBoundingClientRect().width + gap
+            : track.clientWidth * 0.8;
+          track.scrollBy({ left: direction * distance, behavior: "smooth" });
+        };
+
+        previous.addEventListener("click", () => scrollTrack(-1));
+        next.addEventListener("click", () => scrollTrack(1));
+        track.addEventListener("scroll", updateControls, { passive: true });
+        window.addEventListener("resize", updateControls);
+        window.requestAnimationFrame(updateControls);
+      });
     })();
 
     (() => {
