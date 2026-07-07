@@ -255,7 +255,7 @@ def user_status_label(value) -> str:
         "new": "Новый",
         "trial": "Тест",
         "active": "Активен",
-        "grace": "Грейс",
+        "grace": "Льготный период",
         "blocked": "Заблокирован",
         "canceled": "Отменён",
         "deleted": "Удалён",

@@ -75,10 +75,15 @@ def grace_reminder_message(debt: Decimal, grace_until: datetime) -> str:
     )
 
 
-def blocked_message() -> str:
+def blocked_message(*, grace_ended: bool = False) -> str:
+    reason = (
+        "Льготный период закончился. Пополните баланс и возобновите тариф, чтобы снова получить доступ."
+        if grace_ended
+        else "Подписка не была продлена. Пополните баланс и возобновите тариф, чтобы снова получить доступ."
+    )
     return (
         "🚫 Доступ к VPN заблокирован.\n\n"
-        "Льготный период закончился. Пополните баланс и возобновите тариф, чтобы снова получить доступ."
+        f"{reason}"
     )
 
 

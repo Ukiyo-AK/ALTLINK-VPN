@@ -513,7 +513,8 @@ class BillingService(BaseService):
         if subscription.status == SubscriptionStatus.TRIAL:
             return await self._sync_trial_subscription_state(subscription, now)
 
-        if subscription.status == SubscriptionStatus.GRACE:
+        was_grace = subscription.status == SubscriptionStatus.GRACE
+        if was_grace:
             subscription.status = SubscriptionStatus.ACTIVE
             if user.status == UserStatus.GRACE:
                 user.status = UserStatus.ACTIVE
@@ -541,7 +542,7 @@ class BillingService(BaseService):
                 return True
 
             if Decimal(user.balance_rub) < renewal_charge:
-                await self._block_subscription(subscription, user)
+                await self._block_subscription(subscription, user, grace_ended=was_grace)
                 return True
 
             if renewal_charge > 0:
@@ -747,7 +748,7 @@ class BillingService(BaseService):
         user.status = UserStatus.CANCELED
         await self._disable_remote_user_best_effort(user, event_type="subscription_cancel_disable_failed")
 
-    async def _block_subscription(self, subscription: Subscription, user: User) -> None:
+    async def _block_subscription(self, subscription: Subscription, user: User, *, grace_ended: bool = False) -> None:
         subscription.status = SubscriptionStatus.BLOCKED
         subscription.blocked_at = utc_now()
         user.status = UserStatus.BLOCKED
@@ -755,7 +756,7 @@ class BillingService(BaseService):
         await self.notifications.queue(
             user_id=user.id,
             notification_type=NotificationType.ACCESS_BLOCKED,
-            message=blocked_message(),
+            message=blocked_message(grace_ended=grace_ended),
             dedupe_key=f"blocked:{subscription.id}",
         )
 

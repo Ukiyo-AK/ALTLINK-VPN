@@ -10,6 +10,7 @@ from altlink.application.services.notifications import NotificationService
 from altlink.domain.enums import NotificationStatus, NotificationType
 from altlink.infrastructure.db.models import Notification
 from altlink.domain.notifications import (
+    blocked_message,
     grace_started_message,
     inactive_subscription_promo_message,
     low_balance_message,
@@ -56,6 +57,17 @@ def test_grace_started_message_mentions_deadline_and_emoji():
     assert "⏳" in message
     assert "200.00" in message
     assert "15.01.2026" in message
+
+
+def test_blocked_message_uses_subscription_wording_by_default():
+    message = blocked_message()
+    assert "Подписка не была продлена" in message
+    assert "Льготный период закончился" not in message
+
+
+def test_blocked_message_can_explain_finished_grace_period():
+    message = blocked_message(grace_ended=True)
+    assert "Льготный период закончился" in message
 
 
 def test_trial_expiring_message_mentions_window_deadline_and_emoji():
