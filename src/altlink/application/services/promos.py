@@ -24,15 +24,18 @@ class PromoService(BaseService):
         super().__init__(session, settings, remnawave)
         self.accounts = accounts
 
-    async def list_codes(self, limit: int = 50) -> list[PromoCode]:
+    async def list_codes(self, limit: int = 50, *, include_personal: bool = False) -> list[PromoCode]:
+        query = (
+            select(PromoCode)
+            .options(joinedload(PromoCode.created_by_admin))
+            .order_by(PromoCode.created_at.desc())
+            .limit(limit)
+        )
+        if not include_personal:
+            query = query.where(PromoCode.assigned_user_id.is_(None))
         return list(
             (
-                await self.session.scalars(
-                    select(PromoCode)
-                    .options(joinedload(PromoCode.created_by_admin))
-                    .order_by(PromoCode.created_at.desc())
-                    .limit(limit)
-                )
+                await self.session.scalars(query)
             ).all()
         )
 
@@ -157,8 +160,8 @@ class PromoService(BaseService):
             secret,
             f"personal-discount:{user.id}:{normalized_percent}:{normalized_campaign}".encode("utf-8"),
             hashlib.sha256,
-        ).hexdigest()[:12].upper()
-        code = f"ALT10-{digest}"
+        ).hexdigest()[:8].upper()
+        code = digest
         existing_by_code = await self.find_by_code(code)
         if existing_by_code is not None:
             if existing_by_code.assigned_user_id == user.id:

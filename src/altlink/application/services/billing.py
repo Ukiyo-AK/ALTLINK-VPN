@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -28,9 +29,12 @@ from altlink.domain.enums import (
 )
 from altlink.domain.notifications import (
     blocked_message,
+    DISCOUNT_PROMO_TEMPLATE_IDS,
     inactive_subscription_promo_message,
     low_balance_message,
     renewal_disabled_expiring_message,
+    RETURN_TRIAL_TEMPLATE_IDS,
+    return_trial_offer_message,
     trial_followup_message,
     trial_expiring_message,
     trial_ended_message,
@@ -43,6 +47,7 @@ from altlink.infrastructure.db.models import (
     Plan,
     Server,
     Subscription,
+    SystemSetting,
     TrafficSnapshot,
     TrialPeriod,
     User,
@@ -61,6 +66,14 @@ TRIAL_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] = (
     ("1h", timedelta(hours=1), timedelta(0), "1 час"),
 )
 TRIAL_SETUP_HELP_DELAY = timedelta(hours=3)
+PROMO_CAMPAIGN_SETTINGS_KEY = "promo.campaign_settings"
+DEFAULT_PROMO_CAMPAIGN_SETTINGS = {
+    "new_user_discount_percent": 10,
+    "lapsed_user_discount_percent": 35,
+    "inactive_first_delay_days": 3,
+    "return_trial_enabled": True,
+    "return_trial_cooldown_days": 30,
+}
 
 logger = logging.getLogger(__name__)
 SyncProgressCallback = Callable[[dict[str, object]], Awaitable[None]]
@@ -88,6 +101,7 @@ class BillingService(BaseService):
 
     async def activate_trial(self, user_id: str) -> Subscription:
         user = await self.accounts.get_user(user_id)
+        now = utc_now()
         current = await self.accounts.get_current_subscription(user_id)
         if current and current.status in {
             SubscriptionStatus.ACTIVE,
@@ -98,10 +112,13 @@ class BillingService(BaseService):
 
         existing_trial = await self.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user.id))
         if existing_trial and existing_trial.consumed:
-            raise ConflictError("Тестовый период уже был использован.")
+            promo_settings = await self._promo_campaign_settings()
+            cooldown_days = max(int(promo_settings["return_trial_cooldown_days"]), 0)
+            repeat_allowed_at = ensure_utc(existing_trial.ends_at) + timedelta(days=cooldown_days)
+            if not promo_settings["return_trial_enabled"] or now < repeat_allowed_at:
+                raise ConflictError("Тестовый период уже был использован.")
 
         plan = await self.accounts.get_plan(PlanCode.TRIAL)
-        now = utc_now()
         ends_at = compute_period_end(now, self.settings.trial_duration_days or plan.period_days)
         subscription = Subscription(
             user_id=user.id,
@@ -1004,8 +1021,45 @@ class BillingService(BaseService):
                 return reminder_key, reminder_label
         return None
 
+    async def _promo_campaign_settings(self) -> dict[str, int | bool]:
+        item = await self.session.scalar(
+            select(SystemSetting).where(SystemSetting.key == PROMO_CAMPAIGN_SETTINGS_KEY)
+        )
+        raw_value = item.value if item is not None else None
+        values = dict(DEFAULT_PROMO_CAMPAIGN_SETTINGS)
+        if isinstance(raw_value, dict):
+            for key in values:
+                if key in raw_value:
+                    values[key] = raw_value[key]
+        return {
+            "new_user_discount_percent": self._bounded_int(values["new_user_discount_percent"], 1, 100, 10),
+            "lapsed_user_discount_percent": self._bounded_int(values["lapsed_user_discount_percent"], 1, 100, 35),
+            "inactive_first_delay_days": self._bounded_int(values["inactive_first_delay_days"], 1, 365, 3),
+            "return_trial_enabled": bool(values["return_trial_enabled"]),
+            "return_trial_cooldown_days": self._bounded_int(values["return_trial_cooldown_days"], 1, 365, 30),
+        }
+
+    @staticmethod
+    def _bounded_int(value: object, minimum: int, maximum: int, fallback: int) -> int:
+        try:
+            parsed = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return fallback
+        return min(max(parsed, minimum), maximum)
+
+    @staticmethod
+    def _select_campaign_template(user_id: str, campaign_key: str, options: tuple[int, ...]) -> int:
+        if not options:
+            return 1
+        digest = hashlib.sha256(f"{user_id}:{campaign_key}".encode("utf-8")).hexdigest()
+        return options[int(digest[:8], 16) % len(options)]
+
+    async def _trial_period_for_user(self, user_id: str) -> TrialPeriod | None:
+        return await self.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user_id))
+
     async def _queue_inactive_user_promos(self, now: datetime) -> None:
-        registered_before = now - timedelta(days=3)
+        promo_settings = await self._promo_campaign_settings()
+        registered_before = now - timedelta(days=int(promo_settings["inactive_first_delay_days"]))
         active_paid_subscription_exists = (
             select(Subscription.id)
             .join(Plan, Subscription.plan_id == Plan.id)
@@ -1047,15 +1101,73 @@ class BillingService(BaseService):
         month_key = now.strftime("%Y-%m")
         for user, has_paid_history in users:
             campaign_kind = "lapsed" if has_paid_history else "new"
+            trial_period = await self._trial_period_for_user(user.id)
+            return_trial_ready = (
+                bool(promo_settings["return_trial_enabled"])
+                and not has_paid_history
+                and trial_period is not None
+                and trial_period.consumed
+                and ensure_utc(trial_period.ends_at)
+                <= now - timedelta(days=int(promo_settings["return_trial_cooldown_days"]))
+            )
+            if return_trial_ready:
+                campaign_key = f"return-trial:{month_key}"
+                template_id = self._select_campaign_template(
+                    user.id,
+                    campaign_key,
+                    RETURN_TRIAL_TEMPLATE_IDS,
+                )
+                message = return_trial_offer_message(
+                    template_id=template_id,
+                    trial_days=int(self.settings.trial_duration_days or 2),
+                )
+                payload = {
+                    "campaign": "return_trial_monthly",
+                    "campaign_kind": "return_trial",
+                    "template_id": template_id,
+                    "trial_days": int(self.settings.trial_duration_days or 2),
+                    "cta": "return_trial",
+                    "parse_mode": "HTML",
+                }
+                notification = await self.notifications.queue(
+                    user_id=user.id,
+                    notification_type=NotificationType.BROADCAST,
+                    message=message,
+                    payload=payload,
+                    dedupe_key=f"return-trial:{user.id}:{month_key}",
+                )
+                if notification.status == NotificationStatus.PENDING:
+                    notification.message = message
+                    notification.payload = payload
+                continue
+
+            discount_percent = (
+                int(promo_settings["lapsed_user_discount_percent"])
+                if has_paid_history
+                else int(promo_settings["new_user_discount_percent"])
+            )
+            campaign_key = f"inactive:{campaign_kind}:{month_key}"
             promo = await self.promos.get_or_create_personal_discount_code(
                 user.id,
-                campaign_key=f"inactive:{campaign_kind}:{month_key}",
+                discount_percent=Decimal(discount_percent),
+                campaign_key=campaign_key,
             )
-            message = inactive_subscription_promo_message(promo.code, 10)
+            template_id = self._select_campaign_template(
+                user.id,
+                campaign_key,
+                DISCOUNT_PROMO_TEMPLATE_IDS,
+            )
+            message = inactive_subscription_promo_message(
+                promo.code,
+                discount_percent,
+                template_id=template_id,
+            )
             payload = {
                 "promo_code": promo.code,
-                "discount_percent": 10,
+                "discount_percent": discount_percent,
                 "campaign": "inactive_monthly",
+                "campaign_kind": campaign_kind,
+                "template_id": template_id,
                 "cta": "inactive_promo",
                 "parse_mode": "HTML",
             }
@@ -1075,6 +1187,8 @@ class BillingService(BaseService):
                 notification.payload = payload
 
     async def _queue_post_trial_followups(self, now: datetime) -> None:
+        promo_settings = await self._promo_campaign_settings()
+        discount_percent = int(promo_settings["new_user_discount_percent"])
         followup_ready_at = now - timedelta(hours=12)
         subscriptions = list(
             (
@@ -1104,14 +1218,24 @@ class BillingService(BaseService):
                 continue
             if await self.accounts.get_current_subscription(user.id) is not None:
                 continue
+            trial_period = await self._trial_period_for_user(user.id)
+            if (
+                bool(promo_settings["return_trial_enabled"])
+                and trial_period is not None
+                and trial_period.consumed
+                and ensure_utc(trial_period.ends_at)
+                <= now - timedelta(days=int(promo_settings["return_trial_cooldown_days"]))
+            ):
+                continue
             promo = await self.promos.get_or_create_personal_discount_code(
                 user.id,
+                discount_percent=Decimal(discount_percent),
                 campaign_key=f"trial-followup:{subscription.id}:12h",
             )
-            message = trial_followup_message(promo.code, 10)
+            message = trial_followup_message(promo.code, discount_percent)
             payload = {
                 "promo_code": promo.code,
-                "discount_percent": 10,
+                "discount_percent": discount_percent,
                 "kind": "trial_followup",
                 "cta": "trial_followup",
                 "parse_mode": "HTML",

@@ -70,14 +70,14 @@ def test_trial_expiring_message_mentions_window_deadline_and_emoji():
 
 def test_inactive_subscription_promo_message_contains_code_discount_and_emoji():
     message = inactive_subscription_promo_message()
-    assert "🎁" in message
+    assert "⚡" in message
     assert "<code>ALT10</code>" in message
     assert "10%" in message
 
 
 def test_trial_followup_message_contains_copyable_code_and_emoji():
     message = trial_followup_message()
-    assert "💡" in message
+    assert "😎" in message
     assert "<code>ALT10</code>" in message
     assert "10%" in message
 
@@ -113,6 +113,15 @@ def test_renewal_disabled_notification_has_resume_and_topup_buttons():
     assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
         ["client:subscription_resume"],
         ["client:topup_menu"],
+    ]
+
+
+def test_return_trial_notification_has_trial_button():
+    markup = NotificationService._notification_reply_markup({"cta": "return_trial"})
+
+    assert markup is not None
+    assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
+        ["client:trial_activate"],
     ]
 
 

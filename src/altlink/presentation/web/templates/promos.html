@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="grid-two">
+  <article class="panel stack">
+    <h2>Настройки промокодов</h2>
+    <form method="post" action="/admin/promos/settings" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Скидка новым пользователям, %</span>
+        <input type="number" min="1" max="100" name="new_user_discount_percent" value="{{ promo_settings.new_user_discount_percent }}">
+      </label>
+      <label>
+        <span>Скидка бывшим платным пользователям, %</span>
+        <input type="number" min="1" max="100" name="lapsed_user_discount_percent" value="{{ promo_settings.lapsed_user_discount_percent }}">
+      </label>
+      <label>
+        <span>Первое промо после регистрации, дней</span>
+        <input type="number" min="1" max="365" name="inactive_first_delay_days" value="{{ promo_settings.inactive_first_delay_days }}">
+      </label>
+      <label class="inline-form">
+        <input type="checkbox" name="return_trial_enabled" value="1" {% if promo_settings.return_trial_enabled %}checked{% endif %}>
+        <span>Предлагать повторный тест долго отсутствующим</span>
+      </label>
+      <label>
+        <span>Повторный тест после прошлого trial, дней</span>
+        <input type="number" min="1" max="365" name="return_trial_cooldown_days" value="{{ promo_settings.return_trial_cooldown_days }}">
+      </label>
+      <p class="muted">
+        Автоматические промо отправляются не чаще одного раза в календарный месяц на пользователя.
+        Персональные коды создаются короткими, без префикса, и скрыты из обычного списка промокодов.
+      </p>
+      <button type="submit" class="button">Сохранить настройки</button>
+    </form>
+  </article>
+
+  <article class="panel stack">
+    <h2>Сводка</h2>
+    <section class="cards">
+      <article class="card"><div class="muted">Отправлено промо</div><strong>{{ promo_stats.sent_total }}</strong></article>
+      <article class="card"><div class="muted">Доставлено</div><strong>{{ promo_stats.sent_success }}</strong></article>
+      <article class="card"><div class="muted">Активировали скидку</div><strong>{{ promo_stats.activated_total }}</strong></article>
+      <article class="card"><div class="muted">Скидка списалась</div><strong>{{ promo_stats.applied_total }}</strong></article>
+      <article class="card"><div class="muted">Повторный тест</div><strong>{{ promo_stats.return_trial_sent }}</strong></article>
+      <article class="card"><div class="muted">Персональные коды</div><strong>{{ promo_stats.personal_codes }}</strong></article>
+    </section>
+  </article>
+</section>
+
+<section class="grid-two">
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Отправки по типам</h2>
+      <span class="badge">последние 5000</span>
+    </div>
+    <canvas id="promoKindChart"></canvas>
+  </article>
+
+  <article class="panel chart-box">
+    <div class="split">
+      <h2>Активации скидок</h2>
+      <span class="badge highlight">по процентам</span>
+    </div>
+    <canvas id="promoActivationChart"></canvas>
+  </article>
+</section>
+
+<section class="grid-two">
+  <article class="panel">
+    <h2>Ручные промокоды</h2>
+    <table class="table">
+      <thead><tr><th>Код</th><th>Тип</th><th>Использования</th><th>Статус</th></tr></thead>
+      <tbody>
+        {% for item in manual_codes %}
+        <tr>
+          <td><code>{{ item.code }}</code></td>
+          <td>{{ 'Баланс' if item.reward_kind.value == 'balance' else 'Скидка ' ~ (item.reward_value|rub) ~ '%' }}</td>
+          <td>{{ item.used_count }}/{{ item.usage_limit if item.usage_limit is not none else '∞' }}</td>
+          <td>{{ 'активен' if item.is_active else 'отключён' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">Ручных промокодов пока нет.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </article>
+
+  <article class="panel">
+    <h2>Шаблоны сообщений</h2>
+    <table class="table">
+      <thead><tr><th>Шаблон</th><th>Тип</th><th>Превью</th></tr></thead>
+      <tbody>
+        {% for item in promo_template_previews %}
+        <tr>
+          <td>{{ item.label }}</td>
+          <td>{{ 'Промокод' if item.kind == 'discount' else 'Тест' }}</td>
+          <td><div class="codeblock">{{ item.preview }}</div></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </article>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  const promoCharts = {{ promo_charts_json | safe }};
+
+  new Chart(document.getElementById("promoKindChart"), {
+    type: "bar",
+    data: {
+      labels: promoCharts.sent_by_kind.labels,
+      datasets: [{
+        label: "Отправлено",
+        data: promoCharts.sent_by_kind.values,
+        backgroundColor: "rgba(7, 148, 127, 0.78)"
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+
+  new Chart(document.getElementById("promoActivationChart"), {
+    type: "doughnut",
+    data: {
+      labels: promoCharts.activated_by_discount.labels,
+      datasets: [{
+        data: promoCharts.activated_by_discount.values,
+        backgroundColor: ["rgba(7, 148, 127, 0.84)", "rgba(53, 184, 159, 0.74)", "rgba(46, 122, 149, 0.58)"]
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false }
+  });
+</script>
+{% endblock %}

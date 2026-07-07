@@ -31,7 +31,8 @@ async def test_personal_discount_code_is_stable_unique_and_bound_to_owner(test_s
         other_promo = await hub.promos.get_or_create_personal_discount_code(other.id)
 
         assert owner_promo.id == owner_promo_again.id
-        assert owner_promo.code.startswith("ALT10-")
+        assert len(owner_promo.code) == 8
+        assert owner_promo.code.isalnum()
         assert owner_promo.code != other_promo.code
         assert owner_promo.assigned_user_id == owner.id
         assert owner_promo.usage_limit == 1
@@ -84,3 +85,33 @@ async def test_next_campaign_creates_new_code_only_after_previous_discount_was_c
     assert consumed_next_campaign.id != first.id
     assert consumed_next_campaign.code != first.code
     assert consumed_next_campaign.assigned_user_id == user.id
+
+
+@pytest.mark.asyncio
+async def test_list_codes_hides_personal_codes_by_default(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=19504,
+            username="hidden_personal_promo",
+            first_name="Hidden",
+            last_name="Promo",
+            language_code="ru",
+        )
+        personal = await hub.promos.get_or_create_personal_discount_code(user.id)
+        manual = await hub.promos.create_code(
+            code="VISIBLE100",
+            name="Visible manual promo",
+            reward_kind=personal.reward_kind,
+            reward_value=Decimal("10"),
+            usage_limit=10,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+        )
+
+        default_codes = await hub.promos.list_codes()
+        all_codes = await hub.promos.list_codes(include_personal=True)
+
+    assert manual.id in {item.id for item in default_codes}
+    assert personal.id not in {item.id for item in default_codes}
+    assert personal.id in {item.id for item in all_codes}

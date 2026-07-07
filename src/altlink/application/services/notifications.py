@@ -207,6 +207,12 @@ class NotificationService(BaseService):
                     [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
                 ]
             )
+        if cta == "return_trial":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="🎁 Активировать 2 дня бесплатно", callback_data="client:trial_activate")],
+                ]
+            )
         if cta == "renewal_disabled_expiring":
             return InlineKeyboardMarkup(
                 inline_keyboard=[

@@ -23,6 +23,7 @@ from altlink.domain.billing import bytes_to_gb_cost
 from altlink.application.services.accounts import DEFAULT_USER_LIST_PAGE_SIZE, USER_LIST_PAGE_SIZE_OPTIONS, UserListFilters
 from altlink.domain.enums import (
     BalanceTransactionType,
+    NotificationStatus,
     NotificationType,
     PlanCode,
     PromoRewardKind,
@@ -31,8 +32,22 @@ from altlink.domain.enums import (
     TopupStatus,
     UserStatus,
 )
+from altlink.domain.notifications import (
+    PROMO_MESSAGE_TEMPLATES,
+    promo_template_kind,
+    render_promo_campaign_message,
+)
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
-from altlink.infrastructure.db.models import BalanceTransaction, Subscription, SystemSetting, User
+from altlink.infrastructure.db.models import (
+    BalanceTransaction,
+    Notification,
+    PromoCode,
+    PromoCodeRedemption,
+    Subscription,
+    SystemSetting,
+    User,
+)
+from altlink.application.services.billing import DEFAULT_PROMO_CAMPAIGN_SETTINGS, PROMO_CAMPAIGN_SETTINGS_KEY
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.monitoring import MonitoringService
 from altlink.presentation.bots.admin_keyboards import support_request_actions
@@ -273,6 +288,145 @@ def payment_status_label(value) -> str:
         "rejected": "Отклонён",
         "expired": "Истёк",
     }.get(raw_status, "Неизвестный статус")
+
+
+def normalize_promo_campaign_settings(value: object) -> dict[str, int | bool]:
+    raw = value if isinstance(value, dict) else {}
+    settings = dict(DEFAULT_PROMO_CAMPAIGN_SETTINGS)
+    settings.update({key: raw[key] for key in settings if key in raw})
+
+    def bounded_int(key: str, minimum: int, maximum: int, fallback: int) -> int:
+        try:
+            parsed = int(settings.get(key, fallback))
+        except (TypeError, ValueError):
+            return fallback
+        return min(max(parsed, minimum), maximum)
+
+    return {
+        "new_user_discount_percent": bounded_int("new_user_discount_percent", 1, 100, 10),
+        "lapsed_user_discount_percent": bounded_int("lapsed_user_discount_percent", 1, 100, 35),
+        "inactive_first_delay_days": bounded_int("inactive_first_delay_days", 1, 365, 3),
+        "return_trial_enabled": bool(settings.get("return_trial_enabled", True)),
+        "return_trial_cooldown_days": bounded_int("return_trial_cooldown_days", 1, 365, 30),
+    }
+
+
+def promo_template_options() -> list[dict[str, object]]:
+    return [
+        {
+            "id": template_id,
+            "kind": template["kind"],
+            "label": f"{template_id}. {'Скидка' if template['kind'] == 'discount' else 'Тест'}",
+        }
+        for template_id, template in PROMO_MESSAGE_TEMPLATES.items()
+    ]
+
+
+def promo_template_preview(template_id: int, *, discount_percent: int = 10, trial_days: int = 2) -> str:
+    kind = promo_template_kind(template_id)
+    promo_code = "ABCDEFGH" if kind == "discount" else None
+    return render_promo_campaign_message(
+        template_id,
+        promo_code=promo_code,
+        discount_percent=discount_percent,
+        trial_days=trial_days,
+    )
+
+
+def promo_notification_kind(payload: dict | None) -> str:
+    if not isinstance(payload, dict):
+        return "other"
+    if payload.get("cta") == "return_trial":
+        return "Повторный тест"
+    campaign_kind = payload.get("campaign_kind")
+    if campaign_kind == "lapsed":
+        return "Бывшие платные"
+    if campaign_kind == "new":
+        return "Новые/без оплаты"
+    if payload.get("cta") == "trial_followup":
+        return "После теста"
+    return "Другое"
+
+
+async def promo_admin_stats(session) -> dict[str, object]:
+    notifications = list(
+        (
+            await session.scalars(
+                select(Notification)
+                .where(Notification.payload.is_not(None))
+                .order_by(Notification.created_at.desc())
+                .limit(5000)
+            )
+        ).all()
+    )
+    promo_notifications = [
+        item
+        for item in notifications
+        if isinstance(item.payload, dict)
+        and item.payload.get("cta") in {"inactive_promo", "trial_followup", "return_trial"}
+    ]
+    redemptions = list(
+        (
+            await session.scalars(
+                select(PromoCodeRedemption)
+                .join(PromoCode)
+                .options(joinedload(PromoCodeRedemption.promo_code))
+                .where(PromoCode.reward_kind == PromoRewardKind.PLAN_DISCOUNT)
+                .order_by(PromoCodeRedemption.created_at.desc())
+                .limit(5000)
+            )
+        ).all()
+    )
+    codes = list((await session.scalars(select(PromoCode))).all())
+
+    sent_by_kind: dict[str, int] = {}
+    sent_by_discount: dict[str, int] = {}
+    sent_by_template: dict[str, int] = {}
+    for item in promo_notifications:
+        payload = item.payload if isinstance(item.payload, dict) else {}
+        kind = promo_notification_kind(payload)
+        sent_by_kind[kind] = sent_by_kind.get(kind, 0) + 1
+        template_id = payload.get("template_id")
+        if template_id:
+            label = f"#{template_id}"
+            sent_by_template[label] = sent_by_template.get(label, 0) + 1
+        discount = payload.get("discount_percent")
+        if discount:
+            label = f"{discount}%"
+            sent_by_discount[label] = sent_by_discount.get(label, 0) + 1
+
+    activated_by_discount: dict[str, int] = {}
+    applied_by_discount: dict[str, int] = {}
+    for redemption in redemptions:
+        promo = redemption.promo_code
+        if promo is None:
+            continue
+        label = f"{format_rub_amount(promo.reward_value)}%"
+        activated_by_discount[label] = activated_by_discount.get(label, 0) + 1
+        if redemption.applied_at is not None:
+            applied_by_discount[label] = applied_by_discount.get(label, 0) + 1
+
+    def chart_from(mapping: dict[str, int]) -> dict[str, list]:
+        return {"labels": list(mapping.keys()), "values": list(mapping.values())}
+
+    return {
+        "sent_total": len(promo_notifications),
+        "sent_pending": len([item for item in promo_notifications if item.status == NotificationStatus.PENDING]),
+        "sent_success": len([item for item in promo_notifications if item.status == NotificationStatus.SENT]),
+        "sent_failed": len([item for item in promo_notifications if item.status == NotificationStatus.FAILED]),
+        "activated_total": len(redemptions),
+        "applied_total": len([item for item in redemptions if item.applied_at is not None]),
+        "manual_codes": len([item for item in codes if item.assigned_user_id is None]),
+        "personal_codes": len([item for item in codes if item.assigned_user_id is not None]),
+        "return_trial_sent": sent_by_kind.get("Повторный тест", 0),
+        "charts": {
+            "sent_by_kind": chart_from(sent_by_kind),
+            "sent_by_discount": chart_from(sent_by_discount),
+            "sent_by_template": chart_from(sent_by_template),
+            "activated_by_discount": chart_from(activated_by_discount),
+            "applied_by_discount": chart_from(applied_by_discount),
+        },
+    }
 
 
 def access_status_label(value) -> str:
@@ -1247,6 +1401,11 @@ async def user_detail(request: Request, user_id: str):
         user_servers = await hub.catalog.get_user_servers(user_id)
         plans = await hub.dashboard.list_plans()
         devices, devices_error = await safe_user_hwid_device_views(hub, user_id)
+        has_paid_history = await hub.accounts.has_paid_subscription_history(user_id)
+        promo_setting = await hub.session.scalar(
+            select(SystemSetting).where(SystemSetting.key == PROMO_CAMPAIGN_SETTINGS_KEY)
+        )
+        promo_settings = normalize_promo_campaign_settings(promo_setting.value if promo_setting is not None else None)
         return render(
             request,
             "user_detail.html",
@@ -1258,12 +1417,102 @@ async def user_detail(request: Request, user_id: str):
             plans=plans,
             devices=devices,
             devices_error=devices_error,
+            promo_template_options=promo_template_options(),
+            promo_default_discount=(
+                promo_settings["lapsed_user_discount_percent"]
+                if has_paid_history
+                else promo_settings["new_user_discount_percent"]
+            ),
             whitelist_cost_rub=bytes_to_gb_cost(
                 card["subscription"].whitelist_traffic_used_bytes if card["subscription"] else 0,
                 Decimal(request.app.state.settings.whitelist_price_per_gb_rub),
             ),
             active_nav="users",
         )
+
+
+@router.post("/admin/users/{user_id}/promo-message")
+async def user_send_promo_message(request: Request, user_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    try:
+        template_id = int(form.get("template_id") or 1)
+    except (TypeError, ValueError):
+        template_id = 1
+    if template_id not in PROMO_MESSAGE_TEMPLATES:
+        template_id = 1
+
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        user = await hub.accounts.get_user(user_id)
+        promo_setting = await hub.session.scalar(
+            select(SystemSetting).where(SystemSetting.key == PROMO_CAMPAIGN_SETTINGS_KEY)
+        )
+        promo_settings = normalize_promo_campaign_settings(promo_setting.value if promo_setting is not None else None)
+        has_paid_history = await hub.accounts.has_paid_subscription_history(user_id)
+        default_discount = (
+            promo_settings["lapsed_user_discount_percent"]
+            if has_paid_history
+            else promo_settings["new_user_discount_percent"]
+        )
+        try:
+            discount_percent = int(form.get("discount_percent") or default_discount)
+        except (TypeError, ValueError):
+            discount_percent = int(default_discount)
+        discount_percent = min(max(discount_percent, 1), 100)
+        template_kind = promo_template_kind(template_id)
+
+        if template_kind == "trial":
+            message = render_promo_campaign_message(
+                template_id,
+                trial_days=int(request.app.state.settings.trial_duration_days or 2),
+            )
+            payload = {
+                "campaign": "manual_promo",
+                "campaign_kind": "manual_return_trial",
+                "template_id": template_id,
+                "trial_days": int(request.app.state.settings.trial_duration_days or 2),
+                "cta": "return_trial",
+                "parse_mode": "HTML",
+                "admin_id": admin.id,
+            }
+            await hub.notifications.queue(
+                user_id=user.id,
+                notification_type=NotificationType.BROADCAST,
+                message=message,
+                payload=payload,
+            )
+        else:
+            promo = await hub.promos.get_or_create_personal_discount_code(
+                user.id,
+                discount_percent=Decimal(discount_percent),
+                campaign_key=f"manual:{template_id}:{datetime.now(UTC):%Y%m%d%H%M%S}",
+            )
+            message = render_promo_campaign_message(
+                template_id,
+                promo_code=promo.code,
+                discount_percent=discount_percent,
+            )
+            payload = {
+                "promo_code": promo.code,
+                "discount_percent": discount_percent,
+                "campaign": "manual_promo",
+                "campaign_kind": "manual_discount",
+                "template_id": template_id,
+                "cta": "inactive_promo",
+                "parse_mode": "HTML",
+                "admin_id": admin.id,
+            }
+            await hub.notifications.queue(
+                user_id=user.id,
+                notification_type=NotificationType.PROMO_CODE,
+                message=message,
+                payload=payload,
+            )
+        set_flash(request, "Промо-сообщение поставлено в очередь отправки.", "success")
+        return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
 @router.post("/admin/users/sync-access")
@@ -1563,6 +1812,77 @@ async def online_page(request: Request, refresh: int = 0):
             records=records,
             active_nav="online",
         )
+
+
+@router.get("/admin/promos")
+async def promos_page(request: Request):
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        setting = await hub.session.scalar(
+            select(SystemSetting).where(SystemSetting.key == PROMO_CAMPAIGN_SETTINGS_KEY)
+        )
+        promo_settings = normalize_promo_campaign_settings(setting.value if setting is not None else None)
+        stats = await promo_admin_stats(hub.session)
+        manual_codes = await hub.promos.list_codes(limit=20)
+        return render(
+            request,
+            "promos.html",
+            title="Промо",
+            admin=admin,
+            promo_settings=promo_settings,
+            promo_stats=stats,
+            promo_charts_json=json.dumps(stats["charts"], ensure_ascii=False),
+            manual_codes=manual_codes,
+            promo_template_options=promo_template_options(),
+            promo_template_previews=[
+                {
+                    "id": item["id"],
+                    "label": item["label"],
+                    "kind": item["kind"],
+                    "preview": promo_template_preview(
+                        int(item["id"]),
+                        discount_percent=int(promo_settings["lapsed_user_discount_percent"]),
+                        trial_days=int(request.app.state.settings.trial_duration_days or 2),
+                    ),
+                }
+                for item in promo_template_options()
+            ],
+            active_nav="promos",
+        )
+
+
+@router.post("/admin/promos/settings")
+async def promos_settings_save(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    value = normalize_promo_campaign_settings(
+        {
+            "new_user_discount_percent": form.get("new_user_discount_percent"),
+            "lapsed_user_discount_percent": form.get("lapsed_user_discount_percent"),
+            "inactive_first_delay_days": form.get("inactive_first_delay_days"),
+            "return_trial_enabled": form.get("return_trial_enabled") == "1",
+            "return_trial_cooldown_days": form.get("return_trial_cooldown_days"),
+        }
+    )
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        setting = await hub.session.scalar(
+            select(SystemSetting).where(SystemSetting.key == PROMO_CAMPAIGN_SETTINGS_KEY)
+        )
+        if setting is None:
+            setting = SystemSetting(
+                key=PROMO_CAMPAIGN_SETTINGS_KEY,
+                description="Настройки автоматических промокодов и повторного тестового периода.",
+            )
+            hub.session.add(setting)
+        setting.value = value
+        setting.updated_by_admin_id = admin.id
+        set_flash(request, "Настройки промо сохранены.", "success")
+        return RedirectResponse("/admin/promos", status_code=303)
 
 
 @router.get("/admin/settings")

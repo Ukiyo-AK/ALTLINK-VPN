@@ -20,7 +20,7 @@ from altlink.domain.enums import (
     UserStatus,
 )
 from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
-from altlink.infrastructure.db.models import BalanceTransaction, PromoCodeRedemption, Subscription
+from altlink.infrastructure.db.models import BalanceTransaction, PromoCodeRedemption, Subscription, TrialPeriod
 from altlink.infrastructure.remnawave_schemas import RemoteSeriesPoint, RemoteUsageResponse, RemoteUsageTopNode
 from altlink.utils.time import ensure_utc, utc_now
 
@@ -171,7 +171,7 @@ async def test_process_due_subscriptions_queues_trial_followup_for_expired_trial
 
     followup = next(item for item in pending if item.user_id == user.id and item.dedupe_key == f"trial-followup:{subscription.id}:12h")
     assert followup.type == NotificationType.BROADCAST
-    assert followup.payload["promo_code"].startswith("ALT10-")
+    assert len(followup.payload["promo_code"]) == 8
     assert f"<code>{followup.payload['promo_code']}</code>" in followup.message
 
 
@@ -253,7 +253,7 @@ async def test_process_due_subscriptions_queues_monthly_promo_for_registered_use
 
     promo = next(item for item in pending if item.user_id == user.id and item.type == NotificationType.PROMO_CODE)
     assert promo.dedupe_key == f"inactive-promo:{user.id}:{utc_now().strftime('%Y-%m')}"
-    assert promo.payload["promo_code"].startswith("ALT10-")
+    assert len(promo.payload["promo_code"]) == 8
     assert promo.payload["promo_code"] != "ALT10"
     assert f"<code>{promo.payload['promo_code']}</code>" in promo.message
     assert "10%" in promo.message
@@ -290,6 +290,47 @@ async def test_first_inactive_promo_waits_three_full_days_after_registration(tes
     assert any(
         item.user_id == user.id and item.type == NotificationType.PROMO_CODE
         for item in pending_after
+    )
+
+
+@pytest.mark.asyncio
+async def test_long_absent_trial_user_receives_return_trial_offer(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13037,
+            username="return_trial_offer",
+            first_name="Return",
+            last_name="Trial",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=45)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+        subscription = await hub.billing.activate_trial(user.id)
+        ended_at = utc_now() - timedelta(days=31)
+        subscription.status = SubscriptionStatus.EXPIRED
+        subscription.ends_at = ended_at
+        subscription.next_billing_at = ended_at
+        user.status = UserStatus.BLOCKED
+        trial_period = await hub.accounts.session.scalar(
+            select(TrialPeriod).where(TrialPeriod.user_id == user.id)
+        )
+        trial_period.ends_at = ended_at
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    notification = next(
+        item
+        for item in pending
+        if item.user_id == user.id and item.dedupe_key == f"return-trial:{user.id}:{utc_now().strftime('%Y-%m')}"
+    )
+    assert notification.type == NotificationType.BROADCAST
+    assert notification.payload["cta"] == "return_trial"
+    assert "бесплат" in notification.message.casefold()
+    assert not any(
+        item.user_id == user.id and item.payload and item.payload.get("cta") == "trial_followup"
+        for item in pending
     )
 
 
@@ -351,7 +392,7 @@ async def test_pending_legacy_alt10_notification_is_upgraded_to_personal_code(te
         refreshed = await hub.session.get(type(legacy), legacy.id)
 
     assert refreshed is not None
-    assert refreshed.payload["promo_code"].startswith("ALT10-")
+    assert len(refreshed.payload["promo_code"]) == 8
     assert refreshed.payload["promo_code"] != "ALT10"
     assert f"<code>{refreshed.payload['promo_code']}</code>" in refreshed.message
 
@@ -423,12 +464,13 @@ async def test_lapsed_paid_user_receives_new_personal_discount_code(test_service
         for item in pending
         if item.user_id == user.id and item.type == NotificationType.PROMO_CODE
     )
-    assert notification.payload["promo_code"].startswith("ALT10-")
+    assert len(notification.payload["promo_code"]) == 8
     assert notification.payload["promo_code"] != old_promo.code
+    assert notification.payload["discount_percent"] == 35
     assert notification.dedupe_key == (
         f"inactive-promo-lapsed:{user.id}:{utc_now().strftime('%Y-%m')}"
     )
-    assert "ближайшую оплату тарифа" in notification.message
+    assert "35%" in notification.message
 
 
 @pytest.mark.asyncio

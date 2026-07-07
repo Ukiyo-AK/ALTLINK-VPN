@@ -62,6 +62,23 @@
       </label>
       <button type="submit" class="button">Применить тариф</button>
     </form>
+    <form method="post" action="/admin/users/{{ user.id }}/promo-message" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Отправить промо-сообщение</span>
+        <select name="template_id">
+          {% for item in promo_template_options %}
+          <option value="{{ item.id }}">{{ item.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Скидка для шаблонов с промокодом, %</span>
+        <input type="number" min="1" max="100" name="discount_percent" value="{{ promo_default_discount }}">
+      </label>
+      <p class="muted">Шаблоны «Тест» отправят кнопку повторной активации trial, если пользователь имеет право на неё.</p>
+      <button type="submit" class="button ghost">Поставить в очередь</button>
+    </form>
   </article>
 </section>
 
