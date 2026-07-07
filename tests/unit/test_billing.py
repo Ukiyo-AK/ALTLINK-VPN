@@ -160,6 +160,9 @@ async def test_process_due_subscriptions_queues_trial_followup_for_expired_trial
             last_name="Followup",
             language_code="ru",
         )
+        registered_at = utc_now() - timedelta(days=4)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
         subscription = await hub.billing.activate_trial(user.id)
         subscription.status = SubscriptionStatus.EXPIRED
         subscription.ends_at = utc_now() - timedelta(hours=13)
@@ -173,6 +176,10 @@ async def test_process_due_subscriptions_queues_trial_followup_for_expired_trial
     assert followup.type == NotificationType.BROADCAST
     assert len(followup.payload["promo_code"]) == 8
     assert f"<code>{followup.payload['promo_code']}</code>" in followup.message
+    assert not any(
+        item.user_id == user.id and item.dedupe_key == f"inactive-promo:{user.id}:{utc_now().strftime('%Y-%m')}"
+        for item in pending
+    )
 
 
 @pytest.mark.asyncio
@@ -294,7 +301,8 @@ async def test_first_inactive_promo_waits_three_full_days_after_registration(tes
 
 
 @pytest.mark.asyncio
-async def test_long_absent_trial_user_receives_return_trial_offer(test_services):
+async def test_long_absent_trial_user_receives_return_trial_offer(test_services, monkeypatch):
+    monkeypatch.setattr(BillingService, "_choose_return_trial", staticmethod(lambda *_: True))
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=13037,
@@ -332,6 +340,42 @@ async def test_long_absent_trial_user_receives_return_trial_offer(test_services)
         item.user_id == user.id and item.payload and item.payload.get("cta") == "trial_followup"
         for item in pending
     )
+
+
+@pytest.mark.asyncio
+async def test_long_absent_trial_user_can_receive_deep_discount(test_services, monkeypatch):
+    monkeypatch.setattr(BillingService, "_choose_return_trial", staticmethod(lambda *_: False))
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13038,
+            username="return_trial_discount",
+            first_name="Return",
+            last_name="Discount",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=45)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+        subscription = await hub.billing.activate_trial(user.id)
+        ended_at = utc_now() - timedelta(days=31)
+        subscription.status = SubscriptionStatus.EXPIRED
+        subscription.ends_at = ended_at
+        subscription.next_billing_at = ended_at
+        user.status = UserStatus.BLOCKED
+        trial_period = await hub.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user.id))
+        trial_period.ends_at = ended_at
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    notification = next(
+        item
+        for item in pending
+        if item.user_id == user.id and item.type == NotificationType.PROMO_CODE
+    )
+    assert notification.payload["discount_percent"] == 35
+    assert notification.dedupe_key == f"inactive-promo-trial-deep:{user.id}:{utc_now().strftime('%Y-%m')}"
+    assert "35%" in notification.message
 
 
 @pytest.mark.asyncio
@@ -420,7 +464,7 @@ async def test_process_due_subscriptions_skips_promo_for_users_with_active_paid_
 
 
 @pytest.mark.asyncio
-async def test_lapsed_paid_user_receives_new_personal_discount_code(test_services):
+async def test_recent_lapsed_paid_user_receives_ten_percent_discount_after_one_day(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=13035,
@@ -442,7 +486,7 @@ async def test_lapsed_paid_user_receives_new_personal_discount_code(test_service
             notification_type=NotificationType.PROMO_CODE,
             message="Предыдущая скидка",
             payload={"promo_code": old_promo.code},
-            dedupe_key=f"inactive-promo:{user.id}:{utc_now().strftime('%Y-%m')}",
+            dedupe_key=f"inactive-promo:{user.id}:{(utc_now() - timedelta(days=40)).strftime('%Y-%m')}",
         )
         previous_campaign.status = NotificationStatus.SENT
         await hub.promos.redeem_code(user.id, old_promo.code)
@@ -453,7 +497,10 @@ async def test_lapsed_paid_user_receives_new_personal_discount_code(test_service
             charge_user=True,
         )
         subscription.status = SubscriptionStatus.BLOCKED
-        subscription.blocked_at = utc_now()
+        inactive_at = utc_now() - timedelta(days=2)
+        subscription.blocked_at = inactive_at
+        subscription.ends_at = inactive_at
+        subscription.next_billing_at = inactive_at
         user.status = UserStatus.BLOCKED
 
         await hub.billing.process_due_subscriptions()
@@ -466,11 +513,185 @@ async def test_lapsed_paid_user_receives_new_personal_discount_code(test_service
     )
     assert len(notification.payload["promo_code"]) == 8
     assert notification.payload["promo_code"] != old_promo.code
+    assert notification.payload["discount_percent"] == 10
+    assert notification.dedupe_key == (
+        f"inactive-promo-lapsed-fresh:{user.id}:{utc_now().strftime('%Y-%m')}"
+    )
+    assert "10%" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_current_month_generic_promo_blocks_new_lapsed_campaign(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13042,
+            username="generic_promo_block",
+            first_name="Generic",
+            last_name="PromoBlock",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=60)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+        previous_campaign = await hub.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.PROMO_CODE,
+            message="Старая промо-рассылка",
+            payload={"cta": "inactive_promo", "promo_code": "OLDPROMO"},
+            dedupe_key=f"inactive-promo:{user.id}:{utc_now().strftime('%Y-%m')}",
+        )
+        previous_campaign.status = NotificationStatus.SENT
+
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        inactive_at = utc_now() - timedelta(days=2)
+        subscription.status = SubscriptionStatus.BLOCKED
+        subscription.blocked_at = inactive_at
+        subscription.ends_at = inactive_at
+        subscription.next_billing_at = inactive_at
+        user.status = UserStatus.BLOCKED
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    assert not any(
+        item.user_id == user.id
+        and item.dedupe_key == f"inactive-promo-lapsed-fresh:{user.id}:{utc_now().strftime('%Y-%m')}"
+        for item in pending
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_lapsed_promo_key_blocks_new_lapsed_campaign(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13040,
+            username="legacy_lapsed_block",
+            first_name="Legacy",
+            last_name="Lapsed",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=60)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        inactive_at = utc_now() - timedelta(days=2)
+        subscription.status = SubscriptionStatus.BLOCKED
+        subscription.blocked_at = inactive_at
+        subscription.ends_at = inactive_at
+        subscription.next_billing_at = inactive_at
+        user.status = UserStatus.BLOCKED
+        legacy = await hub.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.PROMO_CODE,
+            message="Старая промо-рассылка",
+            payload={"cta": "inactive_promo", "promo_code": "OLDPROMO"},
+            dedupe_key=f"inactive-promo-lapsed:{user.id}:{utc_now().strftime('%Y-%m')}",
+        )
+        legacy.status = NotificationStatus.SENT
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    assert not any(
+        item.user_id == user.id
+        and item.dedupe_key == f"inactive-promo-lapsed-fresh:{user.id}:{utc_now().strftime('%Y-%m')}"
+        for item in pending
+    )
+
+
+@pytest.mark.asyncio
+async def test_deep_lapsed_paid_user_can_receive_thirty_five_percent_discount(test_services, monkeypatch):
+    monkeypatch.setattr(BillingService, "_choose_return_trial", staticmethod(lambda *_: False))
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13039,
+            username="promo_deep_lapsed_paid",
+            first_name="Promo",
+            last_name="DeepLapsed",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=70)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        inactive_at = utc_now() - timedelta(days=31)
+        subscription.status = SubscriptionStatus.BLOCKED
+        subscription.blocked_at = inactive_at
+        subscription.ends_at = inactive_at
+        subscription.next_billing_at = inactive_at
+        user.status = UserStatus.BLOCKED
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    notification = next(
+        item
+        for item in pending
+        if item.user_id == user.id and item.type == NotificationType.PROMO_CODE
+    )
     assert notification.payload["discount_percent"] == 35
     assert notification.dedupe_key == (
-        f"inactive-promo-lapsed:{user.id}:{utc_now().strftime('%Y-%m')}"
+        f"inactive-promo-lapsed-deep:{user.id}:{utc_now().strftime('%Y-%m')}"
     )
     assert "35%" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_existing_monthly_trial_followup_blocks_deep_trial_campaign(test_services, monkeypatch):
+    monkeypatch.setattr(BillingService, "_choose_return_trial", staticmethod(lambda *_: False))
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13041,
+            username="legacy_trial_followup_block",
+            first_name="Legacy",
+            last_name="TrialFollowup",
+            language_code="ru",
+        )
+        registered_at = utc_now() - timedelta(days=45)
+        user.registration_completed_at = registered_at
+        user.consent_accepted_at = registered_at
+        subscription = await hub.billing.activate_trial(user.id)
+        ended_at = utc_now() - timedelta(days=31)
+        subscription.status = SubscriptionStatus.EXPIRED
+        subscription.ends_at = ended_at
+        subscription.next_billing_at = ended_at
+        user.status = UserStatus.BLOCKED
+        trial_period = await hub.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user.id))
+        trial_period.ends_at = ended_at
+        legacy = await hub.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.BROADCAST,
+            message="Старый follow-up после теста",
+            payload={"cta": "trial_followup", "promo_code": "OLDPROMO"},
+            dedupe_key=f"trial-followup:{subscription.id}:12h",
+        )
+        legacy.status = NotificationStatus.SENT
+
+        await hub.billing.process_due_subscriptions()
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
+
+    assert not any(
+        item.user_id == user.id
+        and item.dedupe_key == f"inactive-promo-trial-deep:{user.id}:{utc_now().strftime('%Y-%m')}"
+        for item in pending
+    )
 
 
 @pytest.mark.asyncio

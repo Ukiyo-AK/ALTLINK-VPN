@@ -306,6 +306,8 @@ def normalize_promo_campaign_settings(value: object) -> dict[str, int | bool]:
         "new_user_discount_percent": bounded_int("new_user_discount_percent", 1, 100, 10),
         "lapsed_user_discount_percent": bounded_int("lapsed_user_discount_percent", 1, 100, 35),
         "inactive_first_delay_days": bounded_int("inactive_first_delay_days", 1, 365, 3),
+        "lapsed_first_delay_days": bounded_int("lapsed_first_delay_days", 1, 365, 1),
+        "deep_winback_delay_days": bounded_int("deep_winback_delay_days", 1, 365, 30),
         "return_trial_enabled": bool(settings.get("return_trial_enabled", True)),
         "return_trial_cooldown_days": bounded_int("return_trial_cooldown_days", 1, 365, 30),
     }
@@ -339,12 +341,16 @@ def promo_notification_kind(payload: dict | None) -> str:
     if payload.get("cta") == "return_trial":
         return "Повторный тест"
     campaign_kind = payload.get("campaign_kind")
-    if campaign_kind == "lapsed":
-        return "Бывшие платные"
-    if campaign_kind == "new":
+    if campaign_kind == "lapsed_fresh":
+        return "Бывшие платные · 10%"
+    if campaign_kind == "lapsed_deep":
+        return "Бывшие платные · 35%"
+    if campaign_kind == "new_fresh":
         return "Новые/без оплаты"
+    if campaign_kind == "new_deep":
+        return "Давний trial · 35%"
     if payload.get("cta") == "trial_followup":
-        return "После теста"
+        return "Свежий trial · 10%"
     return "Другое"
 
 
@@ -1862,6 +1868,8 @@ async def promos_settings_save(request: Request):
             "new_user_discount_percent": form.get("new_user_discount_percent"),
             "lapsed_user_discount_percent": form.get("lapsed_user_discount_percent"),
             "inactive_first_delay_days": form.get("inactive_first_delay_days"),
+            "lapsed_first_delay_days": form.get("lapsed_first_delay_days"),
+            "deep_winback_delay_days": form.get("deep_winback_delay_days"),
             "return_trial_enabled": form.get("return_trial_enabled") == "1",
             "return_trial_cooldown_days": form.get("return_trial_cooldown_days"),
         }

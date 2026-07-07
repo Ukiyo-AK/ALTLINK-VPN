@@ -17,6 +17,14 @@
         <span>Первое промо после регистрации, дней</span>
         <input type="number" min="1" max="365" name="inactive_first_delay_days" value="{{ promo_settings.inactive_first_delay_days }}">
       </label>
+      <label>
+        <span>Бывшему платнику первая скидка через, дней</span>
+        <input type="number" min="1" max="365" name="lapsed_first_delay_days" value="{{ promo_settings.lapsed_first_delay_days }}">
+      </label>
+      <label>
+        <span>Давний возврат через, дней</span>
+        <input type="number" min="1" max="365" name="deep_winback_delay_days" value="{{ promo_settings.deep_winback_delay_days }}">
+      </label>
       <label class="inline-form">
         <input type="checkbox" name="return_trial_enabled" value="1" {% if promo_settings.return_trial_enabled %}checked{% endif %}>
         <span>Предлагать повторный тест долго отсутствующим</span>

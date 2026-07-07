@@ -44,6 +44,7 @@ from altlink.domain.notifications import (
 from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code
 from altlink.infrastructure.db.models import (
     OnlineSessionCache,
+    Notification,
     Plan,
     Server,
     Subscription,
@@ -71,6 +72,8 @@ DEFAULT_PROMO_CAMPAIGN_SETTINGS = {
     "new_user_discount_percent": 10,
     "lapsed_user_discount_percent": 35,
     "inactive_first_delay_days": 3,
+    "lapsed_first_delay_days": 1,
+    "deep_winback_delay_days": 30,
     "return_trial_enabled": True,
     "return_trial_cooldown_days": 30,
 }
@@ -1035,6 +1038,8 @@ class BillingService(BaseService):
             "new_user_discount_percent": self._bounded_int(values["new_user_discount_percent"], 1, 100, 10),
             "lapsed_user_discount_percent": self._bounded_int(values["lapsed_user_discount_percent"], 1, 100, 35),
             "inactive_first_delay_days": self._bounded_int(values["inactive_first_delay_days"], 1, 365, 3),
+            "lapsed_first_delay_days": self._bounded_int(values["lapsed_first_delay_days"], 1, 365, 1),
+            "deep_winback_delay_days": self._bounded_int(values["deep_winback_delay_days"], 1, 365, 30),
             "return_trial_enabled": bool(values["return_trial_enabled"]),
             "return_trial_cooldown_days": self._bounded_int(values["return_trial_cooldown_days"], 1, 365, 30),
         }
@@ -1056,6 +1061,96 @@ class BillingService(BaseService):
 
     async def _trial_period_for_user(self, user_id: str) -> TrialPeriod | None:
         return await self.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user_id))
+
+    async def _latest_paid_subscription_for_user(self, user_id: str) -> Subscription | None:
+        return await self.session.scalar(
+            select(Subscription)
+            .join(Plan, Subscription.plan_id == Plan.id)
+            .where(
+                Subscription.user_id == user_id,
+                Plan.is_trial.is_(False),
+            )
+            .order_by(Subscription.ends_at.desc(), Subscription.created_at.desc())
+            .limit(1)
+        )
+
+    @staticmethod
+    def _subscription_inactive_since(subscription: Subscription | None) -> datetime | None:
+        if subscription is None:
+            return None
+        for value in (
+            subscription.blocked_at,
+            subscription.canceled_at,
+            subscription.ends_at,
+            subscription.updated_at,
+        ):
+            if value is not None:
+                return ensure_utc(value)
+        return None
+
+    def _return_trial_allowed(
+        self,
+        trial_period: TrialPeriod | None,
+        now: datetime,
+        promo_settings: dict[str, int | bool],
+    ) -> bool:
+        if not bool(promo_settings["return_trial_enabled"]):
+            return False
+        if trial_period is None:
+            return True
+        if not trial_period.consumed:
+            return True
+        return ensure_utc(trial_period.ends_at) <= now - timedelta(
+            days=int(promo_settings["return_trial_cooldown_days"])
+        )
+
+    @staticmethod
+    def _choose_return_trial(user_id: str, campaign_key: str) -> bool:
+        digest = hashlib.sha256(f"return-trial-choice:{user_id}:{campaign_key}".encode("utf-8")).hexdigest()
+        return int(digest[:8], 16) % 2 == 0
+
+    async def _has_monthly_winback_contact(
+        self,
+        user_id: str,
+        month_key: str,
+        *,
+        ignore_pending_dedupe_keys: set[str] | None = None,
+    ) -> bool:
+        legacy_and_current_keys = [
+            f"inactive-promo:{user_id}:{month_key}",
+            f"inactive-promo-lapsed:{user_id}:{month_key}",
+            f"inactive-promo-lapsed-fresh:{user_id}:{month_key}",
+            f"inactive-promo-lapsed-deep:{user_id}:{month_key}",
+            f"inactive-promo-trial-deep:{user_id}:{month_key}",
+            f"return-trial:{user_id}:{month_key}",
+        ]
+        month_start = datetime.fromisoformat(f"{month_key}-01T00:00:00+00:00")
+        ignored_pending = ignore_pending_dedupe_keys or set()
+        monthly_contacts = list(
+            (
+                await self.session.scalars(
+                    select(Notification).where(
+                        Notification.user_id == user_id,
+                        or_(
+                            Notification.dedupe_key.in_(legacy_and_current_keys),
+                            Notification.created_at >= month_start,
+                        ),
+                    )
+                )
+            ).all()
+        )
+        for item in monthly_contacts:
+            payload = item.payload if isinstance(item.payload, dict) else {}
+            is_winback_contact = item.dedupe_key in legacy_and_current_keys or (
+                ensure_utc(item.created_at) >= month_start
+                and payload.get("cta") in {"inactive_promo", "trial_followup", "return_trial"}
+            )
+            if not is_winback_contact:
+                continue
+            if item.status == NotificationStatus.PENDING and item.dedupe_key in ignored_pending:
+                continue
+            return True
+        return False
 
     async def _queue_inactive_user_promos(self, now: datetime) -> None:
         promo_settings = await self._promo_campaign_settings()
@@ -1092,7 +1187,6 @@ class BillingService(BaseService):
                         paid_subscription_history_exists.label("has_paid_history"),
                     ).where(
                         User.registration_completed_at.is_not(None),
-                        User.registration_completed_at < registered_before,
                         ~active_paid_subscription_exists,
                     )
                 )
@@ -1102,15 +1196,56 @@ class BillingService(BaseService):
         for user, has_paid_history in users:
             campaign_kind = "lapsed" if has_paid_history else "new"
             trial_period = await self._trial_period_for_user(user.id)
-            return_trial_ready = (
-                bool(promo_settings["return_trial_enabled"])
-                and not has_paid_history
+            if await self.accounts.get_current_subscription(user.id) is not None:
+                continue
+
+            latest_paid_subscription = (
+                await self._latest_paid_subscription_for_user(user.id)
+                if has_paid_history
+                else None
+            )
+            paid_inactive_since = self._subscription_inactive_since(latest_paid_subscription)
+            paid_inactive_for = (
+                now - paid_inactive_since
+                if paid_inactive_since is not None
+                else None
+            )
+            paid_is_deep_winback = bool(
+                has_paid_history
+                and paid_inactive_for is not None
+                and paid_inactive_for >= timedelta(days=int(promo_settings["deep_winback_delay_days"]))
+            )
+            trial_is_deep_winback = bool(
+                not has_paid_history
                 and trial_period is not None
                 and trial_period.consumed
                 and ensure_utc(trial_period.ends_at)
-                <= now - timedelta(days=int(promo_settings["return_trial_cooldown_days"]))
+                <= now - timedelta(days=int(promo_settings["deep_winback_delay_days"]))
+            )
+
+            if has_paid_history:
+                if paid_inactive_for is None or paid_inactive_for < timedelta(
+                    days=int(promo_settings["lapsed_first_delay_days"])
+                ):
+                    continue
+            else:
+                if user.registration_completed_at is None or ensure_utc(user.registration_completed_at) >= registered_before:
+                    continue
+
+            deep_campaign = paid_is_deep_winback or trial_is_deep_winback
+            return_trial_ready = (
+                deep_campaign
+                and self._return_trial_allowed(trial_period, now, promo_settings)
+                and self._choose_return_trial(user.id, f"{campaign_kind}:{month_key}")
             )
             if return_trial_ready:
+                dedupe_key = f"return-trial:{user.id}:{month_key}"
+                if await self._has_monthly_winback_contact(
+                    user.id,
+                    month_key,
+                    ignore_pending_dedupe_keys={dedupe_key},
+                ):
+                    continue
                 campaign_key = f"return-trial:{month_key}"
                 template_id = self._select_campaign_template(
                     user.id,
@@ -1134,19 +1269,25 @@ class BillingService(BaseService):
                     notification_type=NotificationType.BROADCAST,
                     message=message,
                     payload=payload,
-                    dedupe_key=f"return-trial:{user.id}:{month_key}",
+                    dedupe_key=dedupe_key,
                 )
                 if notification.status == NotificationStatus.PENDING:
                     notification.message = message
                     notification.payload = payload
                 continue
+            if not has_paid_history and trial_period is not None and trial_period.consumed and not trial_is_deep_winback:
+                continue
 
             discount_percent = (
                 int(promo_settings["lapsed_user_discount_percent"])
-                if has_paid_history
+                if deep_campaign
                 else int(promo_settings["new_user_discount_percent"])
             )
-            campaign_key = f"inactive:{campaign_kind}:{month_key}"
+            campaign_key = (
+                f"inactive:{campaign_kind}:deep:{month_key}"
+                if deep_campaign
+                else f"inactive:{campaign_kind}:fresh:{month_key}"
+            )
             promo = await self.promos.get_or_create_personal_discount_code(
                 user.id,
                 discount_percent=Decimal(discount_percent),
@@ -1166,21 +1307,32 @@ class BillingService(BaseService):
                 "promo_code": promo.code,
                 "discount_percent": discount_percent,
                 "campaign": "inactive_monthly",
-                "campaign_kind": campaign_kind,
+                "campaign_kind": f"{campaign_kind}_deep" if deep_campaign else f"{campaign_kind}_fresh",
                 "template_id": template_id,
                 "cta": "inactive_promo",
                 "parse_mode": "HTML",
             }
+            dedupe_key = (
+                f"inactive-promo-lapsed-deep:{user.id}:{month_key}"
+                if has_paid_history and deep_campaign
+                else f"inactive-promo-lapsed-fresh:{user.id}:{month_key}"
+                if has_paid_history
+                else f"inactive-promo-trial-deep:{user.id}:{month_key}"
+                if deep_campaign
+                else f"inactive-promo:{user.id}:{month_key}"
+            )
+            if await self._has_monthly_winback_contact(
+                user.id,
+                month_key,
+                ignore_pending_dedupe_keys={dedupe_key},
+            ):
+                continue
             notification = await self.notifications.queue(
                 user_id=user.id,
                 notification_type=NotificationType.PROMO_CODE,
                 message=message,
                 payload=payload,
-                dedupe_key=(
-                    f"inactive-promo-lapsed:{user.id}:{month_key}"
-                    if has_paid_history
-                    else f"inactive-promo:{user.id}:{month_key}"
-                ),
+                dedupe_key=dedupe_key,
             )
             if notification.status == NotificationStatus.PENDING:
                 notification.message = message
@@ -1189,6 +1341,7 @@ class BillingService(BaseService):
     async def _queue_post_trial_followups(self, now: datetime) -> None:
         promo_settings = await self._promo_campaign_settings()
         discount_percent = int(promo_settings["new_user_discount_percent"])
+        month_key = now.strftime("%Y-%m")
         followup_ready_at = now - timedelta(hours=12)
         subscriptions = list(
             (
@@ -1218,13 +1371,20 @@ class BillingService(BaseService):
                 continue
             if await self.accounts.get_current_subscription(user.id) is not None:
                 continue
+            dedupe_key = f"trial-followup:{subscription.id}:12h"
+            if await self._has_monthly_winback_contact(
+                user.id,
+                month_key,
+                ignore_pending_dedupe_keys={dedupe_key},
+            ):
+                continue
             trial_period = await self._trial_period_for_user(user.id)
             if (
                 bool(promo_settings["return_trial_enabled"])
                 and trial_period is not None
                 and trial_period.consumed
                 and ensure_utc(trial_period.ends_at)
-                <= now - timedelta(days=int(promo_settings["return_trial_cooldown_days"]))
+                <= now - timedelta(days=int(promo_settings["deep_winback_delay_days"]))
             ):
                 continue
             promo = await self.promos.get_or_create_personal_discount_code(
@@ -1245,7 +1405,7 @@ class BillingService(BaseService):
                 notification_type=NotificationType.BROADCAST,
                 message=message,
                 payload=payload,
-                dedupe_key=f"trial-followup:{subscription.id}:12h",
+                dedupe_key=dedupe_key,
             )
             if notification.status == NotificationStatus.PENDING:
                 notification.message = message
