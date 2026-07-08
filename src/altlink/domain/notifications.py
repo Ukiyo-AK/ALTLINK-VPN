@@ -89,6 +89,17 @@ def blocked_message(*, grace_ended: bool = False) -> str:
     )
 
 
+def start_whitelist_access_blocked_message(balance: Decimal) -> str:
+    return (
+        "⚠️ Доступ к серверам белых списков временно закрыт.\n\n"
+        "На тарифе Start белые списки оплачиваются отдельно. "
+        "Баланс достиг порога для временного закрытия этого режима.\n\n"
+        f"Текущий баланс: {rub(balance)}\n"
+        "Основной сервер Start продолжает работать.\n\n"
+        "Пополните баланс, чтобы снова открыть доступ к серверам белых списков."
+    )
+
+
 def topup_approved_message(amount: Decimal) -> str:
     return f"✅ Платёж подтверждён. На баланс зачислено {rub(amount)}."
 

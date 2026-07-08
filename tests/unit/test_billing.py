@@ -792,6 +792,7 @@ async def test_start_whitelist_traffic_is_charged_immediately_and_caps_balance_a
         active_accesses = await hub.catalog.get_user_servers(user.id)
         servers = await hub.catalog.list_servers()
         remote_user = await test_services.remnawave.get_user(refreshed_user.remnawave_user_uuid)
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
 
     assert refreshed_subscription is not None
     assert Decimal(refreshed_user.balance_rub) == Decimal("-50.00")
@@ -813,6 +814,17 @@ async def test_start_whitelist_traffic_is_charged_immediately_and_caps_balance_a
     remote_squad_ids = {item.uuid for item in remote_user.activeInternalSquads}
     assert remote_squad_ids.isdisjoint(whitelist_squad_ids)
     assert remote_squad_ids & ten_gbit_squad_ids
+    notification = next(
+        item
+        for item in pending
+        if item.user_id == user.id
+        and item.type == NotificationType.BROADCAST
+        and item.payload
+        and item.payload.get("kind") == "start_whitelist_access_blocked"
+    )
+    assert "Доступ к серверам белых списков временно закрыт" in notification.message
+    assert "Основной сервер Start продолжает работать" in notification.message
+    assert notification.payload["cta"] == "access_blocked"
 
 
 @pytest.mark.asyncio
@@ -847,6 +859,51 @@ async def test_start_whitelist_access_is_restored_after_balance_topup(test_servi
     assert ServerType.WHITELIST not in blocked_types
     assert ServerType.WHITELIST in restored_types
     assert remote_squad_ids == restored_squad_ids
+
+
+@pytest.mark.asyncio
+async def test_existing_start_user_at_whitelist_floor_gets_single_blocked_notice(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13043,
+            username="start_whitelist_existing_floor",
+            first_name="Start",
+            last_name="ExistingFloor",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        whitelist_node = next(node for node in test_services.remnawave.nodes.values() if "Whitelist" in node.name)
+        used_bytes = 2 * 1024**3
+
+        user.balance_rub = Decimal("-50.00")
+        subscription.whitelist_traffic_used_bytes = used_bytes
+        subscription.whitelist_traffic_billed_bytes = used_bytes
+        test_services.remnawave.set_usage(
+            user.remnawave_user_uuid,
+            used_bytes=used_bytes,
+            lifetime_used_bytes=used_bytes,
+        )
+        test_services.remnawave.set_node_usage(
+            whitelist_node.uuid,
+            user.remnawave_user_uuid,
+            used_bytes,
+        )
+
+        await hub.billing.snapshot_traffic()
+        await hub.billing.snapshot_traffic()
+
+        pending = [
+            item
+            for item in (await hub.session.scalars(await hub.notifications.pending_query(limit=30))).all()
+            if item.user_id == user.id
+            and item.type == NotificationType.BROADCAST
+            and item.payload
+            and item.payload.get("kind") == "start_whitelist_access_blocked"
+        ]
+
+    assert len(pending) == 1
+    assert pending[0].payload["cta"] == "access_blocked"
 
 
 @pytest.mark.asyncio

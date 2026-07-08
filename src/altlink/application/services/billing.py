@@ -35,6 +35,7 @@ from altlink.domain.notifications import (
     renewal_disabled_expiring_message,
     RETURN_TRIAL_TEMPLATE_IDS,
     return_trial_offer_message,
+    start_whitelist_access_blocked_message,
     trial_followup_message,
     trial_expiring_message,
     trial_ended_message,
@@ -949,12 +950,16 @@ class BillingService(BaseService):
             subscription.whitelist_traffic_billed_bytes = billed_bytes
 
         outstanding_charge = self._compute_unbilled_whitelist_charge(subscription)
+        current_balance = Decimal(user.balance_rub)
         if outstanding_charge <= Decimal("0.00"):
+            if current_balance <= START_WHITELIST_BALANCE_FLOOR_RUB and used_bytes > 0:
+                await self._queue_start_whitelist_access_blocked_notification(user, subscription, used_bytes)
             return False
 
-        current_balance = Decimal(user.balance_rub)
         available_charge_room = quantize_money(current_balance - START_WHITELIST_BALANCE_FLOOR_RUB)
         if available_charge_room <= Decimal("0.00"):
+            if used_bytes > 0:
+                await self._queue_start_whitelist_access_blocked_notification(user, subscription, used_bytes)
             return False
 
         requested_charge = min(outstanding_charge, available_charge_room)
@@ -987,7 +992,27 @@ class BillingService(BaseService):
             # Долг по whitelist для Start ограничен балансом -50 ₽: перерасход между замерами
             # не переносим скрытой задолженностью на будущие пополнения.
             subscription.whitelist_traffic_billed_bytes = used_bytes
+            await self._queue_start_whitelist_access_blocked_notification(user, subscription, used_bytes)
         return whitelist_access_lost
+
+    async def _queue_start_whitelist_access_blocked_notification(
+        self,
+        user: User,
+        subscription: Subscription,
+        used_bytes: int,
+    ) -> None:
+        await self.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.BROADCAST,
+            message=start_whitelist_access_blocked_message(Decimal(user.balance_rub)),
+            payload={
+                "kind": "start_whitelist_access_blocked",
+                "cta": "access_blocked",
+                "balance_rub": str(Decimal(user.balance_rub)),
+                "whitelist_traffic_used_bytes": used_bytes,
+            },
+            dedupe_key=f"start-whitelist-access-blocked:{subscription.id}:{used_bytes}",
+        )
 
     def _compute_unbilled_whitelist_charge(self, subscription: Subscription) -> Decimal:
         used_bytes = max(int(subscription.whitelist_traffic_used_bytes or 0), 0)

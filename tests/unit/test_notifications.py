@@ -15,6 +15,7 @@ from altlink.domain.notifications import (
     inactive_subscription_promo_message,
     low_balance_message,
     renewal_disabled_expiring_message,
+    start_whitelist_access_blocked_message,
     trial_followup_message,
     trial_expiring_message,
     trial_setup_help_message,
@@ -71,6 +72,15 @@ def test_blocked_message_uses_subscription_wording_by_default():
 def test_blocked_message_can_explain_finished_grace_period():
     message = blocked_message(grace_ended=True)
     assert "Льготный период закончился" in message
+
+
+def test_start_whitelist_access_blocked_message_is_partial_access_warning():
+    message = start_whitelist_access_blocked_message(Decimal("-50"))
+
+    assert "белых списков" in message
+    assert "Основной сервер Start продолжает работать" in message
+    assert "Текущий баланс: -50.00 ₽" in message
+    assert "Доступ к VPN заблокирован" not in message
 
 
 def test_trial_expiring_message_mentions_window_deadline_and_emoji():
