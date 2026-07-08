@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,22 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message, Update
 
 from altlink.presentation.bots import admin_handlers
+
+
+def test_parse_promo_payload_treats_expires_as_moscow_time():
+    payload = admin_handlers.parse_promo_payload(
+        "\n".join(
+            [
+                "CODE=WINBACK35",
+                "TYPE=discount",
+                "VALUE=35",
+                "USES=10",
+                "EXPIRES=2026-07-08 12:30 МСК",
+            ]
+        )
+    )
+
+    assert payload["expires_at"] == datetime(2026, 7, 8, 9, 30, tzinfo=UTC)
 
 
 @pytest.mark.asyncio

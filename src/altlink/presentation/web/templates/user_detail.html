@@ -12,7 +12,7 @@
       <div><dt>Баланс</dt><dd>{{ user.balance_rub|rub }} ₽</dd></div>
       <div><dt>Назначенный 10 Гбит сервер</dt><dd>{{ user.assigned_server.name if user.assigned_server else '—' }}</dd></div>
       <div><dt>Тариф</dt><dd>{{ subscription.plan.name if subscription else '—' }}</dd></div>
-      <div><dt>Следующее списание</dt><dd>{{ subscription.next_billing_at if subscription else '—' }}</dd></div>
+      <div><dt>Следующее списание</dt><dd>{{ subscription.next_billing_at|msk_datetime if subscription else '—' }}</dd></div>
       <div><dt>Автопродление</dt><dd>{{ 'включено' if subscription and subscription.auto_renew else 'отключено' }}</dd></div>
       <div><dt>Лимит устройств</dt><dd>{{ subscription.plan.device_limit if subscription and subscription.plan else '—' }}</dd></div>
       <div><dt>Whitelist трафик</dt><dd>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes if subscription else 0) / 1024**3) }} ГБ</dd></div>
@@ -98,8 +98,8 @@
         <td>{{ device.name }}</td>
         <td>{{ device.client }}</td>
         <td>{{ device.platform }}{% if device.os_version != 'Не определена' %} • {{ device.os_version }}{% endif %}</td>
-        <td>{{ device.last_connected_at.strftime('%d.%m.%Y %H:%M') }}</td>
-        <td>{{ device.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        <td>{{ device.last_connected_at|msk_datetime }}</td>
+        <td>{{ device.created_at|msk_datetime }}</td>
       </tr>
       {% else %}
       <tr><td colspan="5" class="muted">Совместимые клиенты пока не зарегистрировали устройства.</td></tr>
@@ -137,7 +137,7 @@
         <tr>
           <td>{{ topup.amount_rub|rub }} ₽</td>
           <td>{{ topup.status }}</td>
-          <td>{{ topup.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td>{{ topup.created_at|msk_datetime }}</td>
         </tr>
         {% else %}
         <tr><td colspan="3" class="muted">Платежей пока нет.</td></tr>
@@ -157,7 +157,7 @@
         <td>{{ tx.type }}</td>
         <td>{{ tx.amount_rub|rub }} ₽</td>
         <td>{{ tx.description or '—' }}</td>
-        <td>{{ tx.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        <td>{{ tx.created_at|msk_datetime }}</td>
       </tr>
       {% else %}
       <tr><td colspan="4" class="muted">Транзакций пока нет.</td></tr>

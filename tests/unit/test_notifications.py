@@ -30,9 +30,12 @@ def test_low_balance_message_contains_amounts_date_and_emoji():
         "меньше 3 дней",
     )
     assert "⚠️" in message
+    assert "Не хватает средств" in message
+    assert "Текущий баланс: 12.00 ₽" in message
+    assert "К списанию: 100.00 ₽" in message
     assert "12.00" in message
     assert "100.00" in message
-    assert "01.01.2026" in message
+    assert "01.01.2026 03:00 МСК" in message
     assert "меньше 3 дней" in message
 
 
@@ -45,7 +48,7 @@ def test_upcoming_renewal_message_contains_current_balance_charge_and_date():
 
     assert "Текущий баланс: 25.00 ₽" in message
     assert "К списанию: 69.00 ₽" in message
-    assert "05.07.2026 12:00" in message
+    assert "05.07.2026 15:00 МСК" in message
 
 
 def test_grace_started_message_mentions_deadline_and_emoji():
@@ -56,7 +59,7 @@ def test_grace_started_message_mentions_deadline_and_emoji():
     )
     assert "⏳" in message
     assert "200.00" in message
-    assert "15.01.2026" in message
+    assert "15.01.2026 13:30 МСК" in message
 
 
 def test_blocked_message_uses_subscription_wording_by_default():
@@ -77,7 +80,7 @@ def test_trial_expiring_message_mentions_window_deadline_and_emoji():
     )
     assert "⏳" in message
     assert "24 часа" in message
-    assert "15.01.2026" in message
+    assert "15.01.2026 13:30 МСК" in message
 
 
 def test_inactive_subscription_promo_message_contains_code_discount_and_emoji():
@@ -112,7 +115,7 @@ def test_renewal_disabled_expiring_message_contains_balance_charge_and_deadline(
     assert "Автопродление сейчас отключено" in message
     assert "50.00 ₽" in message
     assert "69.00 ₽" in message
-    assert "05.07.2026 12:00" in message
+    assert "05.07.2026 15:00 МСК" in message
     assert "не потерять доступ" in message
 
 
@@ -125,6 +128,25 @@ def test_renewal_disabled_notification_has_resume_and_topup_buttons():
     assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
         ["client:subscription_resume"],
         ["client:topup_menu"],
+    ]
+
+
+def test_low_balance_notification_has_topup_button():
+    markup = NotificationService._notification_reply_markup({"cta": "low_balance"})
+
+    assert markup is not None
+    assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
+        ["client:topup_menu"],
+    ]
+
+
+def test_access_blocked_notification_has_recovery_buttons():
+    markup = NotificationService._notification_reply_markup({"cta": "access_blocked"})
+
+    assert markup is not None
+    assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
+        ["client:topup_menu"],
+        ["client:subscription"],
     ]
 
 

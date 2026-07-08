@@ -225,6 +225,19 @@ class NotificationService(BaseService):
                     [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
                 ]
             )
+        if cta == "low_balance":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
+                ]
+            )
+        if cta == "access_blocked":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
+                    [InlineKeyboardButton(text="🧾 Подписка", callback_data="client:subscription")],
+                ]
+            )
         if cta in {"inactive_promo", "trial_followup"}:
             promo_code = payload.get("promo_code")
             if not isinstance(promo_code, str) or not promo_code or len(promo_code) > 40:

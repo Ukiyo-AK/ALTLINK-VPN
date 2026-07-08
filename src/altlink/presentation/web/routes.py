@@ -69,6 +69,7 @@ from altlink.utils.telegram_web import (
     verify_telegram_auth_payload,
     verify_telegram_webapp_init_data,
 )
+from altlink.utils.time import MOSCOW_TZ, format_msk_date, format_msk_datetime
 
 router = APIRouter(tags=["web"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -202,7 +203,7 @@ def parse_date_query(value: str | None, *, end_of_day: bool = False) -> datetime
     except ValueError:
         return None
     edge = time.max if end_of_day else time.min
-    return datetime.combine(parsed, edge, tzinfo=UTC)
+    return datetime.combine(parsed, edge, tzinfo=MOSCOW_TZ).astimezone(UTC)
 
 
 def normalize_user_list_limit(value: int | None) -> int:
@@ -473,6 +474,9 @@ templates.env.filters["user_status"] = user_status_label
 templates.env.filters["payment_status"] = payment_status_label
 templates.env.filters["access_status"] = access_status_label
 templates.env.filters["support_status"] = support_status_label
+templates.env.filters["msk_datetime"] = format_msk_datetime
+templates.env.filters["msk_short_datetime"] = lambda value: format_msk_datetime(value, "%d.%m %H:%M")
+templates.env.filters["msk_date"] = format_msk_date
 
 
 def latency_quality_label(latency_ms) -> str:

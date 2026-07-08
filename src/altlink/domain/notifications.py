@@ -4,13 +4,15 @@ from datetime import datetime
 from decimal import Decimal
 from html import escape
 
+from altlink.utils.time import format_msk_datetime
+
 
 def rub(amount: Decimal | int | float) -> str:
     return f"{Decimal(amount):.2f} ₽"
 
 
 def format_datetime(dt: datetime) -> str:
-    return dt.strftime("%d.%m.%Y %H:%M")
+    return format_msk_datetime(dt)
 
 
 def low_balance_message(
@@ -20,12 +22,12 @@ def low_balance_message(
     reminder_window: str,
 ) -> str:
     return (
-        "⚠️ Баланс почти закончился.\n\n"
+        "⚠️ Не хватает средств для автопродления.\n\n"
         f"До следующего списания осталось {reminder_window}.\n"
-        f"Сейчас на счёте: {rub(balance)}\n"
-        f"Ближайшее списание: {rub(next_charge)}\n"
+        f"Текущий баланс: {rub(balance)}\n"
+        f"К списанию: {rub(next_charge)}\n"
         f"Дата списания: {format_datetime(due_at)}\n\n"
-        "Пополните баланс заранее, чтобы доступ не прервался."
+        "Пополните баланс до этой даты, чтобы доступ не прервался."
     )
 
 

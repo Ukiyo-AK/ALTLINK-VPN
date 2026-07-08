@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -78,6 +79,20 @@ def test_group_portal_plans_merges_monthly_and_weekly_variants():
     ]
     assert [period["price_label"] for period in groups[0]["periods"]] == ["69", "25"]
     assert [period["price_label"] for period in groups[1]["periods"]] == ["199", "65"]
+
+
+def test_parse_date_query_uses_moscow_day_boundaries():
+    assert web_routes.parse_date_query("2026-07-08") == datetime(2026, 7, 7, 21, 0, tzinfo=UTC)
+    assert web_routes.parse_date_query("2026-07-08", end_of_day=True) == datetime(
+        2026,
+        7,
+        8,
+        20,
+        59,
+        59,
+        999999,
+        tzinfo=UTC,
+    )
 
 
 def test_group_portal_plans_keeps_device_limit_on_group():

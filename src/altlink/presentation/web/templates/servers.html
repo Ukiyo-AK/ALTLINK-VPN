@@ -9,7 +9,7 @@
 
 <section class="panel">
   {% if server_latency_checked_at %}
-  <p class="muted">Последняя latency-проверка: {{ server_latency_checked_at }}</p>
+  <p class="muted">Последняя latency-проверка: {{ server_latency_checked_at|msk_datetime }}</p>
   {% endif %}
   <table class="table">
     <thead>
@@ -73,7 +73,7 @@
             {% if latency.probe_target_host %}
             <span class="muted">Цель: {{ latency.probe_target_host }}:{{ latency.probe_target_port or '—' }}</span><br>
             {% endif %}
-            <span class="muted">{{ latency.checked_at or '—' }}</span>
+            <span class="muted">{{ latency.checked_at|msk_datetime if latency.checked_at else '—' }}</span>
           {% else %}
             <span class="muted">Нет данных</span>
           {% endif %}

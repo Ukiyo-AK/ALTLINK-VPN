@@ -15,7 +15,7 @@
         <td>{{ item.remote_ip or '—' }}</td>
         <td>{{ item.device or item.user_agent or '—' }}</td>
         <td>{{ item.inbound or '—' }}</td>
-        <td>{{ item.last_activity_at or '—' }}</td>
+        <td>{{ item.last_activity_at|msk_datetime if item.last_activity_at else '—' }}</td>
         <td>{{ 'online' if item.is_online else 'offline' }}</td>
       </tr>
       {% else %}

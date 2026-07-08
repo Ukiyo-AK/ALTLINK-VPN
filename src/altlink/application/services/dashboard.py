@@ -23,7 +23,7 @@ from altlink.infrastructure.db.models import (
     TrialPeriod,
     User,
 )
-from altlink.utils.time import ensure_utc, utc_now
+from altlink.utils.time import ensure_utc, to_moscow, utc_now
 
 
 @dataclass(slots=True)
@@ -297,7 +297,12 @@ class DashboardService(BaseService):
         labels = []
         for index in range(bucket_count):
             bucket_start = start + timedelta(seconds=bucket_seconds * index)
-            labels.append(bucket_start.strftime("%H:%M") if duration <= timedelta(days=1) else bucket_start.strftime("%d.%m"))
+            local_bucket_start = to_moscow(bucket_start)
+            labels.append(
+                f"{local_bucket_start:%H:%M} МСК"
+                if duration <= timedelta(days=1)
+                else f"{local_bucket_start:%d.%m} МСК"
+            )
         return DashboardWindow(
             key=key,
             label=label,

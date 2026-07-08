@@ -62,6 +62,7 @@ from altlink.utils.devices import hwid_device_fingerprint, hwid_device_view
 from altlink.utils.media import media_path
 from altlink.utils.qr import render_qr_png
 from altlink.utils.telegram_web import check_channel_membership
+from altlink.utils.time import format_msk_datetime
 
 router = Router(name="client-router")
 logger = logging.getLogger(__name__)
@@ -648,7 +649,7 @@ def subscription_markup(subscription):
 
 
 def format_hwid_device_datetime(value) -> str:
-    return value.strftime("%d.%m.%Y %H:%M") if value else "—"
+    return format_msk_datetime(value) if value else "—"
 
 
 def hwid_device_details_text(device: dict[str, object]) -> str:
@@ -739,7 +740,7 @@ def activation_success_caption(subscription, payload: str) -> str:
     plan_name = html.escape(subscription.plan.name if subscription and subscription.plan else "VPN")
     return (
         f"✅ Тариф «{plan_name}» активирован.\n\n"
-        f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}\n"
+        f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}\n"
         f"Формат списания: {billing_cycle_label(subscription.plan)}\n"
         f"Лимит устройств: {device_limit_label(subscription.plan)}\n\n"
         "🔗 Ваша персональная ссылка VPN\n"
@@ -752,7 +753,7 @@ def trial_activation_caption(subscription, payload: str) -> str:
     escaped_payload = html.escape(payload)
     return (
         "🎁 Тестовый период Pro активирован.\n\n"
-        f"Доступ ко всем активным серверам открыт до {subscription.ends_at:%d.%m.%Y %H:%M}.\n"
+        f"Доступ ко всем активным серверам открыт до {format_msk_datetime(subscription.ends_at)}.\n"
         f"Лимит устройств: {device_limit_label(subscription.plan)}\n\n"
         "🔗 Ваша персональная ссылка VPN\n"
         f"<code>{escaped_payload}</code>\n\n"
@@ -1172,9 +1173,9 @@ def profile_text(user, subscription, settings) -> str:
         if subscription.plan and not subscription.plan.is_trial:
             auto_renew = "включено" if subscription.auto_renew else "отключено"
             lines.append(f"Автопродление: {auto_renew}")
-            lines.append(f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
+            lines.append(f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}")
         else:
-            lines.append(f"Действует до: {subscription.next_billing_at:%d.%m.%Y %H:%M}")
+            lines.append(f"Действует до: {format_msk_datetime(subscription.next_billing_at)}")
     return "\n".join(lines)
 
 
@@ -1216,7 +1217,7 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         f"✨ Статус: {user.status}",
         f"🧾 Тариф: {subscription.plan.name}",
         f"🔁 Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
-        f"📅 Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}",
+        f"📅 Следующее списание: {format_msk_datetime(subscription.next_billing_at)}",
         f"📱 Лимит устройств: {device_limit_label(subscription.plan)}",
     ]
     if subscription.notes:
@@ -2462,7 +2463,7 @@ async def my_topups(callback: CallbackQuery, container: AppContainer):
     else:
         text = "История платежей\n\n" + "\n".join(
             [
-                f"• {Decimal(item.amount_rub):.2f} ₽ — {topup_status_label(str(item.status))} — {item.created_at:%d.%m %H:%M}"
+                f"• {Decimal(item.amount_rub):.2f} ₽ — {topup_status_label(str(item.status))} — {format_msk_datetime(item.created_at, '%d.%m %H:%M')}"
                 for item in requests[:10]
             ]
         )
@@ -2753,7 +2754,7 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
             activation_payload = resolve_subscription_payload(bundle)
             text = (
                 "Тестовый период Pro активирован.\n\n"
-                f"Доступ ко всем активным серверам будет работать до {subscription.ends_at:%d.%m.%Y %H:%M}.\n"
+                f"Доступ ко всем активным серверам будет работать до {format_msk_datetime(subscription.ends_at)}.\n"
                 f"Лимит устройств: {device_limit_label(subscription.plan)}"
             )
             if not activation_payload:
@@ -2817,7 +2818,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
             subscription = await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
             text = (
                 f"Тариф «{subscription.plan.name}» активирован.\n\n"
-                f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}\n"
+                f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}\n"
                 f"Формат списания: {billing_cycle_label(subscription.plan)}\n"
                 f"Лимит устройств: {device_limit_label(subscription.plan)}"
             )
@@ -2959,7 +2960,7 @@ async def subscription_cancel(callback: CallbackQuery, container: AppContainer):
             subscription = await hub.billing.cancel_subscription_renewal(user.id)
             text = (
                 "Автопродление отключено.\n\n"
-                f"Доступ сохранится до {subscription.ends_at:%d.%m.%Y %H:%M}, после этого подписка завершится."
+                f"Доступ сохранится до {format_msk_datetime(subscription.ends_at)}, после этого подписка завершится."
             )
         except (ConflictError, NotFoundError, ServiceError) as exc:
             text = str(exc)
@@ -3153,7 +3154,7 @@ async def traffic(callback: CallbackQuery, container: AppContainer):
                 f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ\n"
                 f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
                 f"Начисление к следующему продлению: {white_cost:.2f} ₽\n"
-                f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}"
+                f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}"
             )
     await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
     return
@@ -3177,6 +3178,6 @@ async def traffic(callback: CallbackQuery, container: AppContainer):
                 f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
                 f"Начислено за белые списки: {white_cost:.2f} ₽\n"
                 f"Накопленный долг: {Decimal(subscription.accrued_debt_rub):.2f} ₽\n"
-                f"Следующее списание: {subscription.next_billing_at:%d.%m.%Y %H:%M}"
+                f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}"
             )
     await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))

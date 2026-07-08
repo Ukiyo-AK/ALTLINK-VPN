@@ -44,6 +44,7 @@ async def test_monthly_renewal_blocks_user_without_balance(test_services):
     )
     assert "Подписка не была продлена" in blocked_notification.message
     assert "Льготный период закончился" not in blocked_notification.message
+    assert blocked_notification.payload["cta"] == "access_blocked"
 
 
 @pytest.mark.asyncio
@@ -79,6 +80,7 @@ async def test_grace_renewal_blocks_user_with_grace_wording(test_services):
         item for item in pending if item.user_id == user.id and item.type == NotificationType.ACCESS_BLOCKED
     )
     assert "Льготный период закончился" in blocked_notification.message
+    assert blocked_notification.payload["cta"] == "access_blocked"
 
 
 @pytest.mark.asyncio

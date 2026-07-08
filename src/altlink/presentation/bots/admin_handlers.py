@@ -95,6 +95,7 @@ from altlink.presentation.bots.admin_keyboards import (
 )
 from altlink.utils.media import media_path
 from altlink.utils.devices import hwid_device_view
+from altlink.utils.time import MOSCOW_TZ, format_msk_datetime
 
 router = Router(name="admin-router")
 logger = logging.getLogger(__name__)
@@ -451,7 +452,7 @@ def format_system_events(events) -> str:
     lines = ["Системный журнал", "", "Последние события приложения:"]
     for event in events:
         level = SYSTEM_EVENT_LEVEL_LABELS.get(str(event.level), str(event.level).upper())
-        lines.append(f"{event.created_at:%d.%m %H:%M} • {level}")
+        lines.append(f"{format_msk_datetime(event.created_at, '%d.%m %H:%M')} • {level}")
         lines.append(f"{event.source} / {event.event_type}")
         lines.append(compact_text(event.message, 180))
         details = format_event_payload(event.payload)
@@ -480,7 +481,7 @@ def format_activity_summary(summary: dict | None) -> list[str]:
     if summary.get("last_ip"):
         lines.append(f"Последний IP: {summary['last_ip']}")
     if summary.get("last_seen_at"):
-        lines.append(f"Последняя активность: {summary['last_seen_at']}")
+        lines.append(f"Последняя активность: {format_msk_datetime(summary['last_seen_at'])}")
     recent_devices = summary.get("recent_devices") or []
     if recent_devices:
         device_line = ", ".join(
@@ -506,21 +507,21 @@ def format_support_request(item) -> str:
         f"Пользователь: {user_label(user)}",
         f"Telegram ID: {user.telegram_id if user else 'n/a'}",
         f"Статус: {status}",
-        f"Создан: {item.created_at:%d.%m.%Y %H:%M}",
+        f"Создан: {format_msk_datetime(item.created_at)}",
         f"Тема: {item.topic}",
     ]
     if messages:
         lines.extend(["", "Чат:"])
         for message in messages[-6:]:
             sender = "Админ" if message.sender_type == "admin" else "Пользователь"
-            lines.append(f"{sender} · {message.created_at:%d.%m %H:%M}")
+            lines.append(f"{sender} · {format_msk_datetime(message.created_at, '%d.%m %H:%M')}")
             lines.append(message.message)
     else:
         lines.extend(["", item.message])
     if item.resolution_comment:
         lines.extend(["", f"Комментарий закрытия: {item.resolution_comment}"])
     if item.resolved_at:
-        lines.append(f"Закрыт: {item.resolved_at:%d.%m.%Y %H:%M}")
+        lines.append(f"Закрыт: {format_msk_datetime(item.resolved_at)}")
     return "\n".join(lines)
 
 
@@ -557,7 +558,7 @@ def format_payment_request(item) -> str:
         f"Telegram ID: {item.user.telegram_id if item.user else 'n/a'}",
         f"Сумма: {Decimal(item.amount_rub):.2f} ₽",
         f"Статус: {status_label}",
-        f"Создан: {item.created_at:%d.%m.%Y %H:%M}",
+        f"Создан: {format_msk_datetime(item.created_at)}",
     ]
     if item.user_comment:
         lines.extend(["", f"Комментарий пользователя: {item.user_comment}"])
@@ -595,7 +596,7 @@ def format_payment_request(item) -> str:
         f"РЎСѓРјРјР°: {Decimal(item.amount_rub):.2f} в‚Ѕ",
         f"РЎРїРѕСЃРѕР±: {payment_provider_label(item)}",
         f"РЎС‚Р°С‚СѓСЃ: {payment_status_label(item)}",
-        f"РЎРѕР·РґР°РЅ: {item.created_at:%d.%m.%Y %H:%M}",
+        f"РЎРѕР·РґР°РЅ: {format_msk_datetime(item.created_at)}",
     ]
     if item.user_comment:
         lines.extend(["", f"РљРѕРјРјРµРЅС‚Р°СЂРёР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ: {item.user_comment}"])
@@ -676,7 +677,7 @@ def format_payment_request(item) -> str:
         f"\u0421\u0443\u043c\u043c\u0430: {Decimal(item.amount_rub):.2f} \u20bd",
         f"\u0421\u043f\u043e\u0441\u043e\u0431: {payment_provider_label(item)}",
         f"\u0421\u0442\u0430\u0442\u0443\u0441: {payment_status_label(item)}",
-        f"\u0421\u043e\u0437\u0434\u0430\u043d: {item.created_at:%d.%m.%Y %H:%M}",
+        f"\u0421\u043e\u0437\u0434\u0430\u043d: {format_msk_datetime(item.created_at)}",
     ]
     if item.user_comment:
         lines.extend(["", f"\u041a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0439 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044f: {item.user_comment}"])
@@ -963,7 +964,7 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
 
     plan = subscription.plan if subscription else getattr(latest_subscription, "plan", None)
     plan_name = plan.name if plan else "не выбран"
-    next_billing = subscription.next_billing_at.strftime("%d.%m.%Y %H:%M") if subscription else "—"
+    next_billing = format_msk_datetime(subscription.next_billing_at) if subscription else "—"
     assigned_server = user.assigned_server.name if user.assigned_server else "не назначен"
     lines = [
         "Карточка пользователя",
@@ -1009,7 +1010,7 @@ def clamp_admin_hwid_device_page(devices: list[dict[str, object]], page: int) ->
 
 
 def format_admin_hwid_device_datetime(value) -> str:
-    return value.strftime("%d.%m.%Y %H:%M") if value else "—"
+    return format_msk_datetime(value) if value else "—"
 
 
 async def show_user_hwid_devices(target: Message | CallbackQuery, user_id: str, container: AppContainer, *, page: int = 0):
@@ -1081,7 +1082,7 @@ async def show_subscription_controls(target: Message | CallbackQuery, user_id: s
         "Управление подпиской\n\n"
         f"Пользователь: {user_label(user)}\n"
         f"Текущий тариф: {subscription.plan.name if subscription else 'нет активного тарифа'}\n"
-        f"Следующее списание: {subscription.next_billing_at if subscription else '—'}\n"
+        f"Следующее списание: {format_msk_datetime(subscription.next_billing_at) if subscription else '—'}\n"
         f"Автопродление: {'включено' if subscription and subscription.auto_renew else 'отключено'}\n\n"
         "Здесь можно выдать тест, вручную активировать или деактивировать доступ и выбрать нужный тариф."
     )
@@ -1232,7 +1233,7 @@ def format_promo_list(items) -> str:
             if item.usage_limit is not None
             else f"{item.used_count}/∞"
         )
-        expiry = item.expires_at.strftime("%d.%m.%Y %H:%M") if item.expires_at else "без срока"
+        expiry = format_msk_datetime(item.expires_at) if item.expires_at else "без срока"
         lines.append(
             f"{item.code} — {'активен' if item.is_active else 'отключён'}\n"
             f"Награда: {reward_label}\n"
@@ -1254,7 +1255,7 @@ def promo_create_help_text() -> str:
         "TYPE=balance или discount\n"
         "VALUE=100\n"
         "USES=50 или *\n"
-        "EXPIRES=2026-05-31 23:59 или *\n"
+        "EXPIRES=2026-05-31 23:59 МСК или *\n"
         "NEW_ONLY=yes или no"
     )
 
@@ -1297,6 +1298,7 @@ def parse_promo_payload(raw_text: str) -> dict:
     expires_raw = values.get("expires") or values.get("expires_at") or "*"
     expires_at = None
     if expires_raw not in {"*", "∞", "inf"}:
+        expires_raw = re.sub(r"\s*(мск|msk)\s*$", "", expires_raw.strip(), flags=re.IGNORECASE)
         parsed = None
         for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
             try:
@@ -1306,7 +1308,7 @@ def parse_promo_payload(raw_text: str) -> dict:
                 continue
         if parsed is None:
             raise ConflictError("EXPIRES должен быть в формате YYYY-MM-DD или YYYY-MM-DD HH:MM.")
-        expires_at = parsed.replace(tzinfo=UTC)
+        expires_at = parsed.replace(tzinfo=MOSCOW_TZ).astimezone(UTC)
 
     new_only_raw = (values.get("new_only") or values.get("new_users_only") or "no").strip().lower()
     new_users_only = new_only_raw in {"yes", "y", "true", "1", "да"}
@@ -2203,7 +2205,7 @@ async def online(message: Message, container: AppContainer):
                 f"Устройство: {summary.get('current_device')}",
                 f"Уникальных устройств: {summary.get('unique_device_count', 0)}",
                 f"Уникальных IP: {summary.get('unique_ip_count', 0)}",
-                f"Последняя активность: {item.last_activity_at.strftime('%d.%m %H:%M') if item.last_activity_at else '—'}",
+                f"Последняя активность: {format_msk_datetime(item.last_activity_at, '%d.%m %H:%M') if item.last_activity_at else '—'}",
                 "",
             ]
         )

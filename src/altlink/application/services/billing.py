@@ -39,7 +39,6 @@ from altlink.domain.notifications import (
     trial_expiring_message,
     trial_ended_message,
     trial_setup_help_message,
-    upcoming_renewal_message,
 )
 from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code
 from altlink.infrastructure.db.models import (
@@ -606,13 +605,6 @@ class BillingService(BaseService):
                 dedupe_key=f"renewal-disabled-expiring:{subscription.id}:{due_at.isoformat()}",
             )
         needs_topup_for_renewal = subscription.auto_renew and balance_rub < renewal_charge
-        if needs_topup_for_renewal and due_at - now <= timedelta(days=1):
-            await self.notifications.queue(
-                user_id=user.id,
-                notification_type=NotificationType.UPCOMING_RENEWAL,
-                message=upcoming_renewal_message(balance_rub, renewal_charge, due_at),
-                dedupe_key=f"renewal:{subscription.id}:{now.date().isoformat()}",
-            )
         threshold = Decimal(self.settings.low_balance_threshold_rub)
         reminder_window = self._low_balance_reminder_window(due_at - now)
         if (
@@ -630,6 +622,10 @@ class BillingService(BaseService):
                     due_at,
                     reminder_label,
                 ),
+                payload={
+                    "kind": "low_balance",
+                    "cta": "low_balance",
+                },
                 dedupe_key=f"low-balance:{subscription.id}:{due_at.isoformat()}:{reminder_key}",
             )
         return False
@@ -757,6 +753,10 @@ class BillingService(BaseService):
             user_id=user.id,
             notification_type=NotificationType.ACCESS_BLOCKED,
             message=blocked_message(grace_ended=grace_ended),
+            payload={
+                "kind": "access_blocked",
+                "cta": "access_blocked",
+            },
             dedupe_key=f"blocked:{subscription.id}",
         )
 

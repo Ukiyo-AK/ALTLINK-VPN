@@ -10,7 +10,7 @@
         <td>{{ tx.type }}</td>
         <td>{{ tx.amount_rub|rub }} ₽</td>
         <td>{{ tx.description or '—' }}</td>
-        <td>{{ tx.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        <td>{{ tx.created_at|msk_datetime }}</td>
       </tr>
       {% else %}
       <tr><td colspan="5" class="muted">Транзакций пока нет.</td></tr>

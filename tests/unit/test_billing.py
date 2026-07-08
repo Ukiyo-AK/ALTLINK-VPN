@@ -887,11 +887,19 @@ async def test_renewal_reminders_require_enabled_autorenew_and_insufficient_bala
     )
     assert "Автопродление сейчас отключено" in disabled_autorenew_notice.message
     assert disabled_autorenew_notice.payload["cta"] == "renewal_disabled_expiring"
-    assert {
-        item.type
+    low_balance_notice = next(
+        item
         for item in insufficient_balance_notifications
-        if item.user_id == user.id and item.type in reminder_types
-    } == reminder_types
+        if item.user_id == user.id and item.type == NotificationType.LOW_BALANCE
+    )
+    assert not any(
+        item.user_id == user.id and item.type == NotificationType.UPCOMING_RENEWAL
+        for item in insufficient_balance_notifications
+    )
+    assert low_balance_notice.payload["cta"] == "low_balance"
+    assert "Не хватает средств" in low_balance_notice.message
+    assert "Текущий баланс: 0.00 ₽" in low_balance_notice.message
+    assert f"К списанию: {Decimal(subscription.plan.price_rub):.2f} ₽" in low_balance_notice.message
 
 
 @pytest.mark.asyncio

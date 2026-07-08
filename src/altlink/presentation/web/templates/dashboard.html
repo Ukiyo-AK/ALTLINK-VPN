@@ -213,7 +213,7 @@
           <td>{{ item.user.username or item.user.telegram_id }}</td>
           <td>{{ item.amount_rub|rub }} ₽</td>
           <td>{{ item.status }}</td>
-          <td>{{ item.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+          <td>{{ item.created_at|msk_datetime }}</td>
         </tr>
         {% else %}
         <tr><td colspan="4" class="muted">Платежей пока нет.</td></tr>

@@ -195,9 +195,9 @@
         <td>{{ '%.2f'|format(user.admin_whitelist_traffic_bytes / 1024**3) }} ГБ</td>
         <td>{{ ('%.2f'|format(user.admin_node_traffic_bytes / 1024**3) ~ ' ГБ') if filters.node_id else '—' }}</td>
         <td>{{ user.admin_device_count }}</td>
-        <td>{{ subscription.next_billing_at.strftime('%d.%m.%Y') if subscription else '—' }}</td>
-        <td>{{ user.created_at.strftime('%d.%m.%Y') }}</td>
-        <td>{{ user.last_seen_at.strftime('%d.%m.%Y %H:%M') if user.last_seen_at else '—' }}</td>
+        <td>{{ subscription.next_billing_at|msk_datetime if subscription else '—' }}</td>
+        <td>{{ user.created_at|msk_datetime }}</td>
+        <td>{{ user.last_seen_at|msk_datetime if user.last_seen_at else '—' }}</td>
       </tr>
       {% else %}
       <tr><td colspan="11" class="muted">Пользователи не найдены.</td></tr>

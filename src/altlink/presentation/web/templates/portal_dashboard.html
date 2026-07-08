@@ -229,7 +229,7 @@
               <div class="portal-chat-message{% if item.sender_type == 'admin' %} is-admin{% endif %}">
                 <div class="portal-chat-meta">
                   <span>{{ 'Поддержка' if item.sender_type == 'admin' else 'Вы' }}</span>
-                  <time>{{ item.created_at.strftime('%d.%m %H:%M') }}</time>
+                  <time>{{ item.created_at|msk_short_datetime }}</time>
                 </div>
                 <p>{{ item.message }}</p>
               </div>
@@ -275,7 +275,7 @@
               </div>
               <div class="portal-metric">
                 <span>Списание</span>
-                <strong>{{ portal_subscription.next_billing_at.strftime('%d.%m.%Y') if portal_subscription and portal_subscription.next_billing_at else '—' }}</strong>
+                <strong>{{ portal_subscription.next_billing_at|msk_datetime if portal_subscription and portal_subscription.next_billing_at else '—' }}</strong>
               </div>
               <div class="portal-metric">
                 <span>Автопродление</span>
@@ -367,8 +367,8 @@
               <tr>
                 <td>{{ device.name }}</td>
                 <td>{{ device.client }}</td>
-                <td>{{ device.last_connected_at.strftime('%d.%m.%Y %H:%M') if device.last_connected_at else '—' }}</td>
-                <td>{{ device.created_at.strftime('%d.%m.%Y %H:%M') if device.created_at else '—' }}</td>
+                <td>{{ device.last_connected_at|msk_datetime if device.last_connected_at else '—' }}</td>
+                <td>{{ device.created_at|msk_datetime if device.created_at else '—' }}</td>
                 <td>
                   <form method="post" action="/portal/devices/delete" onsubmit="return confirm('Удалить это устройство?')">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -522,7 +522,7 @@
               <tr>
                 <td>{{ payment.amount_rub|rub }} ₽</td>
                 <td>{{ payment.status|payment_status }}</td>
-                <td>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                <td>{{ payment.created_at|msk_datetime }}</td>
               </tr>
               {% else %}
               <tr><td colspan="3" class="muted">Платежей пока нет.</td></tr>
@@ -780,7 +780,7 @@
           <div class="portal-chat-message{% if item.sender_type == 'admin' %} is-admin{% endif %}">
             <div class="portal-chat-meta">
               <span>{{ 'Поддержка' if item.sender_type == 'admin' else 'Вы' }}</span>
-              <time>{{ item.created_at.strftime('%d.%m %H:%M') }}</time>
+              <time>{{ item.created_at|msk_short_datetime }}</time>
             </div>
             <p>{{ item.message }}</p>
           </div>
@@ -815,7 +815,7 @@
             <summary>
               <span>
                 <strong>{{ request.topic }}</strong>
-                <small>{{ request.created_at.strftime('%d.%m.%Y') }} · Закрыт</small>
+                <small>{{ request.created_at|msk_date }} · Закрыт</small>
               </span>
             </summary>
             <div class="portal-chat-thread">
@@ -823,7 +823,7 @@
               <div class="portal-chat-message{% if item.sender_type == 'admin' %} is-admin{% endif %}">
                 <div class="portal-chat-meta">
                   <span>{{ 'Поддержка' if item.sender_type == 'admin' else 'Вы' }}</span>
-                  <time>{{ item.created_at.strftime('%d.%m %H:%M') }}</time>
+                  <time>{{ item.created_at|msk_short_datetime }}</time>
                 </div>
                 <p>{{ item.message }}</p>
               </div>
@@ -852,7 +852,7 @@
         </div>
         <div class="portal-metric">
           <span>Списание</span>
-          <strong>{{ portal_subscription.next_billing_at.strftime('%d.%m.%Y') if portal_subscription and portal_subscription.next_billing_at else '—' }}</strong>
+          <strong>{{ portal_subscription.next_billing_at|msk_datetime if portal_subscription and portal_subscription.next_billing_at else '—' }}</strong>
         </div>
       </div>
       {% if portal_subscription_payload %}
@@ -925,8 +925,8 @@
         <article class="portal-mobile-list-card">
           <strong>{{ device.name }}</strong>
           <span>{{ device.client }}</span>
-          <span>Последнее подключение: {{ device.last_connected_at.strftime('%d.%m.%Y %H:%M') if device.last_connected_at else '—' }}</span>
-          <span>Создано: {{ device.created_at.strftime('%d.%m.%Y %H:%M') if device.created_at else '—' }}</span>
+          <span>Последнее подключение: {{ device.last_connected_at|msk_datetime if device.last_connected_at else '—' }}</span>
+          <span>Создано: {{ device.created_at|msk_datetime if device.created_at else '—' }}</span>
           <form method="post" action="/portal/devices/delete" onsubmit="return confirm('Удалить это устройство?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="hidden" name="hwid" value="{{ device.hwid }}">
@@ -952,7 +952,7 @@
         <article class="portal-mobile-list-card">
           <strong>{{ payment.amount_rub|rub }} ₽</strong>
           <span>{{ payment.status|payment_status }}</span>
-          <span>{{ payment.created_at.strftime('%d.%m.%Y %H:%M') }}</span>
+          <span>{{ payment.created_at|msk_datetime }}</span>
         </article>
         {% else %}
         <p class="muted">Платежей пока нет.</p>
