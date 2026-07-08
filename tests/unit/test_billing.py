@@ -881,7 +881,7 @@ async def test_start_renewal_charge_does_not_repeat_whitelist_usage_that_was_alr
         renewal_charge = hub.billing._compute_renewal_charge(refreshed_subscription, refreshed_subscription.plan)
 
     assert refreshed_subscription is not None
-    assert Decimal(refreshed_user.balance_rub) == Decimal("29.00")
+    assert Decimal(refreshed_user.balance_rub) == Decimal("27.00")
     assert renewal_charge == SINGLE_10GBIT_MONTHLY_PRICE_RUB
 
 

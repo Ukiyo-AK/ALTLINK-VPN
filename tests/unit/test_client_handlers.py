@@ -316,9 +316,9 @@ def test_home_text_for_start_shows_whitelist_tariff_warning_and_totals():
 
     text = client_handlers.home_text(user, subscription, settings)
 
-    assert "⚠️ Start: белые списки тарифицируются отдельно — 1 ₽/ГБ." in text
+    assert "⚠️ Start: белые списки тарифицируются отдельно — 2 ₽/ГБ." in text
     assert "При балансе -50 ₽ доступ к белым спискам временно закрывается." in text
-    assert "БС: 2.00 ГБ • учтено 2.00 ₽" in text
+    assert "БС: 2.00 ГБ • учтено 4.00 ₽" in text
 
 
 def test_profile_text_keeps_only_key_details_and_links():
@@ -361,9 +361,9 @@ def test_profile_text_for_start_shows_whitelist_tariff_warning_and_totals():
 
     text = client_handlers.profile_text(user, subscription, settings)
 
-    assert "⚠️ Start: белые списки тарифицируются отдельно — 1 ₽/ГБ." in text
+    assert "⚠️ Start: белые списки тарифицируются отдельно — 2 ₽/ГБ." in text
     assert "При балансе -50 ₽ доступ к белым спискам временно закрывается." in text
-    assert "БС: 2.00 ГБ • учтено 2.00 ₽" in text
+    assert "БС: 2.00 ГБ • учтено 4.00 ₽" in text
 
 
 def test_home_text_without_subscription_points_user_to_subscription_button():
@@ -429,7 +429,7 @@ def test_subscription_text_for_start_on_whitelist_server_keeps_billing_details_w
         activity_summary={"current_server_type": "whitelist", "recent_server_types": ["whitelist"]},
     )
 
-    assert "Учтено за белые списки: 2.00 ₽" in text
+    assert "Учтено за белые списки: 4.00 ₽" in text
     assert "Текущий баланс: 42.50 ₽" not in text
     assert "ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ" not in text
     assert "Whitelist EU" not in text
@@ -1042,7 +1042,7 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "До 8 устройств" in text
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "серверы со скоростью до 10 Гбит/с" in text
-    assert "🛡️ Белые списки отдельно: 1 ₽ за 1 ГБ, лимит долга -50 ₽" in text
+    assert "🛡️ Белые списки отдельно: 2 ₽ за 1 ГБ, лимит долга -50 ₽" in text
     assert "🛡️ Поддержка режима белых списков" in text
     assert "⚡ — высокоскоростной сервер" in text
     assert "«БС» — сервер белых списков" in text
@@ -1163,7 +1163,7 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "В интерфейсе он отмечен ⚡" in text
     assert "Что такое режим белых списков" in text
-    assert "1 ₽ за 1 ГБ" in text
+    assert "2 ₽ за 1 ГБ" in text
     assert "При балансе -50 ₽ доступ к ним временно закрывается." in text
 
 
