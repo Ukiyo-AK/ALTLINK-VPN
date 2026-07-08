@@ -1042,7 +1042,8 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "До 8 устройств" in text
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "серверы со скоростью до 10 Гбит/с" in text
-    assert "🛡️ Белые списки отдельно: 2 ₽ за 1 ГБ, лимит долга -50 ₽" in text
+    assert "🛡️ Белые списки отдельно: 2 ₽ за 1 ГБ" in text
+    assert "лимит долга -50 ₽" not in text
     assert "🛡️ Поддержка режима белых списков" in text
     assert "⚡ — высокоскоростной сервер" in text
     assert "«БС» — сервер белых списков" in text
@@ -1164,7 +1165,7 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     assert "В интерфейсе он отмечен ⚡" in text
     assert "Что такое режим белых списков" in text
     assert "2 ₽ за 1 ГБ" in text
-    assert "При балансе -50 ₽ доступ к ним временно закрывается." in text
+    assert "При балансе -50 ₽" not in text
 
 
 @pytest.mark.asyncio
