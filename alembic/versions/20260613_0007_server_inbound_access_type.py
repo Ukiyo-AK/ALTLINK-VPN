@@ -1,7 +1,7 @@
 """add server inbound access type
 
 Revision ID: 20260613_0007
-Revises: 20260610_0006
+Revises: 20260612_0008
 Create Date: 2026-06-13 16:20:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "20260613_0007"
-down_revision = "20260610_0006"
+down_revision = "20260612_0008"
 branch_labels = None
 depends_on = None
 
