@@ -38,6 +38,21 @@ def upgrade() -> None:
         )
 
     inspector = sa.inspect(bind)
+    if inspector.has_table("users"):
+        op.execute(
+            """
+            UPDATE promo_codes
+            SET assigned_user_id = NULL
+            WHERE assigned_user_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM users
+                  WHERE users.id = promo_codes.assigned_user_id
+              )
+            """
+        )
+
+    inspector = sa.inspect(bind)
     has_user_foreign_key = any(
         foreign_key.get("constrained_columns") == ["assigned_user_id"]
         and foreign_key.get("referred_table") == "users"
