@@ -81,6 +81,17 @@ def test_menu_actions_include_cabinet_trial_and_styles():
     assert trial_button["style"] == "success"
 
 
+def test_menu_actions_can_show_quick_topup_for_users_without_paid_plan():
+    markup = menu_actions(show_trial=False, show_quick_topup=True).as_markup()
+    rows = inline_rows(markup)
+    buttons = inline_buttons(markup)
+
+    assert rows[0] == ["➕ Пополнить баланс"]
+    topup_button = next(button for button in buttons if button["text"] == "➕ Пополнить баланс")
+    assert topup_button["callback_data"] == "client:topup_menu"
+    assert topup_button["style"] == "success"
+
+
 def test_balance_actions_make_history_primary():
     buttons = inline_buttons(balance_actions().as_markup())
     history_button = next(button for button in buttons if button["text"] == "🧾 История платежей")
@@ -319,6 +330,20 @@ def test_topup_checkout_actions_can_customize_open_button_label():
 
     open_button = next(button for button in buttons if button["text"] == "Открыть поддержку")
     assert open_button["url"] == "https://t.me/support"
+
+
+def test_topup_checkout_actions_can_include_plan_action():
+    markup = topup_checkout_actions(
+        payment_url="https://pay.example/demo",
+        request_id="req-1",
+        can_check=True,
+        plan_action_text="🔄 Сменить тариф",
+    ).as_markup()
+    buttons = inline_buttons(markup)
+
+    plan_button = next(button for button in buttons if button["text"] == "🔄 Сменить тариф")
+    assert plan_button["callback_data"] == "client:plan_menu"
+    assert plan_button["style"] == "primary"
 
 
 def test_device_list_actions_paginate_more_than_eight_devices():

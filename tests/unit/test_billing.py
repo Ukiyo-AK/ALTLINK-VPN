@@ -16,6 +16,7 @@ from altlink.domain.enums import (
     NotificationType,
     PlanCode,
     PromoRewardKind,
+    ServerType,
     SubscriptionStatus,
     UserStatus,
 )
@@ -775,24 +776,77 @@ async def test_start_whitelist_traffic_is_charged_immediately_and_caps_balance_a
 
         test_services.remnawave.set_usage(
             user.remnawave_user_uuid,
-            used_bytes=40 * 1024**3,
-            lifetime_used_bytes=40 * 1024**3,
+            used_bytes=200 * 1024**3,
+            lifetime_used_bytes=200 * 1024**3,
         )
         test_services.remnawave.set_node_usage(
             whitelist_node.uuid,
             user.remnawave_user_uuid,
-            40 * 1024**3,
+            200 * 1024**3,
         )
 
         await hub.billing.snapshot_traffic()
 
         refreshed_user = await hub.accounts.get_user(user.id)
         refreshed_subscription = await hub.accounts.get_current_subscription(user.id)
+        active_accesses = await hub.catalog.get_user_servers(user.id)
+        servers = await hub.catalog.list_servers()
+        remote_user = await test_services.remnawave.get_user(refreshed_user.remnawave_user_uuid)
 
     assert refreshed_subscription is not None
     assert Decimal(refreshed_user.balance_rub) == Decimal("-50.00")
-    assert refreshed_subscription.whitelist_traffic_used_bytes == 40 * 1024**3
-    assert 0 < refreshed_subscription.whitelist_traffic_billed_bytes < refreshed_subscription.whitelist_traffic_used_bytes
+    assert refreshed_subscription.whitelist_traffic_used_bytes == 200 * 1024**3
+    assert refreshed_subscription.whitelist_traffic_billed_bytes == refreshed_subscription.whitelist_traffic_used_bytes
+    active_server_types = {access.server.server_type for access in active_accesses if access.server}
+    assert ServerType.TEN_GBIT in active_server_types
+    assert ServerType.WHITELIST not in active_server_types
+    whitelist_squad_ids = {
+        server.remnawave_internal_squad_uuid
+        for server in servers
+        if server.server_type == ServerType.WHITELIST and server.remnawave_internal_squad_uuid
+    }
+    ten_gbit_squad_ids = {
+        server.remnawave_internal_squad_uuid
+        for server in servers
+        if server.server_type == ServerType.TEN_GBIT and server.remnawave_internal_squad_uuid
+    }
+    remote_squad_ids = {item.uuid for item in remote_user.activeInternalSquads}
+    assert remote_squad_ids.isdisjoint(whitelist_squad_ids)
+    assert remote_squad_ids & ten_gbit_squad_ids
+
+
+@pytest.mark.asyncio
+async def test_start_whitelist_access_is_restored_after_balance_topup(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13031,
+            username="start_whitelist_restore",
+            first_name="Start",
+            last_name="Restore",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        user.balance_rub = Decimal("-50.00")
+        await hub.catalog.rebuild_user_access_matrix()
+
+        blocked_accesses = await hub.catalog.get_user_servers(user.id)
+        await hub.topups.create_request(user.id, Decimal("50"), auto_complete=True)
+        restored_accesses = await hub.catalog.get_user_servers(user.id)
+        remote_user = await test_services.remnawave.get_user(user.remnawave_user_uuid)
+
+    blocked_types = {access.server.server_type for access in blocked_accesses if access.server}
+    restored_types = {access.server.server_type for access in restored_accesses if access.server}
+    restored_squad_ids = {
+        access.server.remnawave_internal_squad_uuid
+        for access in restored_accesses
+        if access.server and access.server.remnawave_internal_squad_uuid
+    }
+    remote_squad_ids = {item.uuid for item in remote_user.activeInternalSquads}
+    assert ServerType.TEN_GBIT in blocked_types
+    assert ServerType.WHITELIST not in blocked_types
+    assert ServerType.WHITELIST in restored_types
+    assert remote_squad_ids == restored_squad_ids
 
 
 @pytest.mark.asyncio
@@ -827,7 +881,7 @@ async def test_start_renewal_charge_does_not_repeat_whitelist_usage_that_was_alr
         renewal_charge = hub.billing._compute_renewal_charge(refreshed_subscription, refreshed_subscription.plan)
 
     assert refreshed_subscription is not None
-    assert Decimal(refreshed_user.balance_rub) == Decimal("23.00")
+    assert Decimal(refreshed_user.balance_rub) == Decimal("29.00")
     assert renewal_charge == SINGLE_10GBIT_MONTHLY_PRICE_RUB
 
 

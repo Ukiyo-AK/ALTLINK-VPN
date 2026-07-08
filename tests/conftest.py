@@ -593,6 +593,7 @@ class TestServices:
                 remnawave=self.remnawave,
                 accounts=accounts,
                 notifications=notifications,
+                catalog=catalog,
             )
             dashboard = DashboardService(session, self.settings, self.remnawave)
             monitoring = MonitoringService(session, self.settings, self.remnawave)

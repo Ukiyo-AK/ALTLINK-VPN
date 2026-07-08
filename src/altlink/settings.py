@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     low_balance_threshold_rub: int = 50
     unlimited_plan_price_rub: int = 199
     single_server_plan_price_rub: int = 69
-    whitelist_price_per_gb_rub: int = 4
+    whitelist_price_per_gb_rub: int = 1
     payment_provider: str = "manual"
     yookassa_api_base_url: str = "https://api.yookassa.ru/v3"
     yookassa_shop_id: str = Field(

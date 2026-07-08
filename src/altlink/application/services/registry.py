@@ -52,6 +52,7 @@ class ServiceHub:
             remnawave=remnawave,
             accounts=self.accounts,
             notifications=self.notifications,
+            catalog=self.catalog,
         )
         self.dashboard = DashboardService(session, settings, remnawave)
         self.monitoring = MonitoringService(session, settings, remnawave)

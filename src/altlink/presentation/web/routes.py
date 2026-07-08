@@ -37,7 +37,7 @@ from altlink.domain.notifications import (
     promo_template_kind,
     render_promo_campaign_message,
 )
-from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
+from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code, parse_paid_plan_code
 from altlink.infrastructure.db.models import (
     BalanceTransaction,
     Notification,
@@ -1058,10 +1058,10 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "latency_target_label": latency_target_label(),
         "latency_disclaimer": latency_disclaimer_text(),
         "required_channel_url": settings.required_subscription_channel_url,
-        "whitelist_price_per_gb": settings.whitelist_price_per_gb_rub,
+        "whitelist_price_per_gb": WHITELIST_GB_PRICE_RUB,
         "whitelist_cost_rub": bytes_to_gb_cost(
             subscription.whitelist_traffic_used_bytes if subscription else 0,
-            Decimal(settings.whitelist_price_per_gb_rub),
+            WHITELIST_GB_PRICE_RUB,
         ),
         "telegram_login_bot": settings.client_bot_name.lstrip("@"),
     }
@@ -1435,7 +1435,7 @@ async def user_detail(request: Request, user_id: str):
             ),
             whitelist_cost_rub=bytes_to_gb_cost(
                 card["subscription"].whitelist_traffic_used_bytes if card["subscription"] else 0,
-                Decimal(request.app.state.settings.whitelist_price_per_gb_rub),
+                WHITELIST_GB_PRICE_RUB,
             ),
             active_nav="users",
         )
@@ -1563,6 +1563,7 @@ async def user_balance(request: Request, user_id: str):
             description=description,
             admin_id=admin.id,
         )
+        await hub.catalog.rebuild_user_access_matrix()
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
@@ -1800,7 +1801,7 @@ async def traffic_page(request: Request):
             title="Трафик и начисления",
             admin=admin,
             subscriptions=subscriptions,
-            whitelist_price_per_gb=request.app.state.settings.whitelist_price_per_gb_rub,
+            whitelist_price_per_gb=WHITELIST_GB_PRICE_RUB,
             active_nav="traffic",
         )
 

@@ -11,9 +11,11 @@ from sqlalchemy.orm import joinedload
 
 from altlink.application.services.accounts import AccountService
 from altlink.application.services.base import BaseService, ConflictError, NotFoundError
+from altlink.application.services.catalog import CatalogService
 from altlink.application.services.notifications import NotificationService
 from altlink.domain.enums import BalanceTransactionType, NotificationType, SystemEventLevel, TopupStatus
 from altlink.domain.notifications import topup_approved_message, topup_rejected_message
+from altlink.domain.plans import START_WHITELIST_BALANCE_FLOOR_RUB
 from altlink.infrastructure.db.models import TopupRequest
 from altlink.utils.time import utc_now
 
@@ -53,10 +55,12 @@ class TopupService(BaseService):
         remnawave,
         accounts: AccountService,
         notifications: NotificationService,
+        catalog: CatalogService | None = None,
     ) -> None:
         super().__init__(session, settings, remnawave)
         self.accounts = accounts
         self.notifications = notifications
+        self.catalog = catalog
 
     def resolved_provider(self) -> str:
         configured = (self.settings.payment_provider or "manual").strip().lower()
@@ -220,7 +224,7 @@ class TopupService(BaseService):
         item.approved_by_admin_id = admin_id
         item.approved_at = utc_now()
 
-        await self.accounts.adjust_balance(
+        transaction = await self.accounts.adjust_balance(
             user_id=item.user_id,
             amount_rub=Decimal(item.amount_rub),
             transaction_type=BalanceTransactionType.TOPUP,
@@ -228,6 +232,12 @@ class TopupService(BaseService):
             admin_id=admin_id,
             topup_request_id=item.id,
         )
+        if (
+            self.catalog is not None
+            and Decimal(transaction.balance_before) <= START_WHITELIST_BALANCE_FLOOR_RUB
+            and Decimal(transaction.balance_after) > START_WHITELIST_BALANCE_FLOOR_RUB
+        ):
+            await self.catalog.rebuild_user_access_matrix()
         await self.notifications.queue(
             user_id=item.user_id,
             notification_type=NotificationType.TOPUP_APPROVED,

@@ -316,8 +316,9 @@ def test_home_text_for_start_shows_whitelist_tariff_warning_and_totals():
 
     text = client_handlers.home_text(user, subscription, settings)
 
-    assert "⚠️ Start: белые списки тарифицируются отдельно — 4 ₽/ГБ." in text
-    assert "БС: 2.00 ГБ • списано 8.00 ₽" in text
+    assert "⚠️ Start: белые списки тарифицируются отдельно — 1 ₽/ГБ." in text
+    assert "При балансе -50 ₽ доступ к белым спискам временно закрывается." in text
+    assert "БС: 2.00 ГБ • учтено 2.00 ₽" in text
 
 
 def test_profile_text_keeps_only_key_details_and_links():
@@ -360,8 +361,9 @@ def test_profile_text_for_start_shows_whitelist_tariff_warning_and_totals():
 
     text = client_handlers.profile_text(user, subscription, settings)
 
-    assert "⚠️ Start: белые списки тарифицируются отдельно — 4 ₽/ГБ." in text
-    assert "БС: 2.00 ГБ • списано 8.00 ₽" in text
+    assert "⚠️ Start: белые списки тарифицируются отдельно — 1 ₽/ГБ." in text
+    assert "При балансе -50 ₽ доступ к белым спискам временно закрывается." in text
+    assert "БС: 2.00 ГБ • учтено 2.00 ₽" in text
 
 
 def test_home_text_without_subscription_points_user_to_subscription_button():
@@ -427,7 +429,7 @@ def test_subscription_text_for_start_on_whitelist_server_keeps_billing_details_w
         activity_summary={"current_server_type": "whitelist", "recent_server_types": ["whitelist"]},
     )
 
-    assert "Уже списано за белые списки: 8.00 ₽" in text
+    assert "Учтено за белые списки: 2.00 ₽" in text
     assert "Текущий баланс: 42.50 ₽" not in text
     assert "ТРАФИК ПО БЕЛЫМ СПИСКАМ СПИСЫВАЕТСЯ С БАЛАНСА СРАЗУ" not in text
     assert "Whitelist EU" not in text
@@ -617,6 +619,24 @@ def test_topup_amount_confirmation_text_prompts_next_step():
     assert "Сумма: 350.00 ₽" in text
     assert "Оплатить" in text
     assert "способ оплаты" in text
+
+
+def test_topup_menu_text_lists_tariff_prices():
+    text = client_handlers.topup_menu_text()
+
+    assert "Выберите сумму пополнения." in text
+    assert "Ориентир по тарифам:" in text
+    assert "Start: 25 ₽ в неделю или 69 ₽ в месяц" in text
+    assert "Pro: 65 ₽ в неделю или 199 ₽ в месяц" in text
+
+
+def test_topup_plan_action_text_depends_on_current_subscription():
+    paid_subscription = SimpleNamespace(plan=SimpleNamespace(is_trial=False))
+    trial_subscription = SimpleNamespace(plan=SimpleNamespace(is_trial=True))
+
+    assert client_handlers.topup_plan_action_text(None) == "🧾 Выбрать тариф"
+    assert client_handlers.topup_plan_action_text(trial_subscription) == "🧾 Выбрать тариф"
+    assert client_handlers.topup_plan_action_text(paid_subscription) == "🔄 Сменить тариф"
 
 
 def test_topup_provider_selection_text_points_to_buttons_only():
@@ -1022,7 +1042,7 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "До 8 устройств" in text
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "серверы со скоростью до 10 Гбит/с" in text
-    assert "🛡️ Белые списки доступны отдельно: 4 ₽ за 1 ГБ" in text
+    assert "🛡️ Белые списки отдельно: 1 ₽ за 1 ГБ, лимит долга -50 ₽" in text
     assert "🛡️ Поддержка режима белых списков" in text
     assert "⚡ — высокоскоростной сервер" in text
     assert "«БС» — сервер белых списков" in text
@@ -1143,7 +1163,8 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "В интерфейсе он отмечен ⚡" in text
     assert "Что такое режим белых списков" in text
-    assert "4 ₽ за 1 ГБ" in text
+    assert "1 ₽ за 1 ГБ" in text
+    assert "При балансе -50 ₽ доступ к ним временно закрывается." in text
 
 
 @pytest.mark.asyncio
@@ -1329,6 +1350,30 @@ async def test_handle_topup_checkout_skips_admin_notifications_for_yookassa(monk
     render_checkout.assert_awaited_once()
     assert render_checkout.await_args.kwargs["payment_url"] == "https://pay.yookassa.example/confirm/demo"
     assert render_checkout.await_args.kwargs["can_check"] is True
+    assert render_checkout.await_args.kwargs["plan_action_text"] == "🧾 Выбрать тариф"
+
+
+@pytest.mark.asyncio
+async def test_handle_topup_checkout_shows_change_plan_for_paid_subscription(monkeypatch):
+    render_checkout = AsyncMock()
+    monkeypatch.setattr(client_handlers, "answer_or_edit_topup_checkout", render_checkout)
+
+    checkout = SimpleNamespace(
+        provider="yookassa",
+        payment_url="https://pay.yookassa.example/confirm/demo",
+        request=SimpleNamespace(id="req-yoo-2"),
+    )
+
+    await client_handlers.handle_topup_checkout(
+        DummyMessage(text="Пополнить", user_id=21013),
+        SimpleNamespace(settings=SimpleNamespace()),
+        user=SimpleNamespace(id="user-1"),
+        amount=Decimal("350"),
+        checkout=checkout,
+        subscription=SimpleNamespace(plan=SimpleNamespace(is_trial=False)),
+    )
+
+    assert render_checkout.await_args.kwargs["plan_action_text"] == "🔄 Сменить тариф"
 
 
 @pytest.mark.asyncio

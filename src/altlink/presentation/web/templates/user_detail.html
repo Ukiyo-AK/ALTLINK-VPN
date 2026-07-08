@@ -16,7 +16,7 @@
       <div><dt>Автопродление</dt><dd>{{ 'включено' if subscription and subscription.auto_renew else 'отключено' }}</dd></div>
       <div><dt>Лимит устройств</dt><dd>{{ subscription.plan.device_limit if subscription and subscription.plan else '—' }}</dd></div>
       <div><dt>Whitelist трафик</dt><dd>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes if subscription else 0) / 1024**3) }} ГБ</dd></div>
-      <div><dt>Начисление за whitelist</dt><dd>{{ whitelist_cost_rub|rub }} ₽</dd></div>
+      <div><dt>Расчёт whitelist</dt><dd>{{ whitelist_cost_rub|rub }} ₽</dd></div>
     </dl>
   </article>
 

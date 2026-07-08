@@ -177,6 +177,27 @@ def parse_topup_amount_token(token: str) -> Decimal:
     return Decimal(token)
 
 
+def topup_tariff_prices_text() -> str:
+    return (
+        "Ориентир по тарифам:\n"
+        f"• Start: {format_rub_compact(SINGLE_10GBIT_WEEKLY_PRICE_RUB)} в неделю "
+        f"или {format_rub_compact(SINGLE_10GBIT_MONTHLY_PRICE_RUB)} в месяц\n"
+        f"• Pro: {format_rub_compact(UNLIMITED_WEEKLY_PRICE_RUB)} в неделю "
+        f"или {format_rub_compact(UNLIMITED_MONTHLY_PRICE_RUB)} в месяц"
+    )
+
+
+def topup_menu_text() -> str:
+    return f"Выберите сумму пополнения.\n\n{topup_tariff_prices_text()}"
+
+
+def topup_plan_action_text(subscription) -> str:
+    plan = getattr(subscription, "plan", None)
+    if subscription is not None and plan is not None and not getattr(plan, "is_trial", False):
+        return "🔄 Сменить тариф"
+    return "🧾 Выбрать тариф"
+
+
 def topup_amount_confirmation_text(amount: Decimal) -> str:
     return (
         "Пополнение баланса\n\n"
@@ -323,6 +344,7 @@ async def answer_or_edit_topup_checkout(
     payment_label: str = "Оплатить",
     request_id: str | None = None,
     can_check: bool = False,
+    plan_action_text: str | None = None,
 ) -> None:
     payment_url = normalize_action_url(payment_url)
     reply_markup = topup_checkout_actions(
@@ -330,6 +352,7 @@ async def answer_or_edit_topup_checkout(
         payment_label=payment_label,
         request_id=request_id,
         can_check=can_check,
+        plan_action_text=plan_action_text,
     ).as_markup()
     if isinstance(target, CallbackQuery):
         rendered = False
@@ -362,6 +385,7 @@ async def handle_topup_checkout(
     amount: Decimal,
     checkout,
     admin_telegram_ids: list[int] | None = None,
+    subscription=None,
 ) -> None:
     if checkout.provider == "manual":
         await notify_admins_about_topup_request(
@@ -401,6 +425,7 @@ async def handle_topup_checkout(
             payment_label="Оплатить",
             request_id=checkout.request.id,
             can_check=True,
+            plan_action_text=topup_plan_action_text(subscription),
         )
         return
 
@@ -463,6 +488,7 @@ async def continue_topup_flow(
             except ConflictError as exc:
                 await answer_or_edit(target, str(exc), reply_markup=balance_actions().as_markup())
                 return
+            subscription = await hub.accounts.get_current_subscription(user.id)
             if checkout.provider == "manual":
                 admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
 
@@ -474,6 +500,7 @@ async def continue_topup_flow(
             amount=amount,
             checkout=checkout,
             admin_telegram_ids=admin_telegram_ids,
+            subscription=subscription,
         )
         return
 
@@ -1102,8 +1129,9 @@ def start_whitelist_notice_lines(subscription) -> list[str]:
         WHITELIST_GB_PRICE_RUB,
     )
     return [
-        "⚠️ Start: белые списки тарифицируются отдельно — 4 ₽/ГБ.",
-        f"БС: {whitelist_used_gb:.2f} ГБ • списано {whitelist_charged_rub:.2f} ₽",
+        f"⚠️ Start: белые списки тарифицируются отдельно — {whitelist_gb_price_text()}.",
+        "При балансе -50 ₽ доступ к белым спискам временно закрывается.",
+        f"БС: {whitelist_used_gb:.2f} ГБ • учтено {whitelist_charged_rub:.2f} ₽",
     ]
 
 
@@ -1229,7 +1257,7 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
             [
                 f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ",
                 f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ",
-                f"Уже списано за белые списки: {charged_whitelist_cost:.2f} ₽",
+                f"Учтено за белые списки: {charged_whitelist_cost:.2f} ₽",
             ]
         )
         if pending_whitelist_cost > Decimal("0.00"):
@@ -1288,7 +1316,7 @@ def plan_menu_text() -> str:
                 "📱 До 2 устройств",
                 "∞ Безлимитный трафик на основном сервере",
                 "⚡ Один случайный высокоскоростной сервер",
-                "🛡️ Белые списки доступны отдельно: 4 ₽ за 1 ГБ",
+                f"🛡️ Белые списки отдельно: {whitelist_gb_price_sentence()}, лимит долга -50 ₽",
                 marker="• ",
             ),
             sep="\n",
@@ -1333,7 +1361,7 @@ def plan_family_text(family: str) -> str:
                 "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а часть сайтов и приложений не открывается. ALTLINK помогает вернуть доступ к привычным сервисам!",
                 sep="\n",
             ),
-            "🛡️ Для Start трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ.",
+            f"🛡️ Для Start трафик через белые списки считается отдельно: {whitelist_gb_price_sentence()}. При балансе -50 ₽ доступ к ним временно закрывается.",
             as_list(
                 Bold("Стоимость"),
                 f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
@@ -1374,6 +1402,14 @@ def format_rub_compact(amount: Decimal) -> str:
     if normalized == normalized.to_integral():
         return f"{int(normalized)} ₽"
     return f"{normalized:.2f} ₽"
+
+
+def whitelist_gb_price_text() -> str:
+    return format_rub_compact(WHITELIST_GB_PRICE_RUB).replace(" ₽", " ₽/ГБ")
+
+
+def whitelist_gb_price_sentence() -> str:
+    return f"{format_rub_compact(WHITELIST_GB_PRICE_RUB)} за 1 ГБ"
 
 
 def format_percent_compact(value: Decimal) -> str:
@@ -1448,7 +1484,7 @@ def plan_menu_text() -> str:
                 "⚡ Один случайный высокоскоростной сервер",
                 "📱 До 2 устройств",
                 "∞ Безлимитный трафик на основном сервере",
-                "🛡️ Белые списки доступны отдельно: 4 ₽ за 1 ГБ",
+                f"🛡️ Белые списки отдельно: {whitelist_gb_price_sentence()}, лимит долга -50 ₽",
                 marker="• ",
             ),
             sep="\n",
@@ -1511,7 +1547,7 @@ def plan_family_text(family: str, *, discount_preview: dict[str, object] | None 
                 "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а часть сайтов и приложений не открывается. ALTLINK помогает вернуть доступ к привычным сервисам!",
                 sep="\n",
             ),
-            "🛡️ Для Start трафик через белые списки считается отдельно: 4 ₽ за 1 ГБ.",
+            f"🛡️ Для Start трафик через белые списки считается отдельно: {whitelist_gb_price_sentence()}. При балансе -50 ₽ доступ к ним временно закрывается.",
             as_list(
                 Bold("Стоимость"),
                 *(price_lines or [
@@ -1804,9 +1840,15 @@ def build_home_markup(
     referral_code: str | None = None,
     allow_share: bool = True,
     portal_url: str | None = None,
+    show_quick_topup: bool = False,
 ):
     share_url = referral_share_vpn_url(settings, referral_code) if allow_share else None
-    return menu_actions(show_trial=show_trial, share_url=share_url, portal_url=portal_url).as_markup()
+    return menu_actions(
+        show_trial=show_trial,
+        share_url=share_url,
+        portal_url=portal_url,
+        show_quick_topup=show_quick_topup,
+    ).as_markup()
 
 
 async def send_home_card(
@@ -1820,6 +1862,11 @@ async def send_home_card(
     as_new_message: bool = False,
 ) -> None:
     text = home_text(user, subscription, container.settings, latest_subscription=latest_subscription)
+    show_quick_topup = not bool(
+        subscription is not None
+        and getattr(subscription, "plan", None) is not None
+        and not getattr(subscription.plan, "is_trial", False)
+    )
     async with container.hub() as inner_hub:
         portal_url = await create_portal_autologin_url(inner_hub, container.settings, user.id)
     primary_markup = build_home_markup(
@@ -1828,6 +1875,7 @@ async def send_home_card(
         referral_code=getattr(user, "referral_code", None),
         allow_share=True,
         portal_url=portal_url,
+        show_quick_topup=show_quick_topup,
     )
     fallback_markup = build_home_markup(
         settings=container.settings,
@@ -1835,6 +1883,7 @@ async def send_home_card(
         referral_code=getattr(user, "referral_code", None),
         allow_share=False,
         portal_url=portal_url,
+        show_quick_topup=show_quick_topup,
     )
     await send_card_with_optional_media(
         target,
@@ -2304,7 +2353,7 @@ async def topup_menu(callback: CallbackQuery, container: AppContainer):
             return
     await answer_or_edit(
         callback,
-        "Выберите сумму пополнения.",
+        topup_menu_text(),
         reply_markup=topup_actions().as_markup(),
     )
 
@@ -2389,6 +2438,7 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
         except ConflictError as exc:
             await answer_or_edit(callback, str(exc), reply_markup=balance_actions().as_markup())
             return
+        subscription = await hub.accounts.get_current_subscription(user.id)
         admin_telegram_ids = (
             await hub.accounts.list_admin_telegram_ids()
             if checkout.provider == "manual"
@@ -2401,6 +2451,7 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
         amount=amount,
         checkout=checkout,
         admin_telegram_ids=admin_telegram_ids,
+        subscription=subscription,
     )
 
 
@@ -2721,7 +2772,7 @@ async def plan_menu(callback: CallbackQuery, container: AppContainer):
             "Безлимит:\n"
             "• 200 ₽ в месяц, 8 устройств.\n"
             "• 65 ₽ в неделю, в пересчёте на месяц на 30% дороже.\n\n"
-            "Для тарифа 10 Гбит белые списки считаются отдельно по 4 ₽ за ГБ."
+            f"Для тарифа 10 Гбит белые списки считаются отдельно: {whitelist_gb_price_sentence()}."
         ),
         reply_markup=plan_actions().as_markup(),
     )
@@ -2731,7 +2782,7 @@ async def plan_menu(callback: CallbackQuery, container: AppContainer):
         (
             "Тарифы\n\n"
             "Один сервер 10 Гбит: 69 ₽ в месяц.\n"
-            "Белые списки: 4 ₽ за каждый ГБ отдельно.\n"
+            f"Белые списки: {whitelist_gb_price_sentence()} отдельно.\n"
             "Безлимит: 200 ₽ в месяц."
         ),
         reply_markup=plan_actions().as_markup(),
@@ -3153,7 +3204,7 @@ async def traffic(callback: CallbackQuery, container: AppContainer):
                 "Трафик и списания\n\n"
                 f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ\n"
                 f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
-                f"Начисление к следующему продлению: {white_cost:.2f} ₽\n"
+                f"Учтено по белым спискам: {white_cost:.2f} ₽\n"
                 f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}"
             )
     await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
@@ -3176,7 +3227,7 @@ async def traffic(callback: CallbackQuery, container: AppContainer):
                 "Трафик и списания\n\n"
                 f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ\n"
                 f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
-                f"Начислено за белые списки: {white_cost:.2f} ₽\n"
+                f"Учтено по белым спискам: {white_cost:.2f} ₽\n"
                 f"Накопленный долг: {Decimal(subscription.accrued_debt_rub):.2f} ₽\n"
                 f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}"
             )

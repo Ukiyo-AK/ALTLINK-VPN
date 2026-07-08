@@ -90,8 +90,16 @@ def portal_login_complete_actions(portal_url: str | None = None) -> InlineKeyboa
     return builder
 
 
-def menu_actions(*, show_trial: bool, share_url: str | None = None, portal_url: str | None = None) -> InlineKeyboardBuilder:
+def menu_actions(
+    *,
+    show_trial: bool,
+    share_url: str | None = None,
+    portal_url: str | None = None,
+    show_quick_topup: bool = False,
+) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+    if show_quick_topup:
+        builder.button(text="➕ Пополнить баланс", callback_data="client:topup_menu", style="success")
     builder.button(text="💳 Баланс", callback_data="client:balance", style="primary")
     builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
     if portal_url:
@@ -101,7 +109,10 @@ def menu_actions(*, show_trial: bool, share_url: str | None = None, portal_url: 
     builder.button(text="🛟 Поддержка", callback_data="client:support", style="primary")
     if show_trial:
         builder.button(text="🎁 Тест на 2 дня", callback_data="client:trial_activate", style="success")
-    row_sizes = [2]
+    row_sizes = []
+    if show_quick_topup:
+        row_sizes.append(1)
+    row_sizes.append(2)
     second_row = int(bool(portal_url)) + int(bool(share_url))
     if second_row:
         row_sizes.append(second_row)
@@ -399,6 +410,7 @@ def topup_checkout_actions(
     payment_label: str = "Оплатить",
     request_id: str | None = None,
     can_check: bool = False,
+    plan_action_text: str | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     rows: list[int] = []
@@ -409,10 +421,14 @@ def topup_checkout_actions(
     if can_check and request_id:
         builder.button(text="🔎 Проверить оплату", callback_data=f"client:topup_check:{request_id}", style="primary")
         action_count += 1
+    if plan_action_text:
+        builder.button(text=plan_action_text, callback_data="client:plan_menu", style="primary")
     builder.button(text="🧾 История платежей", callback_data="client:my_topups", style="primary")
     builder.button(text="💳 Баланс", callback_data="client:balance")
     if action_count:
         rows.append(action_count)
+    if plan_action_text:
+        rows.append(1)
     rows.extend([1, 1])
     builder.adjust(*rows)
     return builder

@@ -11,7 +11,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.base import BaseService, ConflictError, NotFoundError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType, SubscriptionStatus, SystemEventLevel, UserStatus
-from altlink.domain.plans import is_metered_plan_code, is_unlimited_plan_code
+from altlink.domain.plans import START_WHITELIST_BALANCE_FLOOR_RUB, is_metered_plan_code, is_unlimited_plan_code
 from altlink.infrastructure.db.models import (
     OnlineSessionCache,
     Server,
@@ -369,9 +369,12 @@ class CatalogService(BaseService):
             return {server.id for server in available_servers}
 
         if is_metered_plan_code(subscription.plan.code):
-            desired_server_ids = {
-                server.id for server in available_servers if server.server_type == ServerType.WHITELIST
-            }
+            whitelist_allowed = Decimal(user.balance_rub) > START_WHITELIST_BALANCE_FLOOR_RUB
+            desired_server_ids = (
+                {server.id for server in available_servers if server.server_type == ServerType.WHITELIST}
+                if whitelist_allowed
+                else set()
+            )
             assigned_server = next((server for server in available_servers if server.id == user.assigned_server_id), None)
             if assigned_server is None or assigned_server.server_type != ServerType.TEN_GBIT:
                 try:

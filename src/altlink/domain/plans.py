@@ -5,7 +5,8 @@ from decimal import Decimal
 from altlink.domain.enums import PlanCode
 
 GIGABYTE = 1024**3
-WHITELIST_GB_PRICE_RUB = Decimal("4")
+WHITELIST_GB_PRICE_RUB = Decimal("1")
+START_WHITELIST_BALANCE_FLOOR_RUB = Decimal("-50.00")
 
 SINGLE_10GBIT_MONTHLY_PRICE_RUB = Decimal("69")
 UNLIMITED_MONTHLY_PRICE_RUB = Decimal("199")
@@ -40,7 +41,8 @@ DEFAULT_PLAN_SEEDS = [
         "is_trial": False,
         "description": (
             "Один автоматически назначенный 10 Гбит сервер. "
-            "Серверы типа «Белые списки» доступны отдельно и тарифицируются по 4 ₽ за ГБ. "
+            "Серверы типа «Белые списки» доступны отдельно и тарифицируются по 1 ₽ за ГБ. "
+            "При балансе -50 ₽ доступ к ним временно закрывается. "
             "Лимит — 2 устройства."
         ),
         "sort_order": 10,
@@ -55,6 +57,8 @@ DEFAULT_PLAN_SEEDS = [
         "is_trial": False,
         "description": (
             "Тот же доступ к 10 Гбит серверу, но с еженедельным списанием. "
+            "Серверы типа «Белые списки» доступны отдельно и тарифицируются по 1 ₽ за ГБ. "
+            "При балансе -50 ₽ доступ к ним временно закрывается. "
             "В пересчёте на месяц стоит на 30% дороже. Лимит — 2 устройства."
         ),
         "sort_order": 15,

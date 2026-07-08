@@ -1932,6 +1932,7 @@ async def user_balance_apply(message: Message, state: FSMContext, container: App
             description="Ручная корректировка через admin bot",
             admin_id=admin.id if admin else None,
         )
+        await hub.catalog.rebuild_user_access_matrix()
     await state.clear()
     await show_user_card(message, user_id, container)
 

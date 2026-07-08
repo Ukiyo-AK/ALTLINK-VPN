@@ -40,7 +40,7 @@ from altlink.domain.notifications import (
     trial_ended_message,
     trial_setup_help_message,
 )
-from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code
+from altlink.domain.plans import START_WHITELIST_BALANCE_FLOOR_RUB, WHITELIST_GB_PRICE_RUB, is_metered_plan_code
 from altlink.infrastructure.db.models import (
     OnlineSessionCache,
     Notification,
@@ -59,7 +59,6 @@ LOW_BALANCE_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] 
     ("1d", timedelta(days=1), timedelta(hours=1), "меньше 1 дня"),
     ("1h", timedelta(hours=1), timedelta(0), "меньше 1 часа"),
 )
-START_WHITELIST_BALANCE_FLOOR_RUB = Decimal("-50.00")
 TRIAL_REMINDER_WINDOWS: tuple[tuple[str, timedelta, timedelta, str], ...] = (
     ("24h", timedelta(days=1), timedelta(hours=3), "24 часа"),
     ("3h", timedelta(hours=3), timedelta(hours=1), "3 часа"),
@@ -258,7 +257,15 @@ class BillingService(BaseService):
             reset_traffic=not preserve_traffic_on_switch,
         )
         if remote_user is not None and preserve_traffic_on_switch:
-            await self._apply_remote_usage(user, subscription, remote_user)
+            if await self._apply_remote_usage(user, subscription, remote_user):
+                await self.catalog.rebuild_user_access_matrix()
+                await self._sync_user_remote_access(
+                    user,
+                    subscription,
+                    plan,
+                    enable=True,
+                    reset_traffic=False,
+                )
         if discount_redemption is not None and discount_rub > 0:
             await self.promos.consume_discount(
                 discount_redemption,
@@ -521,9 +528,10 @@ class BillingService(BaseService):
         if subscription.status != SubscriptionStatus.ACTIVE:
             return False
 
+        whitelist_access_changed = False
         if is_metered_plan_code(plan.code):
             await self._refresh_whitelist_usage(user, subscription)
-            await self._apply_instant_whitelist_charges(user, subscription)
+            whitelist_access_changed = await self._apply_instant_whitelist_charges(user, subscription)
 
         discount_rub, discount_promo, discount_redemption = await self.promos.calculate_discount(
             user.id,
@@ -628,7 +636,7 @@ class BillingService(BaseService):
                 },
                 dedupe_key=f"low-balance:{subscription.id}:{due_at.isoformat()}:{reminder_key}",
             )
-        return False
+        return whitelist_access_changed
 
     async def _commit_checkpoint(self) -> None:
         await self.session.commit()
@@ -735,7 +743,8 @@ class BillingService(BaseService):
                 source="remnawave_refresh",
             )
         )
-        await self._apply_remote_usage(user, subscription, remote_user)
+        if await self._apply_remote_usage(user, subscription, remote_user):
+            await self.catalog.rebuild_user_access_matrix()
         return subscription
 
     async def _cancel_subscription(self, subscription: Subscription, user: User) -> None:
@@ -819,7 +828,7 @@ class BillingService(BaseService):
         remote_user,
         *,
         whitelist_usage_by_remote_uuid: dict[str, int] | None = None,
-    ) -> None:
+    ) -> bool:
         user.last_seen_at = remote_user.userTraffic.onlineAt or user.last_seen_at
         subscription.traffic_used_bytes = remote_user.userTraffic.usedTrafficBytes
         if remote_user.lastTrafficResetAt is not None:
@@ -830,7 +839,8 @@ class BillingService(BaseService):
                 subscription,
                 preloaded_usage_by_remote_uuid=whitelist_usage_by_remote_uuid,
             )
-            await self._apply_instant_whitelist_charges(user, subscription)
+            return await self._apply_instant_whitelist_charges(user, subscription)
+        return False
 
     async def _get_whitelist_node_ids(self) -> set[str]:
         return {
@@ -928,9 +938,9 @@ class BillingService(BaseService):
         if ensure_utc(remote_expire_at) + timedelta(seconds=1) < ensure_utc(expected_ends_at):
             raise ConflictError("Remnawave вернула старый срок подписки после автопродления.")
 
-    async def _apply_instant_whitelist_charges(self, user: User, subscription: Subscription) -> None:
+    async def _apply_instant_whitelist_charges(self, user: User, subscription: Subscription) -> bool:
         if subscription.plan is None or not is_metered_plan_code(subscription.plan.code):
-            return
+            return False
 
         used_bytes = max(int(subscription.whitelist_traffic_used_bytes or 0), 0)
         billed_bytes = max(int(subscription.whitelist_traffic_billed_bytes or 0), 0)
@@ -940,12 +950,12 @@ class BillingService(BaseService):
 
         outstanding_charge = self._compute_unbilled_whitelist_charge(subscription)
         if outstanding_charge <= Decimal("0.00"):
-            return
+            return False
 
         current_balance = Decimal(user.balance_rub)
         available_charge_room = quantize_money(current_balance - START_WHITELIST_BALANCE_FLOOR_RUB)
         if available_charge_room <= Decimal("0.00"):
-            return
+            return False
 
         requested_charge = min(outstanding_charge, available_charge_room)
         next_billed_bytes = self._advance_billed_whitelist_bytes(
@@ -954,13 +964,13 @@ class BillingService(BaseService):
             charge_cap_rub=requested_charge,
         )
         if next_billed_bytes <= billed_bytes:
-            return
+            return False
 
         applied_charge = quantize_money(
             self._whitelist_charge_for_bytes(next_billed_bytes) - self._whitelist_charge_for_bytes(billed_bytes)
         )
         if applied_charge <= Decimal("0.00"):
-            return
+            return False
 
         subscription.whitelist_traffic_billed_bytes = next_billed_bytes
         await self.accounts.adjust_balance(
@@ -969,6 +979,15 @@ class BillingService(BaseService):
             transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
             description="Моментальное списание за трафик белых списков по тарифу Start",
         )
+        whitelist_access_lost = (
+            current_balance > START_WHITELIST_BALANCE_FLOOR_RUB
+            and Decimal(user.balance_rub) <= START_WHITELIST_BALANCE_FLOOR_RUB
+        )
+        if whitelist_access_lost:
+            # Долг по whitelist для Start ограничен балансом -50 ₽: перерасход между замерами
+            # не переносим скрытой задолженностью на будущие пополнения.
+            subscription.whitelist_traffic_billed_bytes = used_bytes
+        return whitelist_access_lost
 
     def _compute_unbilled_whitelist_charge(self, subscription: Subscription) -> Decimal:
         used_bytes = max(int(subscription.whitelist_traffic_used_bytes or 0), 0)
