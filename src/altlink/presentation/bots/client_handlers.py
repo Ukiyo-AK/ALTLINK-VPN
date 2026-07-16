@@ -1096,6 +1096,28 @@ def promo_code_prompt_text(*, onboarding: bool = False) -> str:
     return "Введите промокод одним сообщением, например: START100"
 
 
+def plain_text_promo_candidate(value: str | None) -> str | None:
+    raw = (value or "").strip()
+    if not raw or len(raw) > 64:
+        return None
+    if any(not (character.isalnum() or character in {"_", "-"}) for character in raw):
+        return None
+    return raw.upper()
+
+
+def promo_redemption_response(promo, result_text: str) -> tuple[str, str | None]:
+    if promo is None or promo.reward_kind != PromoRewardKind.PLAN_DISCOUNT:
+        return result_text, None
+    escaped_code = html.escape(promo.code)
+    return (
+        f"Промокод <code>{escaped_code}</code> активирован. "
+        f"Скидка {Decimal(promo.reward_value):.2f}% применится при следующей оплате тарифа, "
+        "включая автоматическое продление.\n\n"
+        f"🎟 В разделе «Подписка» цены уже будут показаны со скидкой по коду <code>{escaped_code}</code>.",
+        "HTML",
+    )
+
+
 def access_links_text(settings) -> str:
     links: list[str] = []
     site_link = site_public_url(settings)
@@ -2628,15 +2650,7 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
             else:
                 await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
             return
-        response_parse_mode = None
-        if promo is not None and promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT:
-            result_text = (
-                f"Промокод <code>{promo.code}</code> активирован. "
-                f"Скидка {Decimal(promo.reward_value):.2f}% применится при следующей оплате тарифа, "
-                "включая автоматическое продление.\n\n"
-                f"🎟 В разделе «Подписка» цены уже будут показаны со скидкой по коду <code>{promo.code}</code>."
-            )
-            response_parse_mode = "HTML"
+        result_text, response_parse_mode = promo_redemption_response(promo, result_text)
         if promo_source == "onboarding":
             await hub.accounts.mark_promo_onboarding_completed(user.id)
             refreshed = await hub.accounts.get_user(user.id)
@@ -3208,27 +3222,46 @@ async def traffic(callback: CallbackQuery, container: AppContainer):
                 f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}"
             )
     await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
-    return
+
+
+@router.message(F.text)
+async def auto_redeem_plain_text_promo(message: Message, container: AppContainer):
+    promo_code = plain_text_promo_candidate(message.text)
+    if promo_code is None:
+        return
+
     async with container.hub() as hub:
-        user = await ensure_client_access(callback, container, hub)
-        if user is None:
+        promo = await hub.promos.find_by_code(promo_code)
+        if promo is None:
             return
-        subscription = await hub.accounts.get_current_subscription(user.id)
-        if not subscription:
-            text = "Трафик и списания\n\nУ вас пока нет активной подписки."
-        elif not show_metered_usage(subscription):
-            text = (
-                "Трафик и списания\n\n"
-                "Для текущего тарифа этот раздел скрыт, потому что трафик и начисления по белым спискам не актуальны."
+        if await client_maintenance_active(container, message.from_user.id, hub):
+            await show_technical_maintenance(message, container)
+            return
+
+        user, consent_ok, channel_ok = await get_access_state(message, container, hub)
+        if not (consent_ok and channel_ok):
+            await show_pending_access_steps(
+                message,
+                container,
+                consent_ok=consent_ok,
+                channel_ok=channel_ok,
             )
-        else:
-            white_cost = bytes_to_gb_cost(subscription.whitelist_traffic_used_bytes, WHITELIST_GB_PRICE_RUB)
-            text = (
-                "Трафик и списания\n\n"
-                f"Общий трафик: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ\n"
-                f"Трафик по белым спискам: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ\n"
-                f"Учтено по белым спискам: {white_cost:.2f} ₽\n"
-                f"Накопленный долг: {Decimal(subscription.accrued_debt_rub):.2f} ₽\n"
-                f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}"
-            )
-    await answer_or_edit(callback, text, reply_markup=subscription_markup(subscription))
+            return
+
+        complete_onboarding = needs_promo_onboarding(user, hub)
+        try:
+            promo, _, result_text = await hub.promos.redeem_code(user.id, promo_code)
+        except ConflictError as exc:
+            await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
+            return
+
+        if complete_onboarding:
+            await hub.accounts.mark_promo_onboarding_completed(user.id)
+        result_text, response_parse_mode = promo_redemption_response(promo, result_text)
+
+    await answer_or_edit(
+        message,
+        result_text,
+        reply_markup=balance_actions().as_markup(),
+        parse_mode=response_parse_mode,
+    )

@@ -838,6 +838,50 @@ async def test_promo_submit_finishes_onboarding_after_success(test_services):
 
 
 @pytest.mark.asyncio
+async def test_plain_text_promo_is_redeemed_automatically(test_services):
+    message = DummyMessage(text="  chat100  ", user_id=21011)
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        await hub.accounts.complete_registration(user.id)
+        await hub.accounts.mark_channel_verified(user.id)
+        await hub.accounts.mark_promo_onboarding_completed(user.id)
+        await hub.promos.create_code(
+            code="CHAT100",
+            name="Chat promo",
+            reward_kind=PromoRewardKind.BALANCE,
+            reward_value=Decimal("100"),
+            usage_limit=10,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+        )
+
+    await client_handlers.auto_redeem_plain_text_promo(message, test_services)
+
+    async with test_services.hub() as hub:
+        refreshed = await hub.accounts.get_user_by_telegram_id(21011)
+
+    assert refreshed is not None
+    assert refreshed.balance_rub == Decimal("100.00")
+    assert len(message.answers) == 1
+    assert "Промокод применён" in str(message.answers[0]["text"])
+
+
+@pytest.mark.asyncio
+async def test_plain_text_unknown_message_is_silent(test_services):
+    message = DummyMessage(text="NOTPROMO", user_id=21012)
+
+    await client_handlers.auto_redeem_plain_text_promo(message, test_services)
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_user_by_telegram_id(21012)
+
+    assert user is None
+    assert message.answers == []
+
+
+@pytest.mark.asyncio
 async def test_activate_plan_with_insufficient_balance_shows_topup_actions(monkeypatch):
     captured: dict[str, object] = {}
 
