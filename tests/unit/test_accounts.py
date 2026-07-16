@@ -108,6 +108,52 @@ async def test_list_users_for_admin_filters_and_sorts_across_all_users(test_serv
 
 
 @pytest.mark.asyncio
+async def test_list_users_for_admin_loads_visible_metrics_after_regular_sort(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=11032,
+            username="regular_sort_metrics",
+            first_name="Regular",
+            last_name="Sort",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+
+        user = await hub.accounts.get_user(user.id)
+        subscription = await hub.accounts.get_current_subscription(user.id)
+        server_id = user.assigned_server_id
+        subscription.whitelist_traffic_used_bytes = 2 * 1024**3
+        hub.session.add(
+            TrafficSnapshot(
+                user_id=user.id,
+                subscription_id=subscription.id,
+                server_id=server_id,
+                snapshot_date=date.today(),
+                used_bytes=6 * 1024**3,
+                lifetime_used_bytes=6 * 1024**3,
+                source="test",
+            )
+        )
+        hub.session.add(OnlineSessionCache(user_id=user.id, server_id=server_id, device="iPhone", is_online=True))
+        await hub.session.flush()
+
+        page = await hub.accounts.list_users_for_admin(
+            UserListFilters(
+                search="regular_sort_metrics",
+                sort="balance",
+                direction="desc",
+                limit=5,
+            )
+        )
+
+    assert page.total == 1
+    assert page.users[0].admin_total_traffic_bytes == 6 * 1024**3
+    assert page.users[0].admin_whitelist_traffic_bytes == 2 * 1024**3
+    assert page.users[0].admin_device_count == 1
+
+
+@pytest.mark.asyncio
 async def test_complete_registration_marks_user_as_registered(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
