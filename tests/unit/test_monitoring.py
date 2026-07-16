@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
+from altlink.application.services.accounts import UserListFilters
 from altlink.infrastructure.db.models import SystemSetting
 
 
@@ -182,7 +183,12 @@ async def test_capture_user_abuse_state_skips_live_ips_and_collects_hwid_devices
             hub.remnawave.add_hwid_device(user.remnawave_user_uuid, hwid=f"hwid-{index}")
 
         alerts = await hub.monitoring.capture_user_abuse_state()
+        page = await hub.accounts.list_users_for_admin(
+            UserListFilters(search="live_abuse", sort="devices", direction="desc", limit=5)
+        )
 
     assert [item.kind for item in alerts] == ["user_hwid_limit_exceeded"]
     assert all(item.details["telegram_id"] == 42002 for item in alerts)
+    assert page.users[0].admin_device_count == 9
+    assert page.users[0].hwid_devices_checked_at is not None
     assert test_services.remnawave.ip_control_jobs == {}

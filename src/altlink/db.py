@@ -76,6 +76,14 @@ def _ensure_runtime_schema_sync(connection) -> None:
         return
 
     existing_columns = {column["name"] for column in inspector.get_columns("users")}
+    if "hwid_device_count" not in existing_columns:
+        compiled_type = Integer().compile(dialect=connection.dialect)
+        connection.execute(
+            text(f"ALTER TABLE users ADD COLUMN hwid_device_count {compiled_type} NOT NULL DEFAULT 0")
+        )
+        existing_columns.add("hwid_device_count")
+        logger.warning("Added missing column hwid_device_count to users table during runtime schema preparation.")
+
     expected_columns = {
         "registration_completed_at": DateTime(timezone=True),
         "consent_accepted_at": DateTime(timezone=True),
@@ -86,6 +94,7 @@ def _ensure_runtime_schema_sync(connection) -> None:
         "referred_by_user_id": String(36),
         "referral_reward_granted_at": DateTime(timezone=True),
         "vless_keys_downloaded_at": DateTime(timezone=True),
+        "hwid_devices_checked_at": DateTime(timezone=True),
     }
 
     for column_name, column_type in expected_columns.items():

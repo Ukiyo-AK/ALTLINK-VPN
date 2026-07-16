@@ -55,6 +55,8 @@ async def test_runtime_schema_adds_missing_user_registration_columns(tmp_path: P
     assert "channel_verified_at" in column_names
     assert "promo_onboarding_completed_at" in column_names
     assert "vless_keys_downloaded_at" in column_names
+    assert "hwid_device_count" in column_names
+    assert "hwid_devices_checked_at" in column_names
 
 
 @pytest.mark.asyncio

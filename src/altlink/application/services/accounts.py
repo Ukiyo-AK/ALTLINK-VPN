@@ -25,7 +25,6 @@ from altlink.domain.notifications import topup_approved_message, topup_rejected_
 from altlink.infrastructure.db.models import (
     AdminUser,
     BalanceTransaction,
-    OnlineSessionCache,
     Notification,
     Plan,
     Subscription,
@@ -159,8 +158,6 @@ class AccountService(BaseService):
         filters.limit = limit
         traffic_filter_required = filters.traffic_min_bytes is not None or filters.traffic_max_bytes is not None
         traffic_sort_required = filters.sort == "traffic"
-        device_filter_required = filters.device_count_min is not None or filters.device_count_max is not None
-        device_sort_required = filters.sort == "devices"
         node_traffic_required = bool(filters.node_id)
 
         latest_subscription_rank = (
@@ -186,18 +183,6 @@ class AccountService(BaseService):
             .subquery()
         )
 
-        device_key = func.coalesce(
-            func.nullif(OnlineSessionCache.device, ""),
-            func.nullif(OnlineSessionCache.remote_ip, ""),
-            OnlineSessionCache.id,
-        )
-        device_counts = (
-            select(OnlineSessionCache.user_id.label("user_id"), func.count(func.distinct(device_key)).label("device_count"))
-            .where(OnlineSessionCache.user_id.is_not(None))
-            .group_by(OnlineSessionCache.user_id)
-            .subquery()
-        )
-
         node_traffic = None
         if filters.node_id:
             node_traffic = (
@@ -212,7 +197,7 @@ class AccountService(BaseService):
 
         total_traffic_expr = func.coalesce(traffic_totals.c.total_traffic_bytes, latest_subscription.traffic_used_bytes, 0)
         whitelist_traffic_expr = func.coalesce(latest_subscription.whitelist_traffic_used_bytes, 0)
-        device_count_expr = func.coalesce(device_counts.c.device_count, 0)
+        device_count_expr = User.hwid_device_count
         node_traffic_expr = func.coalesce(node_traffic.c.node_traffic_bytes, 0) if node_traffic is not None else literal(0)
 
         query = (
@@ -234,8 +219,6 @@ class AccountService(BaseService):
         )
         if traffic_filter_required:
             query = query.outerjoin(traffic_totals, traffic_totals.c.user_id == User.id)
-        if device_filter_required:
-            query = query.outerjoin(device_counts, device_counts.c.user_id == User.id)
         if node_traffic_required and node_traffic is not None:
             query = query.outerjoin(node_traffic, node_traffic.c.user_id == User.id)
 
@@ -255,9 +238,6 @@ class AccountService(BaseService):
 
         if traffic_sort_required and not traffic_filter_required:
             query = query.outerjoin(traffic_totals, traffic_totals.c.user_id == User.id)
-        if device_sort_required and not device_filter_required:
-            query = query.outerjoin(device_counts, device_counts.c.user_id == User.id)
-
         sort_expr = self._user_list_sort_expression(
             filters.sort,
             latest_subscription=latest_subscription,
@@ -273,7 +253,6 @@ class AccountService(BaseService):
         rows = (await self.session.execute(query)).all()
         user_ids = [user.id for user, _, _ in rows]
         total_traffic_by_user = await self._load_user_list_total_traffic(user_ids)
-        device_count_by_user = await self._load_user_list_device_counts(user_ids)
         node_traffic_by_user = (
             await self._load_user_list_node_traffic(user_ids, filters.node_id)
             if filters.node_id
@@ -291,7 +270,7 @@ class AccountService(BaseService):
                 int(subscription.whitelist_traffic_used_bytes or 0) if subscription else 0,
             )
             setattr(user, "admin_node_traffic_bytes", int(node_traffic_by_user.get(user.id, 0)))
-            setattr(user, "admin_device_count", int(device_count_by_user.get(user.id, 0)))
+            setattr(user, "admin_device_count", int(user.hwid_device_count or 0))
             users.append(user)
 
         return UserListPage(
@@ -451,26 +430,6 @@ class AccountService(BaseService):
                 )
                 .where(TrafficSnapshot.user_id.in_(user_ids), TrafficSnapshot.server_id == node_id)
                 .group_by(TrafficSnapshot.user_id)
-            )
-        ).all()
-        return {str(user_id): int(value or 0) for user_id, value in rows}
-
-    async def _load_user_list_device_counts(self, user_ids: Sequence[str]) -> dict[str, int]:
-        if not user_ids:
-            return {}
-        device_key = func.coalesce(
-            func.nullif(OnlineSessionCache.device, ""),
-            func.nullif(OnlineSessionCache.remote_ip, ""),
-            OnlineSessionCache.id,
-        )
-        rows = (
-            await self.session.execute(
-                select(
-                    OnlineSessionCache.user_id,
-                    func.count(func.distinct(device_key)),
-                )
-                .where(OnlineSessionCache.user_id.in_(user_ids))
-                .group_by(OnlineSessionCache.user_id)
             )
         ).all()
         return {str(user_id): int(value or 0) for user_id, value in rows}
@@ -680,7 +639,11 @@ class AccountService(BaseService):
             await self.ensure_remote_user_link(user)
             if not user.remnawave_user_uuid:
                 return []
-            return await self.remnawave.get_user_hwid_devices(user.remnawave_user_uuid)
+            devices = await self.remnawave.get_user_hwid_devices(user.remnawave_user_uuid)
+            user.hwid_device_count = len(devices)
+            user.hwid_devices_checked_at = utc_now()
+            await self.session.flush()
+            return devices
         except Exception as exc:
             logger.warning("Failed to load Remnawave HWID devices for user %s.", user.id, exc_info=True)
             raise ConflictError("Не удалось загрузить устройства из панели. Попробуйте ещё раз чуть позже.") from exc
@@ -693,7 +656,11 @@ class AccountService(BaseService):
             await self.ensure_remote_user_link(user)
             if not user.remnawave_user_uuid:
                 raise NotFoundError("Устройство не найдено.")
-            return await self.remnawave.delete_user_hwid_device(user.remnawave_user_uuid, hwid)
+            devices = await self.remnawave.delete_user_hwid_device(user.remnawave_user_uuid, hwid)
+            user.hwid_device_count = len(devices)
+            user.hwid_devices_checked_at = utc_now()
+            await self.session.flush()
+            return devices
         except NotFoundError:
             raise
         except httpx.HTTPStatusError as exc:

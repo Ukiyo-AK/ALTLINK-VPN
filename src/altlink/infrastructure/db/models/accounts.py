@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from altlink.domain.enums import UserStatus
@@ -58,6 +58,8 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     remnawave_user_uuid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     remnawave_username: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     remnawave_short_uuid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    hwid_device_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
+    hwid_devices_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     assigned_server_id: Mapped[str | None] = mapped_column(
         ForeignKey("servers.id", ondelete="SET NULL"),
         nullable=True,

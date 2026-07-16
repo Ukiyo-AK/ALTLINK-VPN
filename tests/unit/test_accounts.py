@@ -10,7 +10,7 @@ import pytest
 from altlink.application.services.accounts import UserListFilters
 from altlink.application.services.base import ConflictError
 from altlink.domain.enums import PlanCode
-from altlink.infrastructure.db.models import OnlineSessionCache, TrafficSnapshot
+from altlink.infrastructure.db.models import TrafficSnapshot
 
 
 @pytest.mark.asyncio
@@ -73,13 +73,8 @@ async def test_list_users_for_admin_filters_and_sorts_across_all_users(test_serv
                 source="test",
             )
         )
-        hub.session.add_all(
-            [
-                OnlineSessionCache(user_id=target.id, server_id=server_id, device="iPhone", is_online=True),
-                OnlineSessionCache(user_id=target.id, server_id=server_id, device="Windows", is_online=True),
-                OnlineSessionCache(user_id=other.id, device="Android", is_online=True),
-            ]
-        )
+        target.hwid_device_count = 2
+        other.hwid_device_count = 1
         await hub.session.flush()
 
         page = await hub.accounts.list_users_for_admin(
@@ -135,7 +130,7 @@ async def test_list_users_for_admin_loads_visible_metrics_after_regular_sort(tes
                 source="test",
             )
         )
-        hub.session.add(OnlineSessionCache(user_id=user.id, server_id=server_id, device="iPhone", is_online=True))
+        user.hwid_device_count = 1
         await hub.session.flush()
 
         page = await hub.accounts.list_users_for_admin(
@@ -317,10 +312,16 @@ async def test_hwid_devices_are_loaded_and_deleted_for_current_user_only(test_se
         untouched_foreign_devices = await hub.accounts.list_user_hwid_devices(second.id)
         await hub.accounts.delete_user_hwid_device(first.id, own_device.hwid)
         remaining_devices = await hub.accounts.list_user_hwid_devices(first.id)
+        first_after_delete = await hub.accounts.get_user(first.id)
+        second_after_load = await hub.accounts.get_user(second.id)
 
     assert [item.hwid for item in devices] == ["first-hwid"]
     assert [item.hwid for item in untouched_foreign_devices] == ["second-hwid"]
     assert remaining_devices == []
+    assert first_after_delete.hwid_device_count == 0
+    assert first_after_delete.hwid_devices_checked_at is not None
+    assert second_after_load.hwid_device_count == 1
+    assert second_after_load.hwid_devices_checked_at is not None
 
 
 @pytest.mark.asyncio

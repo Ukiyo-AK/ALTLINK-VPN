@@ -283,16 +283,21 @@ class MonitoringService(BaseService):
     async def capture_user_abuse_state(self) -> list[MonitoringAlert]:
         active_subscriptions = await self._list_active_subscriptions()
         hwid_counts = await self._collect_hwid_device_counts(active_subscriptions)
+        checked_at = utc_now()
         observations = []
         for subscription in active_subscriptions:
             user = subscription.user
             plan = getattr(subscription, "plan", None)
+            hwid_device_count = hwid_counts.get(user.id)
+            if hwid_device_count is not None:
+                user.hwid_device_count = int(hwid_device_count)
+                user.hwid_devices_checked_at = checked_at
             observations.append(
                 {
                     "user_id": user.id,
                     "telegram_id": user.telegram_id,
                     "username": user.username,
-                    "hwid_device_count": hwid_counts.get(user.id),
+                    "hwid_device_count": hwid_device_count,
                     "device_limit": getattr(plan, "device_limit", None),
                 }
             )
