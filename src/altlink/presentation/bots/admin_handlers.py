@@ -29,8 +29,10 @@ from altlink.domain.enums import (
     ServerType,
     SupportRequestStatus,
     SystemEventLevel,
+    TrafficLimitStrategy,
 )
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
+from altlink.domain.traffic_limits import BYTES_PER_GIB, traffic_limit_strategy_label
 from altlink.infrastructure.db.models import PromoCode, TrafficSnapshot
 from altlink.presentation.bots.admin_keyboards import (
     DATABASE_BACKUP_CANCEL_IMPORT,
@@ -63,10 +65,14 @@ from altlink.presentation.bots.admin_keyboards import (
     USER_DELETE_PREFIX,
     USER_DEVICE_PREFIX,
     USER_DEVICES_PREFIX,
+    USER_LOGS_PREFIX,
     USER_OPEN_PREFIX,
     USER_PLAN_PREFIX,
     USERS_SYNC_NODE_ACCESS,
     USER_SUBSCRIPTIONS_PREFIX,
+    USER_TRAFFIC_CLEAR_PREFIX,
+    USER_TRAFFIC_LIMIT_PREFIX,
+    USER_TRAFFIC_STRATEGY_PREFIX,
     USER_TRIAL_PREFIX,
     BROADCAST_AUDIENCE_PREFIX,
     admin_menu,
@@ -90,8 +96,10 @@ from altlink.presentation.bots.admin_keyboards import (
     user_devices_actions,
     user_delete_confirmation_actions,
     user_lookup_actions,
+    user_logs_actions,
     user_message_prompt_actions,
     user_subscription_actions,
+    user_traffic_limit_actions,
 )
 from altlink.utils.media import media_path
 from altlink.utils.devices import hwid_device_view
@@ -187,6 +195,10 @@ ADMIN_PENDING_DATABASE_IMPORTS: dict[int, bytes] = {}
 
 
 class BalanceStates(StatesGroup):
+    waiting_for_amount = State()
+
+
+class TrafficLimitStates(StatesGroup):
     waiting_for_amount = State()
 
 
@@ -966,6 +978,12 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
     plan_name = plan.name if plan else "не выбран"
     next_billing = format_msk_datetime(subscription.next_billing_at) if subscription else "—"
     assigned_server = user.assigned_server.name if user.assigned_server else "не назначен"
+    if getattr(user, "traffic_limit_bytes_override", None) is None:
+        traffic_limit = "по тарифу"
+        traffic_strategy = "по тарифу"
+    else:
+        traffic_limit = f"{int(user.traffic_limit_bytes_override) / BYTES_PER_GIB:g} ГБ"
+        traffic_strategy = traffic_limit_strategy_label(user.traffic_limit_strategy_override)
     lines = [
         "Карточка пользователя",
         "",
@@ -983,6 +1001,8 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         f"Следующее списание: {next_billing}",
         f"Автопродление: {'включено' if subscription and subscription.auto_renew else 'отключено'}",
         f"Лимит устройств: {plan.device_limit if plan else '—'}",
+        f"Персональный лимит трафика: {traffic_limit}",
+        f"Сброс лимита: {traffic_strategy}",
         f"Назначенный сервер: {assigned_server}",
         f"Пополнений: {len(topups)}",
         f"Транзакций: {len(transactions)}",
@@ -1002,6 +1022,35 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
     except TelegramBadRequest:
         logger.warning("Failed to render user card markup for user_id=%s, sending plain text fallback.", user_id)
         await render_admin(target, text)
+
+
+async def show_user_traffic_limit(target: Message | CallbackQuery, user_id: str, container: AppContainer) -> None:
+    async with container.hub() as hub:
+        user = await hub.accounts.get_user(user_id)
+    if user.traffic_limit_bytes_override is None:
+        current = "не задан, используется лимит тарифа"
+    else:
+        current = (
+            f"{user.traffic_limit_bytes_override / BYTES_PER_GIB:g} ГБ, "
+            f"{traffic_limit_strategy_label(user.traffic_limit_strategy_override).lower()}"
+        )
+    await render_admin(
+        target,
+        "Персональный лимит трафика\n\n"
+        f"Пользователь: {user_label(user)}\n"
+        f"Текущее значение: {current}\n\n"
+        "Выберите стратегию сброса, затем отправьте количество ГБ. "
+        "Настройка сохранится при смене тарифа и синхронизации.",
+        reply_markup=user_traffic_limit_actions(user_id).as_markup(),
+    )
+
+
+async def show_user_logs(target: Message | CallbackQuery, user_id: str, container: AppContainer) -> None:
+    async with container.hub() as hub:
+        user = await hub.accounts.get_user(user_id)
+        events = await hub.accounts.list_user_events(user_id, limit=15)
+    text = f"Логи пользователя\n\nПользователь: {user_label(user)}\n\n{format_system_events(events)}"
+    await render_admin(target, text, reply_markup=user_logs_actions(user_id).as_markup())
 
 
 def clamp_admin_hwid_device_page(devices: list[dict[str, object]], page: int) -> int:
@@ -1798,6 +1847,59 @@ async def open_user_subscription_actions(callback: CallbackQuery, container: App
     await show_subscription_controls(callback, callback.data.split(":")[-1], container)
 
 
+@router.callback_query(F.data.startswith(f"{USER_TRAFFIC_LIMIT_PREFIX}:"))
+async def open_user_traffic_limit(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await show_user_traffic_limit(callback, callback.data.split(":")[-1], container)
+
+
+@router.callback_query(F.data.startswith(f"{USER_LOGS_PREFIX}:"))
+async def open_user_logs(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await show_user_logs(callback, callback.data.split(":")[-1], container)
+
+
+@router.callback_query(F.data.startswith(f"{USER_TRAFFIC_STRATEGY_PREFIX}:"))
+async def prompt_user_traffic_limit(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    try:
+        strategy_token, user_id = callback.data.removeprefix(f"{USER_TRAFFIC_STRATEGY_PREFIX}:").split(":", 1)
+        strategy = TrafficLimitStrategy(strategy_token)
+    except (TypeError, ValueError):
+        await callback.answer("Некорректная стратегия сброса.", show_alert=True)
+        return
+    await state.set_state(TrafficLimitStates.waiting_for_amount)
+    await state.update_data(traffic_limit_user_id=user_id, traffic_limit_strategy=strategy.value)
+    await render_admin(
+        callback,
+        f"Введите лимит в ГБ для стратегии «{traffic_limit_strategy_label(strategy)}».\n"
+        "Например: 100 или 512.5",
+    )
+
+
+@router.callback_query(F.data.startswith(f"{USER_TRAFFIC_CLEAR_PREFIX}:"))
+async def clear_user_traffic_limit(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    user_id = callback.data.split(":")[-1]
+    async with container.hub() as hub:
+        admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
+        try:
+            await hub.billing.set_user_traffic_limit(
+                user_id,
+                limit_gb=None,
+                admin_id=admin.id if admin else None,
+            )
+        except ServiceError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+    await callback.answer("Персональный лимит снят.")
+    await show_user_traffic_limit(callback, user_id, container)
+
+
 @router.callback_query(F.data.startswith(f"{USER_MESSAGE_PREFIX}:"))
 async def open_user_direct_message(callback: CallbackQuery, state: FSMContext, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
@@ -1935,6 +2037,39 @@ async def user_balance_apply(message: Message, state: FSMContext, container: App
         await hub.catalog.rebuild_user_access_matrix()
     await state.clear()
     await show_user_card(message, user_id, container)
+
+
+@router.message(TrafficLimitStates.waiting_for_amount)
+async def apply_user_traffic_limit(message: Message, state: FSMContext, container: AppContainer):
+    if not await is_admin(message.from_user.id, container):
+        return
+    if await route_admin_menu_action(message, state, container):
+        return
+    data = await state.get_data()
+    user_id = data.get("traffic_limit_user_id")
+    try:
+        limit_gb = Decimal((message.text or "").strip().replace(",", "."))
+    except (InvalidOperation, AttributeError):
+        await render_admin(message, "Не удалось распознать количество ГБ. Попробуйте ещё раз.")
+        return
+    if not user_id:
+        await state.clear()
+        await render_admin(message, "Сценарий настройки потерян. Откройте карточку пользователя заново.")
+        return
+    async with container.hub() as hub:
+        admin = await hub.accounts.get_admin_by_telegram_id(message.from_user.id)
+        try:
+            await hub.billing.set_user_traffic_limit(
+                user_id,
+                limit_gb=limit_gb,
+                strategy=data.get("traffic_limit_strategy") or TrafficLimitStrategy.NO_RESET,
+                admin_id=admin.id if admin else None,
+            )
+        except (ServiceError, ValueError) as exc:
+            await render_admin(message, str(exc))
+            return
+    await state.clear()
+    await show_user_traffic_limit(message, user_id, container)
 
 
 @router.message(DirectMessageStates.waiting_for_text)

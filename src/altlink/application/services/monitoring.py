@@ -3,14 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import joinedload
 
 from altlink.application.services.base import BaseService
 from altlink.domain.enums import SubscriptionStatus, SystemEventLevel
-from altlink.infrastructure.db.models import Subscription, SystemSetting, User
-from altlink.utils.time import utc_now
+from altlink.infrastructure.db.models import Subscription, SystemSetting, TrafficSnapshot, User
+from altlink.utils.time import MOSCOW_TZ, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +285,20 @@ class MonitoringService(BaseService):
         active_subscriptions = await self._list_active_subscriptions()
         hwid_counts = await self._collect_hwid_device_counts(active_subscriptions)
         checked_at = utc_now()
+        checked_at_msk = checked_at.astimezone(MOSCOW_TZ)
+        day_started_at = checked_at_msk.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+        month_started_at = checked_at_msk.replace(
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        ).astimezone(UTC)
+        traffic_usage = await self._collect_period_traffic_usage(
+            [item.user_id for item in active_subscriptions],
+            day_started_at=day_started_at,
+            month_started_at=month_started_at,
+        )
         observations = []
         for subscription in active_subscriptions:
             user = subscription.user
@@ -292,6 +307,7 @@ class MonitoringService(BaseService):
             if hwid_device_count is not None:
                 user.hwid_device_count = int(hwid_device_count)
                 user.hwid_devices_checked_at = checked_at
+            usage = traffic_usage.get(user.id, {})
             observations.append(
                 {
                     "user_id": user.id,
@@ -299,9 +315,40 @@ class MonitoringService(BaseService):
                     "username": user.username,
                     "hwid_device_count": hwid_device_count,
                     "device_limit": getattr(plan, "device_limit", None),
+                    "daily_traffic_bytes": int(usage.get("daily", 0)),
+                    "monthly_traffic_bytes": int(usage.get("monthly", 0)),
+                    "daily_traffic_threshold_bytes": int(self.settings.user_abuse_daily_traffic_gb) * 1024**3,
+                    "monthly_traffic_threshold_bytes": int(self.settings.user_abuse_monthly_traffic_gb) * 1024**3,
+                    "daily_period": checked_at_msk.date().isoformat(),
+                    "monthly_period": checked_at_msk.strftime("%Y-%m"),
                 }
             )
-        return await self.record_user_abuse_state(observations)
+        alerts = await self.record_user_abuse_state(observations)
+        subscriptions_by_user = {item.user_id: item for item in active_subscriptions}
+        await asyncio.gather(
+            *(
+                self._enrich_traffic_alert(
+                    alert,
+                    subscriptions_by_user.get(str(alert.details.get("user_id") or "")),
+                    day_started_at=day_started_at,
+                    month_started_at=month_started_at,
+                    checked_at=checked_at,
+                )
+                for alert in alerts
+                if alert.kind == "user_traffic_anomaly"
+            )
+        )
+        for alert in alerts:
+            if alert.kind != "user_traffic_anomaly":
+                continue
+            await self.log_event(
+                level=SystemEventLevel.WARNING,
+                event_type="user_abuse_detected",
+                message="Обнаружено аномальное потребление трафика пользователя.",
+                payload={"kind": alert.kind, **alert.details},
+                subject_user_id=str(alert.details.get("user_id") or "") or None,
+            )
+        return alerts
 
     async def record_user_abuse_state(self, observations: list[dict]) -> list[MonitoringAlert]:
         previous = await self._read_setting(self.USER_ABUSE_STATUS_KEY)
@@ -342,6 +389,27 @@ class MonitoringService(BaseService):
                 }
             )
 
+            daily_traffic_bytes = max(int(observation.get("daily_traffic_bytes") or 0), 0)
+            monthly_traffic_bytes = max(int(observation.get("monthly_traffic_bytes") or 0), 0)
+            daily_threshold = max(int(observation.get("daily_traffic_threshold_bytes") or 0), 0)
+            monthly_threshold = max(int(observation.get("monthly_traffic_threshold_bytes") or 0), 0)
+            daily_period = str(observation.get("daily_period") or "")
+            monthly_period = str(observation.get("monthly_period") or "")
+            daily_alert_active = daily_threshold > 0 and daily_traffic_bytes > daily_threshold
+            monthly_alert_active = monthly_threshold > 0 and monthly_traffic_bytes > monthly_threshold
+            details.update(
+                {
+                    "daily_traffic_bytes": daily_traffic_bytes,
+                    "monthly_traffic_bytes": monthly_traffic_bytes,
+                    "daily_traffic_threshold_bytes": daily_threshold,
+                    "monthly_traffic_threshold_bytes": monthly_threshold,
+                    "daily_period": daily_period,
+                    "monthly_period": monthly_period,
+                    "daily_traffic_alert_active": daily_alert_active,
+                    "monthly_traffic_alert_active": monthly_alert_active,
+                }
+            )
+
             if device_alert_active and (
                 not previous_state.get("device_alert_active")
                 or int(hwid_device_count) > int(previous_state.get("hwid_device_count") or 0)
@@ -349,7 +417,19 @@ class MonitoringService(BaseService):
                 alerts.append(
                     MonitoringAlert(kind="user_hwid_limit_exceeded", subject=self._user_label(details), details=details)
                 )
-            if device_alert_active:
+            new_daily_alert = daily_alert_active and (
+                previous_state.get("daily_period") != daily_period
+                or not previous_state.get("daily_traffic_alert_active")
+            )
+            new_monthly_alert = monthly_alert_active and (
+                previous_state.get("monthly_period") != monthly_period
+                or not previous_state.get("monthly_traffic_alert_active")
+            )
+            if new_daily_alert or new_monthly_alert:
+                alerts.append(
+                    MonitoringAlert(kind="user_traffic_anomaly", subject=self._user_label(details), details=details)
+                )
+            if device_alert_active or daily_alert_active or monthly_alert_active:
                 current_users[user_id] = details
 
         await self._write_setting(
@@ -358,13 +438,163 @@ class MonitoringService(BaseService):
             description="Последние активные антиабуз-тревоги пользователей.",
         )
         if alerts:
-            await self.log_event(
-                level=SystemEventLevel.WARNING,
-                event_type="user_abuse_detected",
-                message="Обнаружена подозрительная активность пользователей.",
-                payload={"alerts": [{"kind": item.kind, **item.details} for item in alerts]},
-            )
+            for alert in alerts:
+                if alert.kind == "user_traffic_anomaly":
+                    continue
+                await self.log_event(
+                    level=SystemEventLevel.WARNING,
+                    event_type="user_abuse_detected",
+                    message="Обнаружена подозрительная активность пользователя.",
+                    payload={"kind": alert.kind, **alert.details},
+                    subject_user_id=str(alert.details.get("user_id") or "") or None,
+                )
         return alerts
+
+    async def _collect_period_traffic_usage(
+        self,
+        user_ids: list[str],
+        *,
+        day_started_at: datetime,
+        month_started_at: datetime,
+    ) -> dict[str, dict[str, int]]:
+        if not user_ids:
+            return {}
+        current = await self._snapshot_lifetime_values(user_ids, latest=True)
+        day_baseline = await self._snapshot_lifetime_values(
+            user_ids,
+            latest=True,
+            until=day_started_at,
+        )
+        month_baseline = await self._snapshot_lifetime_values(
+            user_ids,
+            latest=True,
+            until=month_started_at,
+        )
+        missing_day = [user_id for user_id in user_ids if user_id not in day_baseline]
+        missing_month = [user_id for user_id in user_ids if user_id not in month_baseline]
+        if missing_day:
+            day_baseline.update(
+                await self._snapshot_lifetime_values(missing_day, latest=False, since=day_started_at)
+            )
+        if missing_month:
+            month_baseline.update(
+                await self._snapshot_lifetime_values(missing_month, latest=False, since=month_started_at)
+            )
+        result: dict[str, dict[str, int]] = {}
+        for user_id in user_ids:
+            current_value = int(current.get(user_id, 0))
+            day_value = int(day_baseline.get(user_id, 0))
+            month_value = int(month_baseline.get(user_id, 0))
+            result[user_id] = {
+                "daily": current_value - day_value if current_value >= day_value else current_value,
+                "monthly": current_value - month_value if current_value >= month_value else current_value,
+            }
+        return result
+
+    async def _snapshot_lifetime_values(
+        self,
+        user_ids: list[str],
+        *,
+        latest: bool,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> dict[str, int]:
+        aggregate = func.max if latest else func.min
+        sample_times_query = select(
+            TrafficSnapshot.user_id.label("user_id"),
+            aggregate(TrafficSnapshot.created_at).label("sampled_at"),
+        ).where(
+            TrafficSnapshot.user_id.in_(user_ids),
+            TrafficSnapshot.server_id.is_(None),
+        )
+        if since is not None:
+            sample_times_query = sample_times_query.where(TrafficSnapshot.created_at >= since)
+        if until is not None:
+            sample_times_query = sample_times_query.where(TrafficSnapshot.created_at <= until)
+        sample_times = sample_times_query.group_by(TrafficSnapshot.user_id).subquery()
+        rows = (
+            await self.session.execute(
+                select(
+                    TrafficSnapshot.user_id,
+                    func.max(TrafficSnapshot.lifetime_used_bytes),
+                )
+                .join(
+                    sample_times,
+                    and_(
+                        sample_times.c.user_id == TrafficSnapshot.user_id,
+                        sample_times.c.sampled_at == TrafficSnapshot.created_at,
+                    ),
+                )
+                .group_by(TrafficSnapshot.user_id)
+            )
+        ).all()
+        return {str(user_id): int(value or 0) for user_id, value in rows}
+
+    async def _enrich_traffic_alert(
+        self,
+        alert: MonitoringAlert,
+        subscription: Subscription | None,
+        *,
+        day_started_at: datetime,
+        month_started_at: datetime,
+        checked_at: datetime,
+    ) -> None:
+        if self.remnawave is None or subscription is None or subscription.user is None:
+            return
+        remote_uuid = getattr(subscription.user, "remnawave_user_uuid", None)
+        if not remote_uuid:
+            return
+        period_started_at = (
+            month_started_at
+            if alert.details.get("monthly_traffic_alert_active")
+            else day_started_at
+        )
+        try:
+            usage, accessible_nodes = await asyncio.gather(
+                self.remnawave.get_user_usage(
+                    remote_uuid,
+                    period_started_at.astimezone(MOSCOW_TZ).date(),
+                    checked_at.astimezone(MOSCOW_TZ).date(),
+                ),
+                self.remnawave.get_accessible_nodes(remote_uuid),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to collect per-server traffic for user_id=%s.", subscription.user_id, exc_info=True)
+            alert.details["server_stats_error"] = str(exc)
+            return
+
+        stats: dict[str, dict] = {}
+        for node in accessible_nodes:
+            node_uuid = str(getattr(node, "uuid", "") or "")
+            if not node_uuid:
+                continue
+            stats[node_uuid] = {
+                "uuid": node_uuid,
+                "name": getattr(node, "nodeName", None) or node_uuid,
+                "country_code": getattr(node, "countryCode", None),
+                "traffic_bytes": 0,
+            }
+        for node in [*(getattr(usage, "series", None) or []), *(getattr(usage, "topNodes", None) or [])]:
+            node_uuid = str(getattr(node, "uuid", "") or "")
+            if not node_uuid:
+                continue
+            current = stats.setdefault(
+                node_uuid,
+                {
+                    "uuid": node_uuid,
+                    "name": getattr(node, "name", None) or node_uuid,
+                    "country_code": getattr(node, "countryCode", None),
+                    "traffic_bytes": 0,
+                },
+            )
+            current["name"] = getattr(node, "name", None) or current["name"]
+            current["country_code"] = getattr(node, "countryCode", None) or current["country_code"]
+            current["traffic_bytes"] = max(int(getattr(node, "total", 0) or 0), current["traffic_bytes"])
+        alert.details["server_stats_period_started_at"] = period_started_at.isoformat()
+        alert.details["server_stats"] = sorted(
+            stats.values(),
+            key=lambda item: (-int(item["traffic_bytes"]), str(item["name"]).lower()),
+        )
 
     async def _list_active_subscriptions(self) -> list[Subscription]:
         subscriptions = list(

@@ -3,8 +3,11 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from altlink.application.services.base import ConflictError
+from altlink.domain.enums import BalanceTransactionType
+from altlink.infrastructure.db.models import BalanceTransaction
 from altlink.utils.time import utc_now
 
 
@@ -115,3 +118,29 @@ async def test_list_codes_hides_personal_codes_by_default(test_services):
     assert manual.id in {item.id for item in default_codes}
     assert personal.id not in {item.id for item in default_codes}
     assert personal.id in {item.id for item in all_codes}
+
+
+@pytest.mark.asyncio
+async def test_discount_promo_application_creates_visible_zero_value_transaction(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=19505,
+            username="promo_transaction",
+            first_name="Promo",
+            last_name="Transaction",
+            language_code="ru",
+        )
+        promo = await hub.promos.get_or_create_personal_discount_code(user.id)
+        await hub.promos.redeem_code(user.id, promo.code)
+        transaction = await hub.session.scalar(
+            select(BalanceTransaction).where(
+                BalanceTransaction.user_id == user.id,
+                BalanceTransaction.type == BalanceTransactionType.PROMO_APPLIED,
+            )
+        )
+        trial_is_still_available = await hub.accounts.can_offer_trial(user.id)
+
+    assert transaction is not None
+    assert transaction.amount_rub == Decimal("0.00")
+    assert promo.code in transaction.description
+    assert trial_is_still_available is True

@@ -95,6 +95,8 @@ def _ensure_runtime_schema_sync(connection) -> None:
         "referral_reward_granted_at": DateTime(timezone=True),
         "vless_keys_downloaded_at": DateTime(timezone=True),
         "hwid_devices_checked_at": DateTime(timezone=True),
+        "traffic_limit_bytes_override": BigInteger(),
+        "traffic_limit_strategy_override": String(16),
     }
 
     for column_name, column_type in expected_columns.items():
@@ -181,6 +183,46 @@ def _ensure_runtime_schema_sync(connection) -> None:
             )
             logger.warning("Added missing column access_type to server_inbounds table during runtime schema preparation.")
 
+    if "system_events" in table_names:
+        event_columns = {column["name"] for column in inspector.get_columns("system_events")}
+        subject_user_column_added = False
+        if "subject_user_id" not in event_columns:
+            compiled_type = String(36).compile(dialect=connection.dialect)
+            connection.execute(text(f"ALTER TABLE system_events ADD COLUMN subject_user_id {compiled_type}"))
+            subject_user_column_added = True
+            logger.warning("Added missing column subject_user_id to system_events during runtime schema preparation.")
+        event_indexes = {index["name"] for index in inspect(connection).get_indexes("system_events")}
+        if "ix_system_events_subject_user_id" not in event_indexes:
+            index_clause = "IF NOT EXISTS " if connection.dialect.name == "postgresql" else ""
+            connection.execute(
+                text(f"CREATE INDEX {index_clause}ix_system_events_subject_user_id ON system_events (subject_user_id)")
+            )
+            logger.warning("Added missing subject user index to system_events during runtime schema preparation.")
+        if subject_user_column_added and connection.dialect.name == "postgresql":
+            connection.execute(
+                text(
+                    """
+                    UPDATE system_events
+                    SET subject_user_id = payload ->> 'user_id'
+                    WHERE subject_user_id IS NULL
+                      AND payload IS NOT NULL
+                      AND payload ->> 'user_id' IS NOT NULL
+                    """
+                )
+            )
+        elif subject_user_column_added and connection.dialect.name == "sqlite":
+            connection.execute(
+                text(
+                    """
+                    UPDATE system_events
+                    SET subject_user_id = json_extract(payload, '$.user_id')
+                    WHERE subject_user_id IS NULL
+                      AND payload IS NOT NULL
+                      AND json_extract(payload, '$.user_id') IS NOT NULL
+                    """
+                )
+            )
+
     if "traffic_snapshots" in table_names and connection.dialect.name != "sqlite":
         traffic_columns = {column["name"]: column for column in inspector.get_columns("traffic_snapshots")}
         for column_name in ("used_bytes", "lifetime_used_bytes"):
@@ -196,8 +238,22 @@ def _ensure_runtime_schema_sync(connection) -> None:
                 column_name,
                 compiled_type,
             )
+    if "traffic_snapshots" in table_names:
+        traffic_indexes = {index["name"] for index in inspect(connection).get_indexes("traffic_snapshots")}
+        if "ix_traffic_snapshots_user_server_created" not in traffic_indexes:
+            index_clause = "IF NOT EXISTS " if connection.dialect.name == "postgresql" else ""
+            connection.execute(
+                text(
+                    f"CREATE INDEX {index_clause}ix_traffic_snapshots_user_server_created "
+                    "ON traffic_snapshots (user_id, server_id, created_at)"
+                )
+            )
+            logger.warning("Added missing anti-abuse lookup index to traffic_snapshots.")
 
 
 async def ensure_runtime_schema(engine: AsyncEngine) -> None:
     async with engine.begin() as connection:
+        if connection.dialect.name == "postgresql":
+            # Every Docker service prepares the schema on startup; serialize DDL across processes.
+            await connection.execute(text("SELECT pg_advisory_xact_lock(1096120401)"))
         await connection.run_sync(_ensure_runtime_schema_sync)

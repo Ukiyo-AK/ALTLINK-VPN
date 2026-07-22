@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from altlink.domain.enums import UserStatus
+from altlink.domain.enums import TrafficLimitStrategy, UserStatus
 from altlink.infrastructure.db.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, enum_values
 
 if TYPE_CHECKING:
@@ -60,6 +60,11 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     remnawave_short_uuid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     hwid_device_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, index=True)
     hwid_devices_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    traffic_limit_bytes_override: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    traffic_limit_strategy_override: Mapped[TrafficLimitStrategy | None] = mapped_column(
+        enum_values(TrafficLimitStrategy),
+        nullable=True,
+    )
     assigned_server_id: Mapped[str | None] = mapped_column(
         ForeignKey("servers.id", ondelete="SET NULL"),
         nullable=True,

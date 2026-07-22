@@ -28,6 +28,7 @@ from altlink.infrastructure.db.models import (
     Notification,
     Plan,
     Subscription,
+    SystemEvent,
     TopupRequest,
     TrialPeriod,
     TrafficSnapshot,
@@ -503,7 +504,12 @@ class AccountService(BaseService):
 
     async def has_user_transactions(self, user_id: str) -> bool:
         balance_transaction_id = await self.session.scalar(
-            select(BalanceTransaction.id).where(BalanceTransaction.user_id == user_id).limit(1)
+            select(BalanceTransaction.id)
+            .where(
+                BalanceTransaction.user_id == user_id,
+                BalanceTransaction.type != BalanceTransactionType.PROMO_APPLIED,
+            )
+            .limit(1)
         )
         if balance_transaction_id is not None:
             return True
@@ -835,7 +841,28 @@ class AccountService(BaseService):
                 )
             ).all()
         )
-        return {"user": user, "subscription": subscription, "topups": topups, "transactions": transactions}
+        events = await self.list_user_events(user.id, limit=30)
+        return {
+            "user": user,
+            "subscription": subscription,
+            "topups": topups,
+            "transactions": transactions,
+            "events": events,
+        }
+
+    async def list_user_events(self, user_id: str, *, limit: int = 30) -> list[SystemEvent]:
+        normalized_limit = min(max(int(limit), 1), 100)
+        return list(
+            (
+                await self.session.scalars(
+                    select(SystemEvent)
+                    .where(SystemEvent.subject_user_id == user_id)
+                    .options(joinedload(SystemEvent.actor_admin))
+                    .order_by(SystemEvent.created_at.desc())
+                    .limit(normalized_limit)
+                )
+            ).all()
+        )
 
     async def bind_referrer(self, user_id: str, referral_code: str | None) -> User:
         user = await self.get_user(user_id)

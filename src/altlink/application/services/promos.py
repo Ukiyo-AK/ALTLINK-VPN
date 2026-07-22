@@ -212,6 +212,17 @@ class PromoService(BaseService):
         redemption = PromoCodeRedemption(promo_code_id=promo.id, user_id=user.id)
         self.session.add(redemption)
         promo.used_count += 1
+        reward_description = (
+            f"скидка {Decimal(promo.reward_value):g}%"
+            if promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT
+            else f"бонус {quantize_money(Decimal(promo.reward_value)):g} ₽"
+        )
+        await self.accounts.adjust_balance(
+            user_id=user.id,
+            amount_rub=Decimal("0"),
+            transaction_type=BalanceTransactionType.PROMO_APPLIED,
+            description=f"Применён промокод {promo.code}: {reward_description}",
+        )
 
         if promo.reward_kind == PromoRewardKind.BALANCE:
             amount = quantize_money(Decimal(promo.reward_value))

@@ -25,6 +25,7 @@ from altlink.domain.enums import (
     ServerType,
     SubscriptionStatus,
     SystemEventLevel,
+    TrafficLimitStrategy,
     UserStatus,
 )
 from altlink.domain.notifications import (
@@ -42,6 +43,7 @@ from altlink.domain.notifications import (
     trial_setup_help_message,
 )
 from altlink.domain.plans import START_WHITELIST_BALANCE_FLOOR_RUB, WHITELIST_GB_PRICE_RUB, is_metered_plan_code
+from altlink.domain.traffic_limits import BYTES_PER_GIB, effective_traffic_limit, parse_traffic_limit_strategy
 from altlink.infrastructure.db.models import (
     OnlineSessionCache,
     Notification,
@@ -100,6 +102,67 @@ class BillingService(BaseService):
         self.catalog = catalog
         self.notifications = notifications
         self.promos = promos
+
+    async def set_user_traffic_limit(
+        self,
+        user_id: str,
+        *,
+        limit_gb: Decimal | None,
+        strategy: TrafficLimitStrategy | str = TrafficLimitStrategy.NO_RESET,
+        admin_id: str | None = None,
+    ) -> User:
+        user = await self.accounts.get_user(user_id)
+
+        if limit_gb is None or limit_gb == 0:
+            user.traffic_limit_bytes_override = None
+            user.traffic_limit_strategy_override = None
+        else:
+            limit_value = Decimal(str(limit_gb))
+            parsed_strategy = parse_traffic_limit_strategy(strategy)
+            if not limit_value.is_finite() or limit_value < 0:
+                raise ConflictError("Лимит трафика должен быть положительным числом.")
+            if limit_value > Decimal("1000000"):
+                raise ConflictError("Лимит трафика не может превышать 1 000 000 ГБ.")
+            user.traffic_limit_bytes_override = int(limit_value * BYTES_PER_GIB)
+            user.traffic_limit_strategy_override = parsed_strategy
+
+        subscription = await self.accounts.get_current_subscription(user.id)
+        if (
+            subscription is not None
+            and subscription.plan is not None
+            and subscription.status in {
+                SubscriptionStatus.ACTIVE,
+                SubscriptionStatus.TRIAL,
+                SubscriptionStatus.GRACE,
+            }
+            and ensure_utc(subscription.ends_at) > utc_now()
+        ):
+            await self._sync_user_remote_access(
+                user,
+                subscription,
+                subscription.plan,
+                enable=user.status in {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE},
+                reset_traffic=False,
+            )
+
+        await self.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="user_traffic_limit_updated",
+            message="Изменён персональный лимит трафика пользователя.",
+            payload={
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "limit_bytes": user.traffic_limit_bytes_override,
+                "strategy": (
+                    user.traffic_limit_strategy_override.value
+                    if user.traffic_limit_strategy_override is not None
+                    else None
+                ),
+            },
+            actor_admin_id=admin_id,
+        )
+        await self.session.flush()
+        return user
 
     async def activate_trial(self, user_id: str) -> Subscription:
         user = await self.accounts.get_user(user_id)
@@ -1634,13 +1697,14 @@ class BillingService(BaseService):
             and access.server.remnawave_internal_squad_uuid
         ]
         expire_at = subscription.grace_until if subscription.status == SubscriptionStatus.GRACE else subscription.ends_at
+        traffic_limit_bytes, traffic_limit_strategy = effective_traffic_limit(user, subscription)
         payload = {
             "uuid": user.remnawave_user_uuid,
             "username": user.remnawave_username or f"tg_{user.telegram_id}",
             "status": "ACTIVE" if enable else "DISABLED",
             "expireAt": expire_at.isoformat(),
-            "trafficLimitBytes": int(subscription.traffic_limit_bytes or 0),
-            "trafficLimitStrategy": "NO_RESET",
+            "trafficLimitBytes": traffic_limit_bytes,
+            "trafficLimitStrategy": traffic_limit_strategy.value,
             "telegramId": user.telegram_id,
             "description": f"ALTLINK user {user.telegram_id}",
             "activeInternalSquads": squad_ids,

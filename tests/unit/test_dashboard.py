@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from altlink.domain.enums import PlanCode
+from altlink.domain.enums import BalanceTransactionType, PlanCode
 
 
 @pytest.mark.asyncio
@@ -139,3 +139,44 @@ async def test_dashboard_overview_contains_period_analytics_and_load_charts(test
     assert charts["server_loads"]["items"]
     assert charts["host_loads"]["items"]
     assert "traffic" in charts
+
+
+@pytest.mark.asyncio
+async def test_transaction_filters_apply_to_full_query(test_services):
+    async with test_services.hub() as hub:
+        matching = await hub.accounts.get_or_create_user(
+            telegram_id=12008,
+            username="transaction_filter_target",
+            first_name="Filter",
+            last_name="Target",
+            language_code="ru",
+        )
+        other = await hub.accounts.get_or_create_user(
+            telegram_id=12009,
+            username="transaction_filter_other",
+            first_name="Filter",
+            last_name="Other",
+            language_code="ru",
+        )
+        await hub.accounts.adjust_balance(
+            user_id=matching.id,
+            amount_rub=Decimal("75"),
+            transaction_type=BalanceTransactionType.MANUAL_ADJUSTMENT,
+            description="Искомая корректировка",
+        )
+        await hub.accounts.adjust_balance(
+            user_id=other.id,
+            amount_rub=Decimal("500"),
+            transaction_type=BalanceTransactionType.TOPUP,
+            description="Другая операция",
+        )
+
+        rows = await hub.dashboard.list_transactions(
+            search="transaction_filter_target",
+            transaction_type=BalanceTransactionType.MANUAL_ADJUSTMENT,
+            amount_min=Decimal("70"),
+            amount_max=Decimal("80"),
+            limit=25,
+        )
+
+    assert [item.user_id for item in rows] == [matching.id]

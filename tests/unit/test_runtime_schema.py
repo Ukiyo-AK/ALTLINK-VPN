@@ -57,6 +57,8 @@ async def test_runtime_schema_adds_missing_user_registration_columns(tmp_path: P
     assert "vless_keys_downloaded_at" in column_names
     assert "hwid_device_count" in column_names
     assert "hwid_devices_checked_at" in column_names
+    assert "traffic_limit_bytes_override" in column_names
+    assert "traffic_limit_strategy_override" in column_names
 
 
 @pytest.mark.asyncio

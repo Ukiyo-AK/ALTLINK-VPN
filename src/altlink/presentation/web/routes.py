@@ -30,6 +30,7 @@ from altlink.domain.enums import (
     ServerType,
     SupportRequestStatus,
     TopupStatus,
+    TrafficLimitStrategy,
     UserStatus,
 )
 from altlink.domain.notifications import (
@@ -38,6 +39,7 @@ from altlink.domain.notifications import (
     render_promo_campaign_message,
 )
 from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code, parse_paid_plan_code
+from altlink.domain.traffic_limits import BYTES_PER_GIB, TRAFFIC_LIMIT_STRATEGY_LABELS
 from altlink.infrastructure.db.models import (
     BalanceTransaction,
     Notification,
@@ -291,6 +293,19 @@ def payment_status_label(value) -> str:
     }.get(raw_status, "Неизвестный статус")
 
 
+def balance_transaction_type_label(value) -> str:
+    transaction_type = getattr(value, "value", value)
+    return {
+        "topup": "Пополнение",
+        "subscription_charge": "Оплата подписки",
+        "manual_adjustment": "Ручная корректировка",
+        "refund": "Возврат",
+        "promo_applied": "Применение промокода",
+        "promo_bonus": "Бонус по промокоду",
+        "referral_bonus": "Реферальный бонус",
+    }.get(str(transaction_type), str(transaction_type))
+
+
 def normalize_promo_campaign_settings(value: object) -> dict[str, int | bool]:
     raw = value if isinstance(value, dict) else {}
     settings = dict(DEFAULT_PROMO_CAMPAIGN_SETTINGS)
@@ -472,6 +487,7 @@ def vless_keys_file_content(keys: list[str]) -> bytes:
 templates.env.filters["rub"] = format_rub_amount
 templates.env.filters["user_status"] = user_status_label
 templates.env.filters["payment_status"] = payment_status_label
+templates.env.filters["transaction_type"] = balance_transaction_type_label
 templates.env.filters["access_status"] = access_status_label
 templates.env.filters["support_status"] = support_status_label
 templates.env.filters["msk_datetime"] = format_msk_datetime
@@ -1433,12 +1449,53 @@ async def user_detail(request: Request, user_id: str):
                 if has_paid_history
                 else promo_settings["new_user_discount_percent"]
             ),
+            traffic_limit_gb=(
+                Decimal(card["user"].traffic_limit_bytes_override) / Decimal(BYTES_PER_GIB)
+                if card["user"].traffic_limit_bytes_override is not None
+                else None
+            ),
+            traffic_limit_strategy_options=[
+                {"value": item.value, "label": TRAFFIC_LIMIT_STRATEGY_LABELS[item]}
+                for item in TrafficLimitStrategy
+            ],
             whitelist_cost_rub=bytes_to_gb_cost(
                 card["subscription"].whitelist_traffic_used_bytes if card["subscription"] else 0,
                 WHITELIST_GB_PRICE_RUB,
             ),
             active_nav="users",
         )
+
+
+@router.post("/admin/users/{user_id}/traffic-limit")
+async def user_traffic_limit(request: Request, user_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    raw_limit = str(form.get("limit_gb") or "").strip()
+    try:
+        limit_gb = Decimal(raw_limit.replace(",", ".")) if raw_limit else None
+    except Exception:
+        set_flash(request, "Укажите корректное количество гигабайт.", "danger")
+        return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
+
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            await hub.billing.set_user_traffic_limit(
+                user_id,
+                limit_gb=limit_gb,
+                strategy=str(form.get("strategy") or TrafficLimitStrategy.NO_RESET.value),
+                admin_id=admin.id,
+            )
+        except (ConflictError, NotFoundError, ServiceError, ValueError) as exc:
+            set_flash(request, str(exc), "danger")
+        else:
+            if limit_gb is None or limit_gb == 0:
+                set_flash(request, "Персональный лимит снят. Будет использоваться лимит тарифа.")
+            else:
+                set_flash(request, "Персональный лимит сохранён и синхронизирован с Remnawave.")
+        return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
 @router.post("/admin/users/{user_id}/promo-message")
@@ -1769,18 +1826,53 @@ async def plans_page(request: Request):
 
 
 @router.get("/admin/transactions")
-async def transactions_page(request: Request):
+async def transactions_page(
+    request: Request,
+    search: str | None = None,
+    type: str | None = None,
+    amount_min: str | None = None,
+    amount_max: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+    limit: int = 100,
+):
+    try:
+        transaction_type = BalanceTransactionType(type) if type else None
+    except ValueError:
+        transaction_type = None
+    normalized_limit = limit if limit in {25, 50, 100, 250, 500} else 100
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        transactions = await hub.dashboard.list_transactions()
+        transactions = await hub.dashboard.list_transactions(
+            search=search,
+            transaction_type=transaction_type,
+            amount_min=parse_decimal_query(amount_min),
+            amount_max=parse_decimal_query(amount_max),
+            created_from=parse_date_query(created_from),
+            created_to=parse_date_query(created_to, end_of_day=True),
+            limit=normalized_limit,
+        )
         return render(
             request,
             "transactions.html",
             title="Баланс и транзакции",
             admin=admin,
             transactions=transactions,
+            filters={
+                "search": search or "",
+                "type": type or "",
+                "amount_min": amount_min or "",
+                "amount_max": amount_max or "",
+                "created_from": created_from or "",
+                "created_to": created_to or "",
+                "limit": normalized_limit,
+            },
+            transaction_type_options=[
+                {"value": item.value, "label": balance_transaction_type_label(item)}
+                for item in BalanceTransactionType
+            ],
             active_nav="transactions",
         )
 

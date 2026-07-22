@@ -12,6 +12,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from altlink.application.services.base import BaseService, ConflictError, NotFoundError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType, SubscriptionStatus, SystemEventLevel, UserStatus
 from altlink.domain.plans import START_WHITELIST_BALANCE_FLOOR_RUB, is_metered_plan_code, is_unlimited_plan_code
+from altlink.domain.traffic_limits import effective_traffic_limit
 from altlink.infrastructure.db.models import (
     OnlineSessionCache,
     Server,
@@ -505,6 +506,7 @@ class CatalogService(BaseService):
                 and server.remnawave_internal_squad_uuid
             ]
             expire_at = subscription.grace_until if subscription.status == SubscriptionStatus.GRACE else subscription.ends_at
+            traffic_limit_bytes, traffic_limit_strategy = effective_traffic_limit(user, subscription)
             if ensure_utc(expire_at) <= now:
                 logger.warning(
                     "Skipping remote squad sync for expired subscription %s of user %s.",
@@ -519,8 +521,8 @@ class CatalogService(BaseService):
                         "username": user.remnawave_username or f"tg_{user.telegram_id}",
                         "status": "ACTIVE" if user.status in {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE} else "DISABLED",
                         "expireAt": expire_at.isoformat(),
-                        "trafficLimitBytes": int(subscription.traffic_limit_bytes or 0),
-                        "trafficLimitStrategy": "NO_RESET",
+                        "trafficLimitBytes": traffic_limit_bytes,
+                        "trafficLimitStrategy": traffic_limit_strategy.value,
                         "hwidDeviceLimit": subscription.plan.device_limit,
                         "telegramId": user.telegram_id,
                         "description": f"ALTLINK user {user.telegram_id}",

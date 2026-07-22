@@ -15,6 +15,20 @@
       <div><dt>Следующее списание</dt><dd>{{ subscription.next_billing_at|msk_datetime if subscription else '—' }}</dd></div>
       <div><dt>Автопродление</dt><dd>{{ 'включено' if subscription and subscription.auto_renew else 'отключено' }}</dd></div>
       <div><dt>Лимит устройств</dt><dd>{{ subscription.plan.device_limit if subscription and subscription.plan else '—' }}</dd></div>
+      <div>
+        <dt>Персональный лимит трафика</dt>
+        <dd>{{ (traffic_limit_gb|string) ~ ' ГБ' if traffic_limit_gb is not none else 'По тарифу' }}</dd>
+      </div>
+      <div>
+        <dt>Сброс лимита</dt>
+        <dd>
+          {% if user.traffic_limit_strategy_override %}
+            {% for item in traffic_limit_strategy_options if item.value == user.traffic_limit_strategy_override.value %}{{ item.label }}{% endfor %}
+          {% else %}
+            По тарифу
+          {% endif %}
+        </dd>
+      </div>
       <div><dt>Whitelist трафик</dt><dd>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes if subscription else 0) / 1024**3) }} ГБ</dd></div>
       <div><dt>Расчёт whitelist</dt><dd>{{ whitelist_cost_rub|rub }} ₽</dd></div>
     </dl>
@@ -45,6 +59,23 @@
         <input type="text" name="description" value="Ручная корректировка баланса">
       </label>
       <button type="submit" class="button">Обновить баланс</button>
+    </form>
+    <form method="post" action="/admin/users/{{ user.id }}/traffic-limit" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Персональный лимит трафика, ГБ</span>
+        <input type="number" min="0" max="1000000" step="0.01" name="limit_gb" value="{{ traffic_limit_gb if traffic_limit_gb is not none else '' }}" placeholder="Пусто — по тарифу">
+      </label>
+      <label>
+        <span>Стратегия сброса</span>
+        <select name="strategy">
+          {% for item in traffic_limit_strategy_options %}
+          <option value="{{ item.value }}" {% if user.traffic_limit_strategy_override and user.traffic_limit_strategy_override.value == item.value %}selected{% endif %}>{{ item.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <p class="muted">Пустое значение или 0 снимает персональное ограничение. Смена тарифа этот лимит не сбрасывает.</p>
+      <button type="submit" class="button ghost">Сохранить лимит</button>
     </form>
     <form method="post" action="/admin/users/{{ user.id }}/plan" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -161,6 +192,29 @@
       </tr>
       {% else %}
       <tr><td colspan="4" class="muted">Транзакций пока нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <div class="split">
+    <h2>Логи пользователя</h2>
+    <span class="badge">Последние {{ card.events|length }}</span>
+  </div>
+  <table class="table">
+    <thead><tr><th>Дата (МСК)</th><th>Источник</th><th>Событие</th><th>Сообщение</th><th>Администратор</th></tr></thead>
+    <tbody>
+      {% for event in card.events %}
+      <tr>
+        <td>{{ event.created_at|msk_datetime }}</td>
+        <td>{{ event.source }}</td>
+        <td>{{ event.event_type }}</td>
+        <td>{{ event.message }}</td>
+        <td>{{ event.actor_admin.username if event.actor_admin else 'Система' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Событий для пользователя пока нет.</td></tr>
       {% endfor %}
     </tbody>
   </table>

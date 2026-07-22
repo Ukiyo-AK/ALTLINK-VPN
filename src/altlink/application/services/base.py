@@ -45,9 +45,15 @@ class BaseService:
         message: str,
         payload: dict | None = None,
         actor_admin_id: str | None = None,
+        subject_user_id: str | None = None,
     ) -> None:
+        if subject_user_id is None and isinstance(payload, dict):
+            payload_user_id = payload.get("user_id")
+            if payload_user_id:
+                subject_user_id = str(payload_user_id)
         self.session.add(
             SystemEvent(
+                subject_user_id=subject_user_id,
                 actor_admin_id=actor_admin_id,
                 level=level,
                 source=self.source,
@@ -56,4 +62,3 @@ class BaseService:
                 payload=payload,
             )
         )
-

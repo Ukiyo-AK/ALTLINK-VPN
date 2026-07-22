@@ -76,7 +76,42 @@ def format_user_abuse_alert(alerts) -> str:
                 f"  HWID-устройств: {details.get('hwid_device_count', 0)} "
                 f"при лимите {details.get('device_limit', '—')}"
             )
+        elif item.kind == "user_traffic_anomaly":
+            daily_bytes = int(details.get("daily_traffic_bytes") or 0)
+            monthly_bytes = int(details.get("monthly_traffic_bytes") or 0)
+            if details.get("daily_traffic_alert_active"):
+                daily_threshold = int(details.get("daily_traffic_threshold_bytes") or 0) / 1024**3
+                lines.append(f"  За сутки: {daily_bytes / 1024**3:.2f} ГБ (порог: {daily_threshold:g} ГБ)")
+            if details.get("monthly_traffic_alert_active"):
+                monthly_threshold = int(details.get("monthly_traffic_threshold_bytes") or 0) / 1024**4
+                lines.append(f"  За месяц: {monthly_bytes / 1024**4:.2f} ТБ (порог: {monthly_threshold:g} ТБ)")
+            server_stats = details.get("server_stats") or []
+            if server_stats:
+                lines.append("  Статистика по серверам:")
+                for server in server_stats:
+                    country = server.get("country_code") or "—"
+                    traffic_gb = int(server.get("traffic_bytes") or 0) / 1024**3
+                    lines.append(f"    • {server.get('name') or server.get('uuid')} [{country}]: {traffic_gb:.2f} ГБ")
+            elif details.get("server_stats_error"):
+                lines.append("  Статистику по серверам временно получить не удалось.")
     return "\n".join(lines)
+
+
+def split_telegram_text(text: str, *, limit: int = 3900) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    current_length = 0
+    for line in text.splitlines():
+        added_length = len(line) + (1 if current else 0)
+        if current and current_length + added_length > limit:
+            chunks.append("\n".join(current))
+            current = []
+            current_length = 0
+        current.append(line)
+        current_length += len(line) + (1 if len(current) > 1 else 0)
+    if current:
+        chunks.append("\n".join(current))
+    return chunks or [text]
 
 
 async def sync_servers_job(container: AppContainer) -> None:
@@ -129,11 +164,13 @@ async def user_abuse_monitor_job(container: AppContainer) -> None:
         if alerts:
             admin_ids = await hub.accounts.list_admin_telegram_ids()
     if alerts:
-        await send_telegram_messages(
-            bot_token=container.settings.admin_bot_token,
-            chat_ids=admin_ids,
-            text=format_user_abuse_alert(alerts),
-        )
+        for alert in alerts:
+            for message_part in split_telegram_text(format_user_abuse_alert([alert])):
+                await send_telegram_messages(
+                    bot_token=container.settings.admin_bot_token,
+                    chat_ids=admin_ids,
+                    text=message_part,
+                )
 
 
 async def remnawave_health_job(container: AppContainer) -> None:

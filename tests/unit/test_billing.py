@@ -18,6 +18,7 @@ from altlink.domain.enums import (
     PromoRewardKind,
     ServerType,
     SubscriptionStatus,
+    TrafficLimitStrategy,
     UserStatus,
 )
 from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
@@ -51,6 +52,39 @@ def test_trial_reminder_window_matches_expected_checkpoints():
     assert BillingService._trial_reminder_window(timedelta(minutes=30)) == ("1h", "1 час")
     assert BillingService._trial_reminder_window(timedelta(days=2)) is None
     assert BillingService._trial_reminder_window(timedelta(0)) is None
+
+
+@pytest.mark.asyncio
+async def test_personal_traffic_limit_survives_plan_change_and_catalog_sync(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=12999,
+            username="limited_account",
+            first_name="Limited",
+            last_name="Account",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("1000"), auto_complete=True)
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+
+        await hub.billing.set_user_traffic_limit(
+            user.id,
+            limit_gb=Decimal("123.5"),
+            strategy=TrafficLimitStrategy.MONTH,
+        )
+        remote = test_services.remnawave.users[user.remnawave_user_uuid]
+        assert remote.trafficLimitBytes == int(Decimal("123.5") * 1024**3)
+        assert remote.trafficLimitStrategy == "MONTH"
+
+        await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=True)
+        await hub.catalog.sync_user_target_squads(user.id)
+        refreshed = await hub.accounts.get_user(user.id)
+        remote = test_services.remnawave.users[refreshed.remnawave_user_uuid]
+
+    assert refreshed.traffic_limit_bytes_override == int(Decimal("123.5") * 1024**3)
+    assert refreshed.traffic_limit_strategy_override == TrafficLimitStrategy.MONTH
+    assert remote.trafficLimitBytes == int(Decimal("123.5") * 1024**3)
+    assert remote.trafficLimitStrategy == "MONTH"
 
 
 @pytest.mark.asyncio

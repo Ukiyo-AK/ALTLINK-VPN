@@ -24,6 +24,10 @@ USER_DELETE_PREFIX = "adm:ux"
 USER_DELETE_CONFIRM_PREFIX = "adm:xc"
 USER_DEVICES_PREFIX = "adm:dl"
 USER_DEVICE_PREFIX = "adm:do"
+USER_TRAFFIC_LIMIT_PREFIX = "adm:tl"
+USER_TRAFFIC_STRATEGY_PREFIX = "adm:ts"
+USER_TRAFFIC_CLEAR_PREFIX = "adm:tc"
+USER_LOGS_PREFIX = "adm:ul"
 USERS_SYNC_NODE_ACCESS = "adm:usr:nodes"
 
 PROMO_TOGGLE_PREFIX = "adm:pt"
@@ -74,9 +78,42 @@ def user_actions(user_id: str) -> InlineKeyboardBuilder:
     builder.button(text="Корректировка баланса", callback_data=f"{USER_BALANCE_PREFIX}:{user_id}", style="primary")
     builder.button(text="Написать клиенту", callback_data=f"{USER_MESSAGE_PREFIX}:{user_id}", style="success")
     builder.button(text="Устройства", callback_data=f"{USER_DEVICES_PREFIX}:0:{user_id}", style="primary")
+    builder.button(text="Лимит трафика", callback_data=f"{USER_TRAFFIC_LIMIT_PREFIX}:{user_id}", style="primary")
+    builder.button(text="Логи пользователя", callback_data=f"{USER_LOGS_PREFIX}:{user_id}")
     builder.button(text="Обновить карточку", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
     builder.button(text="Удалить аккаунт", callback_data=f"{USER_DELETE_PREFIX}:{user_id}", style="danger")
-    builder.adjust(2, 2, 2)
+    builder.adjust(2, 2, 2, 2)
+    return builder
+
+
+def user_traffic_limit_actions(user_id: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    for strategy, label in (
+        ("NO_RESET", "Без сброса"),
+        ("DAY", "Каждый день"),
+        ("WEEK", "Каждую неделю"),
+        ("MONTH", "Каждый месяц"),
+    ):
+        builder.button(
+            text=label,
+            callback_data=f"{USER_TRAFFIC_STRATEGY_PREFIX}:{strategy}:{user_id}",
+            style="primary",
+        )
+    builder.button(
+        text="Снять персональный лимит",
+        callback_data=f"{USER_TRAFFIC_CLEAR_PREFIX}:{user_id}",
+        style="danger",
+    )
+    builder.button(text="Назад к карточке", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
+    builder.adjust(2, 2, 1, 1)
+    return builder
+
+
+def user_logs_actions(user_id: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Обновить", callback_data=f"{USER_LOGS_PREFIX}:{user_id}", style="primary")
+    builder.button(text="Назад к карточке", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
+    builder.adjust(1, 1)
     return builder
 
 

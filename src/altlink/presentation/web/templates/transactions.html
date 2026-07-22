@@ -1,13 +1,45 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel">
+  <form method="get" action="/admin/transactions" class="dashboard-filter-form">
+    <label>
+      <span>Пользователь или описание</span>
+      <input type="search" name="search" value="{{ filters.search }}" placeholder="@username, Telegram ID, UUID">
+    </label>
+    <label>
+      <span>Тип</span>
+      <select name="type">
+        <option value="">Все типы</option>
+        {% for item in transaction_type_options %}
+        <option value="{{ item.value }}" {% if filters.type == item.value %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label><span>Сумма от, ₽</span><input type="number" step="0.01" name="amount_min" value="{{ filters.amount_min }}"></label>
+    <label><span>Сумма до, ₽</span><input type="number" step="0.01" name="amount_max" value="{{ filters.amount_max }}"></label>
+    <label><span>Дата от (МСК)</span><input type="date" name="created_from" value="{{ filters.created_from }}"></label>
+    <label><span>Дата до (МСК)</span><input type="date" name="created_to" value="{{ filters.created_to }}"></label>
+    <label>
+      <span>Показывать</span>
+      <select name="limit">
+        {% for value in [25, 50, 100, 250, 500] %}
+        <option value="{{ value }}" {% if filters.limit == value %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="button">Применить</button>
+    <a href="/admin/transactions" class="button ghost">Сбросить</a>
+  </form>
+</section>
+
+<section class="panel">
   <table class="table">
     <thead><tr><th>Пользователь</th><th>Тип</th><th>Сумма</th><th>Описание</th><th>Дата</th></tr></thead>
     <tbody>
       {% for tx in transactions %}
       <tr>
-        <td>{{ tx.user.username or tx.user.telegram_id }}</td>
-        <td>{{ tx.type }}</td>
+        <td><a href="/admin/users/{{ tx.user.id }}">{{ tx.user.username or tx.user.telegram_id }}</a></td>
+        <td>{{ tx.type|transaction_type }}</td>
         <td>{{ tx.amount_rub|rub }} ₽</td>
         <td>{{ tx.description or '—' }}</td>
         <td>{{ tx.created_at|msk_datetime }}</td>

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, timedelta
+
 import pytest
 from sqlalchemy import select
 
 from altlink.application.services.accounts import UserListFilters
-from altlink.infrastructure.db.models import SystemSetting
+from altlink.infrastructure.db.models import SystemEvent, SystemSetting, TrafficSnapshot
+from altlink.utils.time import MOSCOW_TZ, utc_now
 
 
 @pytest.mark.asyncio
@@ -162,6 +165,34 @@ async def test_record_user_abuse_state_preserves_device_alert_when_remote_data_i
 
 
 @pytest.mark.asyncio
+async def test_record_user_abuse_state_tracks_monthly_threshold_per_calendar_month(test_services):
+    observation = {
+        "user_id": "user-monthly",
+        "telegram_id": 42005,
+        "username": "monthly_traffic",
+        "hwid_device_count": 0,
+        "device_limit": 2,
+        "daily_traffic_bytes": 1 * 1024**3,
+        "daily_traffic_threshold_bytes": 50 * 1024**3,
+        "monthly_traffic_bytes": 1025 * 1024**3,
+        "monthly_traffic_threshold_bytes": 1024 * 1024**3,
+        "daily_period": "2026-07-22",
+        "monthly_period": "2026-07",
+    }
+
+    async with test_services.hub() as hub:
+        first = await hub.monitoring.record_user_abuse_state([observation])
+        repeated = await hub.monitoring.record_user_abuse_state([observation])
+        next_month = await hub.monitoring.record_user_abuse_state(
+            [{**observation, "daily_period": "2026-08-01", "monthly_period": "2026-08"}]
+        )
+
+    assert [item.kind for item in first] == ["user_traffic_anomaly"]
+    assert repeated == []
+    assert [item.kind for item in next_month] == ["user_traffic_anomaly"]
+
+
+@pytest.mark.asyncio
 async def test_capture_user_abuse_state_skips_live_ips_and_collects_hwid_devices(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
@@ -192,3 +223,58 @@ async def test_capture_user_abuse_state_skips_live_ips_and_collects_hwid_devices
     assert page.users[0].admin_device_count == 9
     assert page.users[0].hwid_devices_checked_at is not None
     assert test_services.remnawave.ip_control_jobs == {}
+
+
+@pytest.mark.asyncio
+async def test_capture_user_abuse_state_alerts_once_for_daily_traffic_and_adds_server_stats(test_services):
+    now = utc_now()
+    day_start = now.astimezone(MOSCOW_TZ).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=42004,
+            username="traffic_anomaly",
+            first_name="Traffic",
+            last_name="Anomaly",
+            language_code="ru",
+        )
+        subscription = await hub.billing.activate_trial(user.id)
+        hub.session.add_all(
+            [
+                TrafficSnapshot(
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    server_id=None,
+                    snapshot_date=(day_start - timedelta(seconds=1)).date(),
+                    used_bytes=0,
+                    lifetime_used_bytes=10 * 1024**3,
+                    source="test",
+                    created_at=day_start - timedelta(seconds=1),
+                ),
+                TrafficSnapshot(
+                    user_id=user.id,
+                    subscription_id=subscription.id,
+                    server_id=None,
+                    snapshot_date=now.date(),
+                    used_bytes=60 * 1024**3,
+                    lifetime_used_bytes=70 * 1024**3,
+                    source="test",
+                    created_at=now,
+                ),
+            ]
+        )
+        await hub.session.flush()
+
+        first_alerts = await hub.monitoring.capture_user_abuse_state()
+        repeated_alerts = await hub.monitoring.capture_user_abuse_state()
+        event = await hub.session.scalar(
+            select(SystemEvent)
+            .where(SystemEvent.subject_user_id == user.id, SystemEvent.event_type == "user_abuse_detected")
+            .order_by(SystemEvent.created_at.desc())
+        )
+
+    traffic_alert = next(item for item in first_alerts if item.kind == "user_traffic_anomaly")
+    assert traffic_alert.details["daily_traffic_bytes"] == 60 * 1024**3
+    assert traffic_alert.details["server_stats"]
+    assert repeated_alerts == []
+    assert event is not None
+    assert event.payload.get("server_stats")

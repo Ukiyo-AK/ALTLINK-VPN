@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import func, select, text
+from sqlalchemy import Text, cast, func, or_, select, text
 from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.base import BaseService
@@ -217,14 +217,47 @@ class DashboardService(BaseService):
         rows.sort(key=lambda item: item.value, reverse=True)
         return rows[:limit]
 
-    async def list_transactions(self, limit: int = 100) -> list[BalanceTransaction]:
+    async def list_transactions(
+        self,
+        *,
+        search: str | None = None,
+        transaction_type: BalanceTransactionType | None = None,
+        amount_min: Decimal | None = None,
+        amount_max: Decimal | None = None,
+        created_from: datetime | None = None,
+        created_to: datetime | None = None,
+        limit: int = 100,
+    ) -> list[BalanceTransaction]:
+        query = (
+            select(BalanceTransaction)
+            .join(BalanceTransaction.user)
+            .options(joinedload(BalanceTransaction.user), joinedload(BalanceTransaction.created_by_admin))
+        )
+        normalized_search = (search or "").strip()
+        if normalized_search:
+            pattern = f"%{normalized_search}%"
+            query = query.where(
+                or_(
+                    User.username.ilike(pattern),
+                    cast(User.telegram_id, Text).ilike(pattern),
+                    User.id.ilike(pattern),
+                    BalanceTransaction.description.ilike(pattern),
+                )
+            )
+        if transaction_type is not None:
+            query = query.where(BalanceTransaction.type == transaction_type)
+        if amount_min is not None:
+            query = query.where(BalanceTransaction.amount_rub >= amount_min)
+        if amount_max is not None:
+            query = query.where(BalanceTransaction.amount_rub <= amount_max)
+        if created_from is not None:
+            query = query.where(BalanceTransaction.created_at >= created_from)
+        if created_to is not None:
+            query = query.where(BalanceTransaction.created_at <= created_to)
         return list(
             (
                 await self.session.scalars(
-                    select(BalanceTransaction)
-                    .options(joinedload(BalanceTransaction.user), joinedload(BalanceTransaction.created_by_admin))
-                    .order_by(BalanceTransaction.created_at.desc())
-                    .limit(limit)
+                    query.order_by(BalanceTransaction.created_at.desc()).limit(min(max(int(limit), 1), 500))
                 )
             ).all()
         )

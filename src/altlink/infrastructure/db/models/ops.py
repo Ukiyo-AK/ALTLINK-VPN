@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, JSON, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from altlink.domain.enums import NotificationStatus, NotificationType, SupportRequestStatus, SystemEventLevel
@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 
 class TrafficSnapshot(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "traffic_snapshots"
+    __table_args__ = (
+        Index("ix_traffic_snapshots_user_server_created", "user_id", "server_id", "created_at"),
+    )
 
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     subscription_id: Mapped[str | None] = mapped_column(
@@ -151,6 +154,7 @@ class SystemSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class SystemEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "system_events"
 
+    subject_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     actor_admin_id: Mapped[str | None] = mapped_column(
         ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
     )

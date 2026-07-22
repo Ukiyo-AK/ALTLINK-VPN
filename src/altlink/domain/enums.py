@@ -49,7 +49,15 @@ class BalanceTransactionType(StrEnum):
     MANUAL_ADJUSTMENT = "manual_adjustment"
     REFUND = "refund"
     PROMO_BONUS = "promo_bonus"
+    PROMO_APPLIED = "promo_applied"
     REFERRAL_BONUS = "referral_bonus"
+
+
+class TrafficLimitStrategy(StrEnum):
+    NO_RESET = "NO_RESET"
+    DAY = "DAY"
+    WEEK = "WEEK"
+    MONTH = "MONTH"
 
 
 class NotificationType(StrEnum):
