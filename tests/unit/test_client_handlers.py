@@ -654,6 +654,60 @@ def test_available_topup_provider_codes_follow_resolved_provider():
 
 
 @pytest.mark.asyncio
+async def test_home_quick_action_uses_plan_for_new_and_trial_users():
+    latest_paid = AsyncMock(return_value=None)
+    hub = SimpleNamespace(
+        accounts=SimpleNamespace(get_latest_paid_subscription=latest_paid),
+        billing=SimpleNamespace(),
+    )
+    user = SimpleNamespace(id="user-1")
+
+    assert await client_handlers.resolve_home_quick_action(hub, user, None) == "plan"
+    assert (
+        await client_handlers.resolve_home_quick_action(
+            hub,
+            user,
+            SimpleNamespace(plan=SimpleNamespace(is_trial=True)),
+        )
+        == "plan"
+    )
+    latest_paid.assert_awaited_once_with(user.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("required_topup_rub", "expected_action"),
+    [
+        (Decimal("37.50"), "topup"),
+        (Decimal("0.00"), "plan"),
+    ],
+)
+async def test_home_quick_action_for_lapsed_paid_user_depends_on_balance(
+    required_topup_rub,
+    expected_action,
+):
+    latest_paid = SimpleNamespace(plan=SimpleNamespace(code=PlanCode.UNLIMITED))
+    hub = SimpleNamespace(
+        accounts=SimpleNamespace(
+            get_latest_paid_subscription=AsyncMock(return_value=latest_paid),
+        ),
+        billing=SimpleNamespace(
+            quote_paid_plan_activation=AsyncMock(
+                return_value=SimpleNamespace(required_topup_rub=required_topup_rub),
+            ),
+        ),
+    )
+
+    action = await client_handlers.resolve_home_quick_action(
+        hub,
+        SimpleNamespace(id="user-2"),
+        None,
+    )
+
+    assert action == expected_action
+
+
+@pytest.mark.asyncio
 async def test_show_subscription_renders_for_active_trial_user(test_services):
     message = DummyMessage(text="Подписка", user_id=21055)
 
@@ -706,9 +760,16 @@ async def test_continue_topup_flow_does_not_create_checkout_before_provider_sele
     create_checkout = AsyncMock()
     list_requests = AsyncMock(return_value=[])
 
-    async def fake_show_topup_provider_menu(target, amount, providers):
+    async def fake_show_topup_provider_menu(
+        target,
+        amount,
+        providers,
+        *,
+        selected_plan_code=None,
+    ):
         captured["amount"] = amount
         captured["providers"] = providers
+        captured["selected_plan_code"] = selected_plan_code
 
     @asynccontextmanager
     async def fake_hub():
@@ -736,6 +797,7 @@ async def test_continue_topup_flow_does_not_create_checkout_before_provider_sele
     list_requests.assert_not_awaited()
     assert captured["amount"] == Decimal("350")
     assert captured["providers"] == ["yookassa", "manual"]
+    assert captured["selected_plan_code"] is None
 
 
 def test_topup_provider_status_text_explains_missing_yookassa_settings():
@@ -882,22 +944,16 @@ async def test_plain_text_unknown_message_is_silent(test_services):
 
 
 @pytest.mark.asyncio
-async def test_activate_plan_with_insufficient_balance_shows_topup_actions(monkeypatch):
-    captured: dict[str, object] = {}
-
-    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
-        captured["target"] = target
-        captured["text"] = text
-        captured["reply_markup"] = reply_markup
-        captured["kwargs"] = kwargs
-        return None
-
+async def test_activate_plan_with_insufficient_balance_opens_exact_topup(monkeypatch):
     async def fake_ensure_client_access(callback, container, hub):
         return SimpleNamespace(id="user-42")
 
     class DummyBilling:
+        async def quote_paid_plan_activation(self, user_id, plan_code, charge_user=True):
+            return SimpleNamespace(required_topup_rub=Decimal("37.50"))
+
         async def activate_paid_plan(self, user_id, plan_code, charge_user=True):
-            raise client_handlers.ConflictError("РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ СЃСЂРµРґСЃС‚РІ.")
+            raise AssertionError("The plan must not be activated before the missing amount is paid.")
 
     class DummyAccounts:
         async def get_current_subscription(self, user_id):
@@ -907,20 +963,22 @@ async def test_activate_plan_with_insufficient_balance_shows_topup_actions(monke
     async def fake_hub():
         yield SimpleNamespace(billing=DummyBilling(), accounts=DummyAccounts())
 
-    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
     monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+    continue_topup_flow = AsyncMock()
+    monkeypatch.setattr(client_handlers, "continue_topup_flow", continue_topup_flow)
 
     callback = SimpleNamespace(data=f"client:activate_plan:{PlanCode.UNLIMITED.value}")
     container = SimpleNamespace(hub=fake_hub)
 
     await client_handlers.activate_plan(callback, container)
 
-    assert "РќРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ СЃСЂРµРґСЃС‚РІ." in str(captured["text"])
-    markup = captured["reply_markup"]
-    buttons = [button for row in markup.inline_keyboard for button in row]
-    callbacks = [button.callback_data for button in buttons if button.callback_data]
-    assert "client:topup_menu" in callbacks
-    assert "client:plan_menu" in callbacks
+    continue_topup_flow.assert_awaited_once_with(
+        callback,
+        container,
+        user=SimpleNamespace(id="user-42"),
+        amount=Decimal("37.50"),
+        selected_plan_code=PlanCode.UNLIMITED,
+    )
 
 
 @pytest.mark.asyncio
@@ -940,6 +998,9 @@ async def test_activate_plan_succeeds_when_bundle_loading_fails(monkeypatch):
         return SimpleNamespace(id="user-42")
 
     class DummyBilling:
+        async def quote_paid_plan_activation(self, user_id, plan_code, charge_user=True):
+            return SimpleNamespace(required_topup_rub=Decimal("0.00"))
+
         async def activate_paid_plan(self, user_id, plan_code, charge_user=True):
             return subscription
 
@@ -981,6 +1042,9 @@ async def test_activate_plan_falls_back_to_text_when_media_card_send_fails(monke
         return SimpleNamespace(id="user-42")
 
     class DummyBilling:
+        async def quote_paid_plan_activation(self, user_id, plan_code, charge_user=True):
+            return SimpleNamespace(required_topup_rub=Decimal("0.00"))
+
         async def activate_paid_plan(self, user_id, plan_code, charge_user=True):
             return subscription
 

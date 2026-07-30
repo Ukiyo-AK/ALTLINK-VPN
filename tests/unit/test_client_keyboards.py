@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from altlink.domain.enums import PlanCode
 from altlink.domain.plans import (
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
@@ -90,6 +91,17 @@ def test_menu_actions_can_show_quick_topup_for_users_without_paid_plan():
     topup_button = next(button for button in buttons if button["text"] == "➕ Пополнить баланс")
     assert topup_button["callback_data"] == "client:topup_menu"
     assert topup_button["style"] == "success"
+
+
+def test_menu_actions_can_show_quick_plan_for_new_or_trial_users():
+    markup = menu_actions(show_trial=False, show_quick_plan=True).as_markup()
+    rows = inline_rows(markup)
+    buttons = inline_buttons(markup)
+
+    assert rows[0] == ["🧾 Выбрать тариф"]
+    plan_button = next(button for button in buttons if button["text"] == "🧾 Выбрать тариф")
+    assert plan_button["callback_data"] == "client:plan_menu"
+    assert plan_button["style"] == "success"
 
 
 def test_balance_actions_make_history_primary():
@@ -324,6 +336,18 @@ def test_topup_provider_actions_keep_provider_selection_as_callback():
     assert back_button["callback_data"] == "client:topup_menu"
 
 
+def test_topup_provider_actions_preserve_selected_plan_token():
+    markup = topup_provider_actions(
+        "37.50",
+        [("yookassa", "💳 Юкасса СБП")],
+        selected_plan_token="pm",
+    ).as_markup()
+    buttons = inline_buttons(markup)
+
+    provider_button = next(button for button in buttons if button["text"] == "💳 Юкасса СБП")
+    assert provider_button["callback_data"] == "client:topup_provider:yookassa:37.50:pm"
+
+
 def test_topup_checkout_actions_can_customize_open_button_label():
     markup = topup_checkout_actions(payment_url="https://t.me/support", payment_label="Открыть поддержку").as_markup()
     buttons = inline_buttons(markup)
@@ -343,6 +367,25 @@ def test_topup_checkout_actions_can_include_plan_action():
 
     plan_button = next(button for button in buttons if button["text"] == "🔄 Сменить тариф")
     assert plan_button["callback_data"] == "client:plan_menu"
+
+
+def test_topup_checkout_actions_preserve_selected_plan_until_payment():
+    markup = topup_checkout_actions(
+        payment_url="https://pay.example/demo",
+        request_id="req-1",
+        can_check=True,
+        plan_action_text="🧾 Активировать выбранный тариф",
+        selected_plan_code=PlanCode.UNLIMITED.value,
+        selected_plan_token="pm",
+    ).as_markup()
+    buttons = inline_buttons(markup)
+
+    check_button = next(button for button in buttons if button["text"] == "🔎 Проверить оплату")
+    plan_button = next(
+        button for button in buttons if button["text"] == "🧾 Активировать выбранный тариф"
+    )
+    assert check_button["callback_data"] == "client:topup_check:req-1:pm"
+    assert plan_button["callback_data"] == f"client:activate_plan:{PlanCode.UNLIMITED.value}"
     assert plan_button["style"] == "primary"
 
 

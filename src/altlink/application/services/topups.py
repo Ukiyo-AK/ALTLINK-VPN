@@ -102,6 +102,7 @@ class TopupService(BaseService):
         comment: str | None = None,
         *,
         provider_code: str | None = None,
+        allow_below_minimum: bool = False,
     ) -> TopupCheckoutSession:
         provider = (provider_code or self.resolved_provider()).strip().lower()
         if provider not in self.available_checkout_providers():
@@ -120,6 +121,7 @@ class TopupService(BaseService):
                 comment=comment,
                 auto_complete=False,
                 provider_code=provider,
+                allow_below_minimum=allow_below_minimum,
             )
             payment_id, payment_url = await self._create_yookassa_payment(request)
             request.external_payment_id = payment_id
@@ -139,6 +141,7 @@ class TopupService(BaseService):
                 comment=comment,
                 auto_complete=False,
                 provider_code=provider,
+                allow_below_minimum=allow_below_minimum,
             )
             return TopupCheckoutSession(
                 request=request,
@@ -154,6 +157,7 @@ class TopupService(BaseService):
             comment=comment,
             auto_complete=True,
             provider_code="stub",
+            allow_below_minimum=allow_below_minimum,
         )
         return TopupCheckoutSession(
             request=request,
@@ -171,8 +175,12 @@ class TopupService(BaseService):
         *,
         auto_complete: bool = True,
         provider_code: str | None = None,
+        allow_below_minimum: bool = False,
     ) -> TopupRequest:
-        if amount_rub < MIN_TOPUP_AMOUNT_RUB:
+        amount_rub = Decimal(amount_rub)
+        if amount_rub <= 0:
+            raise ConflictError("Сумма пополнения должна быть больше нуля.")
+        if amount_rub < MIN_TOPUP_AMOUNT_RUB and not allow_below_minimum:
             raise ConflictError(f"Минимальная сумма пополнения — {MIN_TOPUP_AMOUNT_RUB:.0f} ₽.")
         request = TopupRequest(
             user_id=user_id,

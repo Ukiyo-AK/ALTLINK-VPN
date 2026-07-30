@@ -559,6 +559,18 @@ class AccountService(BaseService):
             .order_by(Subscription.created_at.desc())
         )
 
+    async def get_latest_paid_subscription(self, user_id: str) -> Subscription | None:
+        return await self.session.scalar(
+            select(Subscription)
+            .join(Plan, Plan.id == Subscription.plan_id)
+            .where(
+                Subscription.user_id == user_id,
+                Plan.is_trial.is_(False),
+            )
+            .options(joinedload(Subscription.plan))
+            .order_by(Subscription.created_at.desc())
+        )
+
     async def get_plan(self, plan_code: PlanCode) -> Plan:
         plan = await self.session.scalar(select(Plan).where(Plan.code == plan_code, Plan.is_active.is_(True)))
         if plan is None:

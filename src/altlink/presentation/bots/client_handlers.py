@@ -18,7 +18,7 @@ from altlink.application.services.base import ConflictError, NotFoundError, Serv
 from altlink.application.services.registry import AppContainer
 from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.domain.billing import bytes_to_gb_cost, quantize_money
-from altlink.domain.enums import PromoRewardKind, SupportRequestStatus, SystemEventLevel
+from altlink.domain.enums import PlanCode, PromoRewardKind, SupportRequestStatus, SystemEventLevel
 from altlink.domain.plans import (
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
@@ -42,7 +42,6 @@ from altlink.presentation.bots.client_keyboards import (
     device_delete_confirmation_actions,
     device_detail_actions,
     device_list_actions,
-    insufficient_balance_actions,
     main_menu,
     menu_actions,
     plan_actions,
@@ -75,6 +74,13 @@ TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 CLIENT_LAST_CARD: dict[int, tuple[int, bool]] = {}
 CLIENT_REPLY_MENU_READY: set[int] = set()
 CLIENT_DEVICE_PAGE_SIZE = 6
+PLAN_TOPUP_TOKENS = {
+    PlanCode.SINGLE_10GBIT: "sm",
+    PlanCode.SINGLE_10GBIT_WEEKLY: "sw",
+    PlanCode.UNLIMITED: "pm",
+    PlanCode.UNLIMITED_WEEKLY: "pw",
+}
+PLAN_TOPUP_CODES = {token: code for code, token in PLAN_TOPUP_TOKENS.items()}
 
 
 class TopupStates(StatesGroup):
@@ -99,6 +105,14 @@ def support_username_label(settings) -> str:
     if not username:
         return "@support_placeholder"
     return username if username.startswith("@") else f"@{username}"
+
+
+def plan_topup_token(plan_code: PlanCode | None) -> str | None:
+    return PLAN_TOPUP_TOKENS.get(plan_code) if plan_code is not None else None
+
+
+def plan_code_from_topup_token(token: str | None) -> PlanCode | None:
+    return PLAN_TOPUP_CODES.get((token or "").strip())
 
 
 def support_profile_url(settings) -> str | None:
@@ -355,6 +369,7 @@ async def answer_or_edit_topup_checkout(
     request_id: str | None = None,
     can_check: bool = False,
     plan_action_text: str | None = None,
+    selected_plan_code: PlanCode | None = None,
 ) -> None:
     payment_url = normalize_action_url(payment_url)
     reply_markup = topup_checkout_actions(
@@ -363,6 +378,8 @@ async def answer_or_edit_topup_checkout(
         request_id=request_id,
         can_check=can_check,
         plan_action_text=plan_action_text,
+        selected_plan_code=selected_plan_code.value if selected_plan_code else None,
+        selected_plan_token=plan_topup_token(selected_plan_code),
     ).as_markup()
     if isinstance(target, CallbackQuery):
         rendered = False
@@ -396,7 +413,13 @@ async def handle_topup_checkout(
     checkout,
     admin_telegram_ids: list[int] | None = None,
     subscription=None,
+    selected_plan_code: PlanCode | None = None,
 ) -> None:
+    selected_plan_action_text = (
+        "🧾 Активировать выбранный тариф"
+        if selected_plan_code is not None
+        else topup_plan_action_text(subscription)
+    )
     if checkout.provider == "manual":
         await notify_admins_about_topup_request(
             container,
@@ -419,6 +442,8 @@ async def handle_topup_checkout(
             payment_label="Открыть поддержку",
             request_id=checkout.request.id,
             can_check=False,
+            plan_action_text=selected_plan_action_text,
+            selected_plan_code=selected_plan_code,
         )
         return
 
@@ -435,11 +460,12 @@ async def handle_topup_checkout(
             payment_label="Оплатить",
             request_id=checkout.request.id,
             can_check=True,
-            plan_action_text=topup_plan_action_text(subscription),
+            plan_action_text=selected_plan_action_text,
+            selected_plan_code=selected_plan_code,
         )
         return
 
-    await answer_or_edit(
+    await answer_or_edit_topup_checkout(
         target,
         (
             "🧪 Тестовое пополнение выполнено.\n\n"
@@ -447,7 +473,8 @@ async def handle_topup_checkout(
             f"Номер заявки: {checkout.request.id}\n"
             "Касса сейчас работает в режиме заглушки, поэтому деньги зачислены сразу."
         ),
-        reply_markup=balance_actions().as_markup(),
+        plan_action_text=selected_plan_action_text,
+        selected_plan_code=selected_plan_code,
     )
 
 
@@ -464,6 +491,8 @@ async def show_topup_provider_menu(
     target: Message | CallbackQuery,
     amount: Decimal,
     providers: list[str],
+    *,
+    selected_plan_code: PlanCode | None = None,
 ) -> None:
     amount_token = format_topup_amount_token(amount)
     provider_items = [(provider, topup_provider_label(provider)) for provider in providers]
@@ -473,6 +502,7 @@ async def show_topup_provider_menu(
         reply_markup=topup_provider_actions(
             amount_token,
             provider_items,
+            selected_plan_token=plan_topup_token(selected_plan_code),
         ).as_markup(),
     )
 
@@ -483,18 +513,48 @@ async def continue_topup_flow(
     *,
     user,
     amount: Decimal,
+    selected_plan_code: PlanCode | None = None,
 ) -> None:
     checkout = None
     admin_telegram_ids: list[int] = []
 
     async with container.hub() as hub:
+        if selected_plan_code is not None:
+            try:
+                quote = await hub.billing.quote_paid_plan_activation(
+                    user.id,
+                    selected_plan_code,
+                )
+            except (ConflictError, NotFoundError, ServiceError) as exc:
+                await answer_or_edit(
+                    target,
+                    str(exc),
+                    reply_markup=plan_actions().as_markup(),
+                )
+                return
+            amount = quote.required_topup_rub
+            if amount <= 0:
+                await answer_or_edit(
+                    target,
+                    "На балансе уже достаточно средств для выбранного тарифа.",
+                    reply_markup=topup_checkout_actions(
+                        plan_action_text="🧾 Активировать выбранный тариф",
+                        selected_plan_code=selected_plan_code.value,
+                    ).as_markup(),
+                )
+                return
         configured_provider = hub.topups.configured_provider()
         resolved_provider = hub.topups.resolved_provider()
         providers = available_topup_provider_codes(configured_provider, resolved_provider)
 
         if len(providers) == 1:
             try:
-                checkout = await hub.topups.create_checkout(user.id, amount, provider_code=providers[0])
+                checkout = await hub.topups.create_checkout(
+                    user.id,
+                    amount,
+                    provider_code=providers[0],
+                    allow_below_minimum=selected_plan_code is not None,
+                )
             except ConflictError as exc:
                 await answer_or_edit(target, str(exc), reply_markup=balance_actions().as_markup())
                 return
@@ -511,10 +571,16 @@ async def continue_topup_flow(
             checkout=checkout,
             admin_telegram_ids=admin_telegram_ids,
             subscription=subscription,
+            selected_plan_code=selected_plan_code,
         )
         return
 
-    await show_topup_provider_menu(target, amount, providers)
+    await show_topup_provider_menu(
+        target,
+        amount,
+        providers,
+        selected_plan_code=selected_plan_code,
+    )
 
 
 def agreement_url(settings) -> str | None:
@@ -1873,6 +1939,7 @@ def build_home_markup(
     allow_share: bool = True,
     portal_url: str | None = None,
     show_quick_topup: bool = False,
+    show_quick_plan: bool = False,
 ):
     share_url = referral_share_vpn_url(settings, referral_code) if allow_share else None
     return menu_actions(
@@ -1880,7 +1947,28 @@ def build_home_markup(
         share_url=share_url,
         portal_url=portal_url,
         show_quick_topup=show_quick_topup,
+        show_quick_plan=show_quick_plan,
     ).as_markup()
+
+
+async def resolve_home_quick_action(hub, user, subscription) -> str | None:
+    current_plan = getattr(subscription, "plan", None)
+    if current_plan is not None and not getattr(current_plan, "is_trial", False):
+        return None
+    if current_plan is not None and getattr(current_plan, "is_trial", False):
+        return "plan"
+
+    latest_paid = await hub.accounts.get_latest_paid_subscription(user.id)
+    if latest_paid is None or latest_paid.plan is None:
+        return "plan"
+    try:
+        quote = await hub.billing.quote_paid_plan_activation(
+            user.id,
+            latest_paid.plan.code,
+        )
+    except (ConflictError, NotFoundError, ServiceError):
+        return "plan"
+    return "topup" if quote.required_topup_rub > 0 else "plan"
 
 
 async def send_home_card(
@@ -1894,13 +1982,11 @@ async def send_home_card(
     as_new_message: bool = False,
 ) -> None:
     text = home_text(user, subscription, container.settings, latest_subscription=latest_subscription)
-    show_quick_topup = not bool(
-        subscription is not None
-        and getattr(subscription, "plan", None) is not None
-        and not getattr(subscription.plan, "is_trial", False)
-    )
     async with container.hub() as inner_hub:
         portal_url = await create_portal_autologin_url(inner_hub, container.settings, user.id)
+        quick_action = await resolve_home_quick_action(inner_hub, user, subscription)
+    show_quick_topup = quick_action == "topup"
+    show_quick_plan = quick_action == "plan"
     primary_markup = build_home_markup(
         settings=container.settings,
         show_trial=show_trial,
@@ -1908,6 +1994,7 @@ async def send_home_card(
         allow_share=True,
         portal_url=portal_url,
         show_quick_topup=show_quick_topup,
+        show_quick_plan=show_quick_plan,
     )
     fallback_markup = build_home_markup(
         settings=container.settings,
@@ -1916,6 +2003,7 @@ async def send_home_card(
         allow_share=False,
         portal_url=portal_url,
         show_quick_topup=show_quick_topup,
+        show_quick_plan=show_quick_plan,
     )
     await send_card_with_optional_media(
         target,
@@ -2611,12 +2699,48 @@ async def topup_provider_menu(callback: CallbackQuery, container: AppContainer):
 
 @router.callback_query(F.data.startswith("client:topup_provider:"))
 async def topup_provider_select(callback: CallbackQuery, container: AppContainer):
-    _, _, provider_code, amount_token = callback.data.split(":", 3)
+    parts = callback.data.split(":")
+    if len(parts) not in {4, 5}:
+        await callback.answer("Некорректные параметры пополнения.", show_alert=True)
+        return
+    _, _, provider_code, amount_token, *plan_tokens = parts
     amount = parse_topup_amount_token(amount_token)
+    selected_plan_code = (
+        plan_code_from_topup_token(plan_tokens[0])
+        if plan_tokens
+        else None
+    )
+    if plan_tokens and selected_plan_code is None:
+        await callback.answer("Выбранный тариф больше недоступен.", show_alert=True)
+        return
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
+        if selected_plan_code is not None:
+            try:
+                quote = await hub.billing.quote_paid_plan_activation(
+                    user.id,
+                    selected_plan_code,
+                )
+            except (ConflictError, NotFoundError, ServiceError) as exc:
+                await answer_or_edit(
+                    callback,
+                    str(exc),
+                    reply_markup=plan_actions().as_markup(),
+                )
+                return
+            amount = quote.required_topup_rub
+            if amount <= 0:
+                await answer_or_edit(
+                    callback,
+                    "На балансе уже достаточно средств для выбранного тарифа.",
+                    reply_markup=topup_checkout_actions(
+                        plan_action_text="🧾 Активировать выбранный тариф",
+                        selected_plan_code=selected_plan_code.value,
+                    ).as_markup(),
+                )
+                return
         configured_provider = hub.topups.configured_provider()
         resolved_provider = hub.topups.resolved_provider()
         available_providers = available_topup_provider_codes(configured_provider, resolved_provider)
@@ -2624,7 +2748,12 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
             await callback.answer("Этот способ оплаты сейчас недоступен.", show_alert=True)
             return
         try:
-            checkout = await hub.topups.create_checkout(user.id, amount, provider_code=provider_code)
+            checkout = await hub.topups.create_checkout(
+                user.id,
+                amount,
+                provider_code=provider_code,
+                allow_below_minimum=selected_plan_code is not None,
+            )
         except ConflictError as exc:
             await answer_or_edit(callback, str(exc), reply_markup=balance_actions().as_markup())
             return
@@ -2642,12 +2771,25 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
         checkout=checkout,
         admin_telegram_ids=admin_telegram_ids,
         subscription=subscription,
+        selected_plan_code=selected_plan_code,
     )
 
 
 @router.callback_query(F.data.startswith("client:topup_check:"))
 async def topup_check(callback: CallbackQuery, container: AppContainer):
-    request_id = callback.data.split(":")[-1]
+    parts = callback.data.split(":")
+    if len(parts) not in {3, 4}:
+        await callback.answer("Некорректные параметры платежа.", show_alert=True)
+        return
+    request_id = parts[2]
+    selected_plan_code = (
+        plan_code_from_topup_token(parts[3])
+        if len(parts) == 4
+        else None
+    )
+    if len(parts) == 4 and selected_plan_code is None:
+        await callback.answer("Выбранный тариф больше недоступен.", show_alert=True)
+        return
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
@@ -2664,7 +2806,14 @@ async def topup_check(callback: CallbackQuery, container: AppContainer):
             f"Номер заявки: {snapshot.request.id}\n"
             "Баланс обновлён автоматически."
         )
-        markup = balance_actions().as_markup()
+        markup = (
+            topup_checkout_actions(
+                plan_action_text="🧾 Активировать выбранный тариф",
+                selected_plan_code=selected_plan_code.value,
+            ).as_markup()
+            if selected_plan_code is not None
+            else balance_actions().as_markup()
+        )
     elif snapshot.provider == "yookassa":
         text = (
             "Статус оплаты\n\n"
@@ -2677,6 +2826,13 @@ async def topup_check(callback: CallbackQuery, container: AppContainer):
             payment_url=snapshot.payment_url,
             request_id=snapshot.request.id,
             can_check=not snapshot.is_final,
+            plan_action_text=(
+                "🧾 Активировать выбранный тариф"
+                if selected_plan_code is not None
+                else None
+            ),
+            selected_plan_code=selected_plan_code.value if selected_plan_code else None,
+            selected_plan_token=plan_topup_token(selected_plan_code),
         ).as_markup()
     else:
         text = (
@@ -3043,30 +3199,44 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
     activation_payload = None
     reply_markup = None
     response_parse_mode = None
+    required_topup = Decimal("0.00")
+    user = None
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
         try:
-            subscription = await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
-            text = (
-                f"Тариф «{subscription.plan.name}» активирован.\n\n"
-                f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}\n"
-                f"Формат списания: {billing_cycle_label(subscription.plan)}\n"
-                f"Лимит устройств: {device_limit_label(subscription.plan)}"
-            )
-            current_subscription = subscription
-            bundle = await safe_get_subscription_bundle(hub, user.id)
-            activation_payload = resolve_subscription_payload(bundle)
-            if not activation_payload:
-                text += activation_link_pending_note()
+            quote = await hub.billing.quote_paid_plan_activation(user.id, plan_code)
+            required_topup = quote.required_topup_rub
+            if required_topup <= 0:
+                subscription = await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
+                text = (
+                    f"Тариф «{subscription.plan.name}» активирован.\n\n"
+                    f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}\n"
+                    f"Формат списания: {billing_cycle_label(subscription.plan)}\n"
+                    f"Лимит устройств: {device_limit_label(subscription.plan)}"
+                )
+                current_subscription = subscription
+                bundle = await safe_get_subscription_bundle(hub, user.id)
+                activation_payload = resolve_subscription_payload(bundle)
+                if not activation_payload:
+                    text += activation_link_pending_note()
         except ConflictError as exc:
-            reply_markup = insufficient_balance_actions().as_markup()
-            text = f"{exc}\n\nСначала пополните баланс через раздел «Баланс»."
+            text = str(exc)
+            reply_markup = plan_actions().as_markup()
         except (NotFoundError, ServiceError) as exc:
             text = str(exc)
         if current_subscription is None:
             current_subscription = await hub.accounts.get_current_subscription(user.id)
+    if required_topup > 0 and user is not None:
+        await continue_topup_flow(
+            callback,
+            container,
+            user=user,
+            amount=required_topup,
+            selected_plan_code=plan_code,
+        )
+        return
     if reply_markup is None:
         reply_markup = (
             subscription_link_markup(container.settings, current_subscription)

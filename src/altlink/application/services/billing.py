@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import hashlib
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -48,6 +49,8 @@ from altlink.infrastructure.db.models import (
     OnlineSessionCache,
     Notification,
     Plan,
+    PromoCode,
+    PromoCodeRedemption,
     Server,
     Subscription,
     SystemSetting,
@@ -81,6 +84,20 @@ DEFAULT_PROMO_CAMPAIGN_SETTINGS = {
 
 logger = logging.getLogger(__name__)
 SyncProgressCallback = Callable[[dict[str, object]], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class PaidPlanActivationQuote:
+    user: User
+    plan: Plan
+    existing_subscription: Subscription | None
+    discount_rub: Decimal
+    discount_promo: PromoCode | None
+    discount_redemption: PromoCodeRedemption | None
+    discounted_price_rub: Decimal
+    carryover_credit_rub: Decimal
+    effective_available_balance_rub: Decimal
+    required_topup_rub: Decimal
 
 
 class BillingService(BaseService):
@@ -232,29 +249,25 @@ class BillingService(BaseService):
         charge_user: bool = True,
         admin_id: str | None = None,
     ) -> Subscription:
-        user = await self.accounts.get_user(user_id)
-        plan = await self.accounts.get_plan(plan_code)
-        if plan.is_trial:
-            raise ConflictError("Для тестового периода используйте отдельный сценарий.")
-
-        existing = await self.accounts.get_current_subscription(user_id)
-        preserve_traffic_on_switch = existing is not None
-        discount_rub = Decimal("0.00")
-        discount_promo = None
-        discount_redemption = None
-        if charge_user:
-            discount_rub, discount_promo, discount_redemption = await self.promos.calculate_discount(
-                user.id,
-                Decimal(plan.price_rub),
-            )
-        discounted_price = quantize_money(Decimal(plan.price_rub) - discount_rub)
-        carryover_credit_rub = self._calculate_residual_credit_rub(existing)
-        upfront_charge = discounted_price
-        effective_available_balance_rub = quantize_money(
-            Decimal(user.balance_rub) + (carryover_credit_rub if charge_user else Decimal("0.00"))
+        quote = await self.quote_paid_plan_activation(
+            user_id,
+            plan_code,
+            charge_user=charge_user,
         )
-        if charge_user and effective_available_balance_rub < upfront_charge:
-            raise ConflictError(f"Недостаточно средств. Для старта тарифа нужно минимум {upfront_charge:.2f} ₽.")
+        user = quote.user
+        plan = quote.plan
+        existing = quote.existing_subscription
+        preserve_traffic_on_switch = existing is not None
+        discount_rub = quote.discount_rub
+        discount_promo = quote.discount_promo
+        discount_redemption = quote.discount_redemption
+        carryover_credit_rub = quote.carryover_credit_rub
+        upfront_charge = quote.discounted_price_rub
+        if charge_user and quote.required_topup_rub > 0:
+            raise ConflictError(
+                "Недостаточно средств. "
+                f"Для тарифа не хватает {quote.required_topup_rub:.2f} ₽."
+            )
 
         if existing:
             existing.status = SubscriptionStatus.CANCELED
@@ -404,6 +417,54 @@ class BillingService(BaseService):
             payload={"user_id": user_id, "subscription_id": subscription.id},
         )
         return subscription
+
+    async def quote_paid_plan_activation(
+        self,
+        user_id: str,
+        plan_code: PlanCode,
+        *,
+        charge_user: bool = True,
+    ) -> PaidPlanActivationQuote:
+        user = await self.accounts.get_user(user_id)
+        plan = await self.accounts.get_plan(plan_code)
+        if plan.is_trial:
+            raise ConflictError("Для тестового периода используйте отдельный сценарий.")
+
+        existing = await self.accounts.get_current_subscription(user_id)
+        discount_rub = Decimal("0.00")
+        discount_promo = None
+        discount_redemption = None
+        if charge_user:
+            discount_rub, discount_promo, discount_redemption = await self.promos.calculate_discount(
+                user.id,
+                Decimal(plan.price_rub),
+            )
+        discounted_price = quantize_money(Decimal(plan.price_rub) - discount_rub)
+        carryover_credit_rub = self._calculate_residual_credit_rub(existing)
+        effective_available_balance_rub = quantize_money(
+            Decimal(user.balance_rub)
+            + (carryover_credit_rub if charge_user else Decimal("0.00"))
+        )
+        required_topup_rub = (
+            max(
+                quantize_money(discounted_price - effective_available_balance_rub),
+                Decimal("0.00"),
+            )
+            if charge_user
+            else Decimal("0.00")
+        )
+        return PaidPlanActivationQuote(
+            user=user,
+            plan=plan,
+            existing_subscription=existing,
+            discount_rub=discount_rub,
+            discount_promo=discount_promo,
+            discount_redemption=discount_redemption,
+            discounted_price_rub=discounted_price,
+            carryover_credit_rub=carryover_credit_rub,
+            effective_available_balance_rub=effective_available_balance_rub,
+            required_topup_rub=required_topup_rub,
+        )
 
     async def sync_users_with_available_nodes(
         self,

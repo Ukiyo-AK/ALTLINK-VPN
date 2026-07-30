@@ -17,6 +17,34 @@ from altlink.utils.time import utc_now
 
 
 @pytest.mark.asyncio
+async def test_topup_below_minimum_requires_verified_plan_shortage(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3000,
+            username="exact_shortage",
+            first_name="Exact",
+            last_name="Shortage",
+            language_code="ru",
+        )
+        with pytest.raises(ConflictError, match="Минимальная сумма"):
+            await hub.topups.create_request(
+                user.id,
+                Decimal("37.50"),
+                auto_complete=False,
+            )
+
+        request = await hub.topups.create_request(
+            user.id,
+            Decimal("37.50"),
+            auto_complete=False,
+            allow_below_minimum=True,
+        )
+
+        assert Decimal(request.amount_rub) == Decimal("37.50")
+        assert str(request.status) == "new"
+
+
+@pytest.mark.asyncio
 async def test_stub_topup_adds_money_and_notification(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(

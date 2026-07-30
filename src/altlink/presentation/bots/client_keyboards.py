@@ -108,10 +108,13 @@ def menu_actions(
     share_url: str | None = None,
     portal_url: str | None = None,
     show_quick_topup: bool = False,
+    show_quick_plan: bool = False,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if show_quick_topup:
         builder.button(text="➕ Пополнить баланс", callback_data="client:topup_menu", style="success")
+    elif show_quick_plan:
+        builder.button(text="🧾 Выбрать тариф", callback_data="client:plan_menu", style="success")
     builder.button(text="💳 Баланс", callback_data="client:balance", style="primary")
     builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
     if portal_url:
@@ -122,7 +125,7 @@ def menu_actions(
     if show_trial:
         builder.button(text="🎁 Тест на 2 дня", callback_data="client:trial_activate", style="success")
     row_sizes = []
-    if show_quick_topup:
+    if show_quick_topup or show_quick_plan:
         row_sizes.append(1)
     row_sizes.append(2)
     second_row = int(bool(portal_url)) + int(bool(share_url))
@@ -398,12 +401,15 @@ def topup_amount_confirm_actions(amount_token: str) -> InlineKeyboardBuilder:
 def topup_provider_actions(
     amount_token: str,
     providers: list[tuple[str, str]],
+    *,
+    selected_plan_token: str | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+    plan_suffix = f":{selected_plan_token}" if selected_plan_token else ""
     for provider_code, provider_label in providers:
         builder.button(
             text=provider_label,
-            callback_data=f"client:topup_provider:{provider_code}:{amount_token}",
+            callback_data=f"client:topup_provider:{provider_code}:{amount_token}{plan_suffix}",
             style="success",
         )
     builder.button(
@@ -423,18 +429,33 @@ def topup_checkout_actions(
     request_id: str | None = None,
     can_check: bool = False,
     plan_action_text: str | None = None,
+    selected_plan_code: str | None = None,
+    selected_plan_token: str | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+    plan_suffix = f":{selected_plan_token}" if selected_plan_token else ""
     rows: list[int] = []
     action_count = 0
     if payment_url:
         builder.button(text=payment_label, url=payment_url, style="success")
         action_count += 1
     if can_check and request_id:
-        builder.button(text="🔎 Проверить оплату", callback_data=f"client:topup_check:{request_id}", style="primary")
+        builder.button(
+            text="🔎 Проверить оплату",
+            callback_data=f"client:topup_check:{request_id}{plan_suffix}",
+            style="primary",
+        )
         action_count += 1
     if plan_action_text:
-        builder.button(text=plan_action_text, callback_data="client:plan_menu", style="primary")
+        builder.button(
+            text=plan_action_text,
+            callback_data=(
+                f"client:activate_plan:{selected_plan_code}"
+                if selected_plan_code
+                else "client:plan_menu"
+            ),
+            style="primary",
+        )
     builder.button(text="🧾 История платежей", callback_data="client:my_topups", style="primary")
     builder.button(text="💳 Баланс", callback_data="client:balance")
     if action_count:

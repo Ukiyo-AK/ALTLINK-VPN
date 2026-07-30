@@ -55,6 +55,48 @@ def test_trial_reminder_window_matches_expected_checkpoints():
 
 
 @pytest.mark.asyncio
+async def test_paid_plan_activation_quote_includes_promo_balance_and_carryover(
+    test_services,
+    monkeypatch,
+):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=12998,
+            username="activation_quote",
+            first_name="Activation",
+            last_name="Quote",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("69"), auto_complete=True)
+        await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        user.balance_rub = Decimal("31.00")
+        promo = await hub.promos.get_or_create_personal_discount_code(user.id)
+        _, redemption, _ = await hub.promos.redeem_code(user.id, promo.code)
+        monkeypatch.setattr(
+            hub.billing,
+            "_calculate_residual_credit_rub",
+            lambda _subscription: Decimal("34.50"),
+        )
+
+        quote = await hub.billing.quote_paid_plan_activation(
+            user.id,
+            PlanCode.UNLIMITED,
+        )
+
+        assert quote.discount_rub == Decimal("19.90")
+        assert quote.discounted_price_rub == Decimal("179.10")
+        assert quote.carryover_credit_rub == Decimal("34.50")
+        assert quote.effective_available_balance_rub == Decimal("65.50")
+        assert quote.required_topup_rub == Decimal("113.60")
+        assert Decimal(user.balance_rub) == Decimal("31.00")
+        assert redemption.applied_at is None
+
+
+@pytest.mark.asyncio
 async def test_personal_traffic_limit_survives_plan_change_and_catalog_sync(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
