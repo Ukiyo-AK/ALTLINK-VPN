@@ -260,4 +260,18 @@ class NotificationService(BaseService):
                         [InlineKeyboardButton(text="💬 Написать в поддержку", url=support_url)],
                     ]
                 )
+        if cta == "support_reply":
+            request_id = payload.get("support_request_id")
+            if not isinstance(request_id, str) or not request_id or len(request_id) > 40:
+                return None
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="💬 Ответить поддержке",
+                            callback_data=f"client:support_reply:{request_id}",
+                        )
+                    ],
+                ]
+            )
         return None

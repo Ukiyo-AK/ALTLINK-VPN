@@ -12,7 +12,7 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
-from altlink.domain.enums import PlanCode, PromoRewardKind
+from altlink.domain.enums import PlanCode, PromoRewardKind, SupportRequestStatus
 from altlink.presentation.bots import client_handlers
 from altlink.settings import Settings
 
@@ -1369,6 +1369,45 @@ async def test_notify_admins_about_support_request_sends_to_admin_bot(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_support_reply_button_opens_reply_state_for_ticket_owner(monkeypatch):
+    request_id = "12345678-1234-1234-1234-123456789abc"
+    user = SimpleNamespace(id="user-1")
+    support = SimpleNamespace(
+        get_request=AsyncMock(
+            return_value=SimpleNamespace(
+                id=request_id,
+                user_id=user.id,
+                status=SupportRequestStatus.NEW,
+            )
+        )
+    )
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(support=support)
+
+    render = AsyncMock()
+
+    async def fake_ensure_client_access(target, container, hub):
+        return user
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", render)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+    callback = SimpleNamespace(
+        data=f"client:support_reply:{request_id}",
+        answer=AsyncMock(),
+    )
+    state = SimpleNamespace(set_state=AsyncMock(), update_data=AsyncMock())
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.support_reply_prompt(callback, state, container)
+
+    state.set_state.assert_awaited_once_with(client_handlers.SupportStates.waiting_for_reply)
+    state.update_data.assert_awaited_once_with(support_request_id=request_id)
+    render.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_handle_topup_checkout_skips_admin_notifications_for_yookassa(monkeypatch):
     notify_admins = AsyncMock()
     render_checkout = AsyncMock()
@@ -1440,3 +1479,60 @@ async def test_ensure_client_access_shows_maintenance_stub_when_panel_is_unavail
     assert user is None
     assert len(message.answers) == 1
     assert "Технические работы" in str(message.answers[0]["text"])
+
+
+@pytest.mark.asyncio
+async def test_direct_message_reply_is_sent_to_originating_admin(monkeypatch):
+    captured: dict[str, object] = {}
+    logged = AsyncMock()
+    user = SimpleNamespace(
+        id="user-77",
+        telegram_id=777,
+        username="reply_user",
+    )
+
+    async def fake_route_message_action(message, state, container):
+        return False
+
+    async def fake_ensure_client_access(target, container, hub):
+        return user
+
+    async def fake_send_telegram_messages(**kwargs):
+        captured.update(kwargs)
+        return 1
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            accounts=SimpleNamespace(
+                list_admin_telegram_ids=AsyncMock(return_value=[42]),
+                log_event=logged,
+            )
+        )
+
+    class DummyState:
+        cleared = False
+
+        async def get_data(self):
+            return {"direct_reply_admin_telegram_id": 42}
+
+        async def clear(self):
+            self.cleared = True
+
+    monkeypatch.setattr(client_handlers, "route_message_action", fake_route_message_action)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+    monkeypatch.setattr(client_handlers, "send_telegram_messages", fake_send_telegram_messages)
+    message = DummyMessage(text="Спасибо, теперь всё работает.", user_id=777)
+    state = DummyState()
+    container = SimpleNamespace(
+        settings=SimpleNamespace(admin_bot_token="admin-token"),
+        hub=fake_hub,
+    )
+
+    await client_handlers.direct_message_reply_submit(message, state, container)
+
+    assert captured["chat_ids"] == [42]
+    assert "Спасибо, теперь всё работает." in str(captured["text"])
+    assert state.cleared is True
+    assert message.answers[-1]["text"] == "Ответ отправлен администратору."
+    logged.assert_awaited_once()

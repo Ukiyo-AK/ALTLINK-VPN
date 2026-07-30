@@ -136,6 +136,9 @@ def test_portal_dashboard_has_mobile_section_navigation():
     assert "payment_status" in portal
     assert "support_status" in portal
     assert 'action="/portal/support"' in portal
+    assert 'enctype="multipart/form-data"' in portal
+    assert 'name="photo"' in portal
+    assert "/support/attachments/" in portal
     assert 'action="/portal/link/revoke"' in portal
     assert 'href="/portal/vless-keys"' in portal
     assert 'data-promo-form' in portal
@@ -155,6 +158,16 @@ def test_portal_dashboard_has_mobile_section_navigation():
         assert f'href="#{section_id}"' in portal
         assert f'id="{section_id}"' in portal
     assert "is-portal-page-hidden" in portal
+
+
+def test_admin_support_template_has_reply_and_resolve_actions():
+    support = (TEMPLATE_ROOT / "support.html").read_text(encoding="utf-8")
+    base = (TEMPLATE_ROOT / "base.html").read_text(encoding="utf-8")
+
+    assert 'action="/admin/support/{{ selected_support_request.id }}/reply"' in support
+    assert 'action="/admin/support/{{ selected_support_request.id }}/resolve"' in support
+    assert "/support/attachments/" in support
+    assert 'href="/admin/support"' in base
 
 
 def test_landing_template_keeps_homepage_copy_compact():

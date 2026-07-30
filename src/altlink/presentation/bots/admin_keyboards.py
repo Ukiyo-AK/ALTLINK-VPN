@@ -20,6 +20,7 @@ USER_BALANCE_PREFIX = "adm:ub"
 USER_SUBSCRIPTIONS_PREFIX = "adm:us"
 USER_MESSAGE_PREFIX = "adm:um"
 USER_MESSAGE_CANCEL_PREFIX = "adm:uc"
+USER_MESSAGE_REPLY_TOGGLE_PREFIX = "adm:umr"
 USER_DELETE_PREFIX = "adm:ux"
 USER_DELETE_CONFIRM_PREFIX = "adm:xc"
 USER_DEVICES_PREFIX = "adm:dl"
@@ -322,8 +323,16 @@ def payment_browser_actions(*, request_id: str, status: str, index: int, total: 
     return builder
 
 
-def user_message_prompt_actions(user_id: str) -> InlineKeyboardBuilder:
+def user_message_prompt_actions(user_id: str, *, reply_enabled: bool = False) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
+    builder.button(
+        text=f"Кнопка ответа: {'включена' if reply_enabled else 'выключена'}",
+        callback_data=(
+            f"{USER_MESSAGE_REPLY_TOGGLE_PREFIX}:"
+            f"{0 if reply_enabled else 1}:{user_id}"
+        ),
+        style="success" if reply_enabled else "primary",
+    )
     builder.button(text="Назад к карточке", callback_data=f"{USER_MESSAGE_CANCEL_PREFIX}:{user_id}")
     builder.adjust(1)
     return builder

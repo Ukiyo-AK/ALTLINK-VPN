@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, JSON, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from altlink.domain.enums import NotificationStatus, NotificationType, SupportRequestStatus, SystemEventLevel
@@ -99,6 +99,10 @@ class SupportMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     sender_type: Mapped[str] = mapped_column(String(16), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
+    attachment_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attachment_mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    attachment_original_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attachment_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     support_request: Mapped["SupportRequest"] = relationship(back_populates="messages")
     user: Mapped["User | None"] = relationship(back_populates="support_messages")

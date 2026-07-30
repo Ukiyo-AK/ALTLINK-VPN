@@ -18,15 +18,20 @@ class SupportService(BaseService):
         user_id: str,
         message: str,
         topic: str = "vpn_issue",
+        attachment_path: str | None = None,
+        attachment_mime_type: str | None = None,
+        attachment_original_name: str | None = None,
+        attachment_size: int | None = None,
     ) -> SupportRequest:
         normalized = message.strip()
-        if not normalized:
+        if not normalized and not attachment_path:
             raise ConflictError(
-                "Опишите проблему текстом, чтобы мы могли передать её в поддержку."
+                "Опишите проблему или прикрепите фотографию, чтобы мы могли передать обращение в поддержку."
             )
+        stored_message = normalized or "Прикреплена фотография."
 
         normalized_topic = (topic or "vpn_issue").strip()[:64] or "vpn_issue"
-        request = SupportRequest(user_id=user_id, topic=normalized_topic, message=normalized)
+        request = SupportRequest(user_id=user_id, topic=normalized_topic, message=stored_message)
         self.session.add(request)
         await self.session.flush()
         self.session.add(
@@ -34,7 +39,11 @@ class SupportService(BaseService):
                 support_request_id=request.id,
                 user_id=user_id,
                 sender_type="user",
-                message=normalized,
+                message=stored_message,
+                attachment_path=attachment_path,
+                attachment_mime_type=attachment_mime_type,
+                attachment_original_name=attachment_original_name,
+                attachment_size=attachment_size,
             )
         )
         await self.log_event(
@@ -80,33 +89,48 @@ class SupportService(BaseService):
         return list((await self.session.scalars(query)).all())
 
     async def get_request(self, request_id: str) -> SupportRequest:
-        item = await self.session.get(
-            SupportRequest,
-            request_id,
-            options=[
+        item = await self.session.scalar(
+            select(SupportRequest)
+            .options(
                 joinedload(SupportRequest.user),
                 joinedload(SupportRequest.resolved_by_admin),
                 selectinload(SupportRequest.messages).joinedload(SupportMessage.admin),
-            ],
+            )
+            .where(SupportRequest.id == request_id)
+            .execution_options(populate_existing=True)
         )
         if item is None:
             raise NotFoundError("Запрос поддержки не найден.")
         return item
 
-    async def add_user_message(self, request_id: str, *, user_id: str, message: str) -> SupportMessage:
+    async def add_user_message(
+        self,
+        request_id: str,
+        *,
+        user_id: str,
+        message: str,
+        attachment_path: str | None = None,
+        attachment_mime_type: str | None = None,
+        attachment_original_name: str | None = None,
+        attachment_size: int | None = None,
+    ) -> SupportMessage:
         item = await self.get_request(request_id)
         if item.user_id != user_id:
             raise NotFoundError("Запрос поддержки не найден.")
         if item.status == SupportRequestStatus.RESOLVED:
             raise ConflictError("Этот запрос уже закрыт. Создайте новый, если нужна помощь.")
         normalized = message.strip()
-        if not normalized:
-            raise ConflictError("Напишите сообщение для поддержки.")
+        if not normalized and not attachment_path:
+            raise ConflictError("Напишите сообщение или прикрепите фотографию.")
         support_message = SupportMessage(
             support_request_id=item.id,
             user_id=user_id,
             sender_type="user",
-            message=normalized,
+            message=normalized or "Прикреплена фотография.",
+            attachment_path=attachment_path,
+            attachment_mime_type=attachment_mime_type,
+            attachment_original_name=attachment_original_name,
+            attachment_size=attachment_size,
         )
         self.session.add(support_message)
         await self.log_event(

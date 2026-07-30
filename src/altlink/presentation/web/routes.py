@@ -12,8 +12,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from aiogram import Bot
+from aiogram.types import FSInputFile
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from sqlalchemy import func, select
@@ -46,6 +47,7 @@ from altlink.infrastructure.db.models import (
     PromoCode,
     PromoCodeRedemption,
     Subscription,
+    SupportMessage,
     SystemSetting,
     User,
 )
@@ -86,7 +88,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260613-dashboard-analytics"
+ASSET_VERSION = "20260730-support-chat"
 COUNTRY_NAMES_RU = {
     "AM": "Армения",
     "AT": "Австрия",
@@ -919,6 +921,95 @@ def markdown_to_html(markdown_text: str) -> Markup:
     return Markup("\n".join(blocks))
 
 
+def detect_support_photo_type(content: bytes) -> tuple[str, str] | None:
+    if content.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", ".jpg"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", ".png"
+    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    return None
+
+
+def support_upload_root(settings) -> Path:
+    return Path(settings.support_upload_dir).resolve()
+
+
+def support_photo_path(settings, stored_name: str) -> Path | None:
+    if not stored_name:
+        return None
+    root = support_upload_root(settings)
+    candidate = (root / stored_name).resolve()
+    if candidate.parent != root:
+        return None
+    return candidate
+
+
+async def save_support_photo(upload, settings) -> dict[str, object] | None:
+    filename = str(getattr(upload, "filename", "") or "").strip()
+    read = getattr(upload, "read", None)
+    if not filename or read is None:
+        return None
+
+    content = await read(settings.support_photo_max_bytes + 1)
+    close = getattr(upload, "close", None)
+    if close is not None:
+        await close()
+    if not content:
+        return None
+    if len(content) > settings.support_photo_max_bytes:
+        max_mb = max(settings.support_photo_max_bytes // (1024 * 1024), 1)
+        raise ConflictError(f"Фотография слишком большая. Максимальный размер — {max_mb} МБ.")
+
+    detected = detect_support_photo_type(content)
+    if detected is None:
+        raise ConflictError("Можно прикрепить фотографию в формате JPG, PNG или WebP.")
+    mime_type, extension = detected
+    root = support_upload_root(settings)
+    stored_name = f"{generate_token(24)}{extension}"
+    target = support_photo_path(settings, stored_name)
+    if target is None:
+        raise ConflictError("Не удалось безопасно сохранить фотографию.")
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    except OSError as exc:
+        logger.exception("Failed to save support attachment.")
+        raise ServiceError("Не удалось сохранить фотографию. Попробуйте ещё раз.") from exc
+    return {
+        "attachment_path": stored_name,
+        "attachment_mime_type": mime_type,
+        "attachment_original_name": Path(filename).name[:255],
+        "attachment_size": len(content),
+        "absolute_path": target,
+    }
+
+
+def delete_support_photo(settings, attachment: dict[str, object] | None) -> None:
+    if not attachment:
+        return
+    path = attachment.get("absolute_path")
+    if isinstance(path, Path):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Failed to remove orphaned support attachment %s.", path, exc_info=True)
+
+
+def support_attachment_kwargs(attachment: dict[str, object] | None) -> dict[str, object]:
+    if not attachment:
+        return {}
+    return {
+        key: attachment[key]
+        for key in (
+            "attachment_path",
+            "attachment_mime_type",
+            "attachment_original_name",
+            "attachment_size",
+        )
+    }
+
+
 async def notify_admins_about_support_request_from_portal(
     settings,
     *,
@@ -927,19 +1018,21 @@ async def notify_admins_about_support_request_from_portal(
     request_id: str,
     topic: str,
     message: str,
+    heading: str = "Новый запрос поддержки с сайта",
+    photo_path: Path | None = None,
 ) -> None:
     if not admin_telegram_ids or not settings.admin_bot_token:
         return
     text = "\n".join(
         [
-            "Новый запрос поддержки с сайта",
+            heading,
             "",
             f"Пользователь: @{user.username}" if user.username else f"Пользователь: Telegram ID {user.telegram_id}",
             f"Telegram ID: {user.telegram_id}",
             f"Тема: {topic}",
             f"Номер: {request_id}",
             "",
-            message,
+            message[:3000],
         ]
     )
     bot = Bot(token=settings.admin_bot_token)
@@ -951,6 +1044,13 @@ async def notify_admins_about_support_request_from_portal(
                     text=text,
                     reply_markup=support_request_actions(request_id, False).as_markup(),
                 )
+                if photo_path is not None and photo_path.is_file():
+                    await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=FSInputFile(photo_path),
+                        caption=f"Фотография к обращению {request_id}",
+                        reply_markup=support_request_actions(request_id, False).as_markup(),
+                    )
             except Exception:
                 logger.warning("Failed to notify admin %s about support request %s.", chat_id, request_id, exc_info=True)
     finally:
@@ -1012,7 +1112,7 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
     )
     active_support_request = next(
         (item for item in support_requests if item.status != SupportRequestStatus.RESOLVED),
-        support_requests[0] if support_requests else None,
+        None,
     )
     referral = await referral_stats(hub, user)
     settings = request.app.state.settings
@@ -2072,6 +2172,138 @@ async def events_page(request: Request):
         )
 
 
+@router.get("/admin/support")
+async def admin_support_page(
+    request: Request,
+    status_filter: str = "open",
+    request_id: str | None = None,
+):
+    normalized_status = status_filter.strip().lower()
+    if normalized_status == "resolved":
+        query_status = SupportRequestStatus.RESOLVED
+    elif normalized_status == "all":
+        query_status = None
+    else:
+        normalized_status = "open"
+        query_status = SupportRequestStatus.NEW
+
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        items = await hub.support.list_requests(status=query_status, limit=100)
+        selected = next((item for item in items if item.id == request_id), None)
+        if selected is None and request_id:
+            try:
+                selected = await hub.support.get_request(request_id)
+            except NotFoundError:
+                selected = None
+        if selected is None and items:
+            selected = items[0]
+        return render(
+            request,
+            "support.html",
+            title="Поддержка",
+            admin=admin,
+            support_requests=items,
+            selected_support_request=selected,
+            support_status_filter=normalized_status,
+            active_nav="support",
+        )
+
+
+@router.post("/admin/support/{request_id}/reply")
+async def admin_support_reply(request: Request, request_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    message = str(form.get("message") or "").strip()
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            await hub.support.add_admin_message(
+                request_id,
+                admin_id=admin.id,
+                message=message,
+            )
+            item = await hub.support.get_request(request_id)
+            await hub.notifications.queue(
+                user_id=item.user_id,
+                notification_type=NotificationType.BROADCAST,
+                message=(
+                    "💬 Поддержка ALTLINK ответила на ваш запрос.\n\n"
+                    f"{message}\n\n"
+                    "Вы можете ответить кнопкой ниже или открыть чат в личном кабинете."
+                ),
+                payload={
+                    "cta": "support_reply",
+                    "support_request_id": item.id,
+                },
+            )
+            set_flash(request, "Ответ сохранён и поставлен в очередь на отправку пользователю.")
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+    return RedirectResponse(f"/admin/support?request_id={request_id}", status_code=303)
+
+
+@router.post("/admin/support/{request_id}/resolve")
+async def admin_support_resolve(request: Request, request_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    resolution_comment = str(form.get("resolution_comment") or "").strip() or None
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            await hub.support.resolve_request(
+                request_id,
+                admin_id=admin.id,
+                resolution_comment=resolution_comment,
+            )
+            set_flash(request, "Обращение закрыто.")
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+    return RedirectResponse(f"/admin/support?request_id={request_id}", status_code=303)
+
+
+@router.get("/support/attachments/{message_id}")
+async def support_attachment(request: Request, message_id: str):
+    async with request.app.state.container.hub() as hub:
+        item = await hub.session.get(
+            SupportMessage,
+            message_id,
+            options=[joinedload(SupportMessage.support_request)],
+        )
+        if item is None or not item.attachment_path:
+            raise HTTPException(status_code=404, detail="Вложение не найдено.")
+
+        admin = await resolve_admin(request, hub)
+        portal_user = None if admin is not None else await resolve_portal_user(request, hub)
+        is_owner = bool(
+            portal_user is not None
+            and item.support_request is not None
+            and item.support_request.user_id == portal_user.id
+        )
+        if admin is None and not is_owner:
+            raise HTTPException(status_code=404, detail="Вложение не найдено.")
+
+        path = support_photo_path(request.app.state.settings, item.attachment_path)
+        if path is None or not path.is_file():
+            raise HTTPException(status_code=404, detail="Вложение не найдено.")
+        media_type = item.attachment_mime_type or "application/octet-stream"
+
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/portal/login")
 async def portal_login_page(request: Request):
     if request.session.get("portal_user_id"):
@@ -2463,12 +2695,14 @@ async def portal_promo_apply(request: Request) -> JSONResponse:
 
 @router.post("/portal/support")
 async def portal_support_create(request: Request):
-    form = dict(await request.form())
+    form_data = await request.form()
+    form = dict(form_data)
     validate_csrf(request, form)
     topic = str(form.get("topic") or "Обращение").strip()[:64] or "Обращение"
     message = str(form.get("message") or "").strip()
     settings = request.app.state.settings
     created_request = None
+    attachment = None
     admin_ids: list[int] = []
     user = None
     async with request.app.state.container.hub() as hub:
@@ -2476,10 +2710,17 @@ async def portal_support_create(request: Request):
         if user is None:
             return portal_login_redirect()
         try:
-            created_request = await hub.support.create_request(user_id=user.id, topic=topic, message=message)
+            attachment = await save_support_photo(form.get("photo"), settings)
+            created_request = await hub.support.create_request(
+                user_id=user.id,
+                topic=topic,
+                message=message,
+                **support_attachment_kwargs(attachment),
+            )
             admin_ids = await hub.accounts.list_admin_telegram_ids()
             set_flash(request, "Запрос отправлен. Ответ появится в чате поддержки.")
         except (ConflictError, NotFoundError, ServiceError) as exc:
+            delete_support_photo(settings, attachment)
             set_flash(request, str(exc), "danger")
             return RedirectResponse("/portal#portal-home", status_code=303)
     if created_request is not None and user is not None:
@@ -2489,25 +2730,53 @@ async def portal_support_create(request: Request):
             user=user,
             request_id=created_request.id,
             topic=topic,
-            message=message,
+            message=created_request.message,
+            photo_path=attachment.get("absolute_path") if attachment else None,
         )
     return RedirectResponse("/portal#portal-home", status_code=303)
 
 
 @router.post("/portal/support/{request_id}/messages")
 async def portal_support_message(request: Request, request_id: str):
-    form = dict(await request.form())
+    form_data = await request.form()
+    form = dict(form_data)
     validate_csrf(request, form)
     message = str(form.get("message") or "").strip()
+    settings = request.app.state.settings
+    attachment = None
+    added_message = None
+    item = None
+    admin_ids: list[int] = []
+    user = None
     async with request.app.state.container.hub() as hub:
         user = await resolve_portal_user(request, hub)
         if user is None:
             return portal_login_redirect()
         try:
-            await hub.support.add_user_message(request_id, user_id=user.id, message=message)
+            attachment = await save_support_photo(form.get("photo"), settings)
+            added_message = await hub.support.add_user_message(
+                request_id,
+                user_id=user.id,
+                message=message,
+                **support_attachment_kwargs(attachment),
+            )
+            item = await hub.support.get_request(request_id)
+            admin_ids = await hub.accounts.list_admin_telegram_ids()
             set_flash(request, "Сообщение отправлено.")
         except (ConflictError, NotFoundError, ServiceError) as exc:
+            delete_support_photo(settings, attachment)
             set_flash(request, str(exc), "danger")
+    if added_message is not None and item is not None and user is not None:
+        await notify_admins_about_support_request_from_portal(
+            settings,
+            admin_telegram_ids=admin_ids,
+            user=user,
+            request_id=item.id,
+            topic=item.topic,
+            message=added_message.message,
+            heading="Новое сообщение в обращении с сайта",
+            photo_path=attachment.get("absolute_path") if attachment else None,
+        )
     return RedirectResponse("/portal#portal-home", status_code=303)
 
 

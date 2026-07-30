@@ -14,5 +14,6 @@ build/
 .env
 data/
 logs/
+uploads/
 _tmp_remnawave_backend/
 alembic-smoke.db

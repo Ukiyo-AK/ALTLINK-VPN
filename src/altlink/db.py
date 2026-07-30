@@ -223,6 +223,28 @@ def _ensure_runtime_schema_sync(connection) -> None:
                 )
             )
 
+    if "support_messages" in table_names:
+        support_message_columns = {
+            column["name"] for column in inspector.get_columns("support_messages")
+        }
+        expected_support_message_columns = {
+            "attachment_path": String(255),
+            "attachment_mime_type": String(64),
+            "attachment_original_name": String(255),
+            "attachment_size": Integer(),
+        }
+        for column_name, column_type in expected_support_message_columns.items():
+            if column_name in support_message_columns:
+                continue
+            compiled_type = column_type.compile(dialect=connection.dialect)
+            connection.execute(
+                text(f"ALTER TABLE support_messages ADD COLUMN {column_name} {compiled_type}")
+            )
+            logger.warning(
+                "Added missing column %s to support_messages during runtime schema preparation.",
+                column_name,
+            )
+
     if "traffic_snapshots" in table_names and connection.dialect.name != "sqlite":
         traffic_columns = {column["name"]: column for column in inspector.get_columns("traffic_snapshots")}
         for column_name in ("used_bytes", "lifetime_used_bytes"):

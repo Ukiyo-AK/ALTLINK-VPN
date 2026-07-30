@@ -202,7 +202,7 @@
               <h2>Поддержка</h2>
               <span class="badge">Тикет и чат</span>
             </div>
-            <form method="post" action="/portal/support" class="stack portal-form">
+            <form method="post" action="/portal/support" enctype="multipart/form-data" class="stack portal-form">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <label>
                 <span>Тема обращения</span>
@@ -210,7 +210,11 @@
               </label>
               <label>
                 <span>Сообщение</span>
-                <textarea name="message" rows="5" placeholder="Опишите, что произошло. Можно указать устройство и приложение." required></textarea>
+                <textarea name="message" rows="5" placeholder="Опишите, что произошло. Можно указать устройство и приложение."></textarea>
+              </label>
+              <label>
+                <span>Фотография (необязательно)</span>
+                <input type="file" name="photo" accept="image/jpeg,image/png,image/webp">
               </label>
               <button type="submit" class="button full">Отправить запрос</button>
             </form>
@@ -232,13 +236,20 @@
                   <time>{{ item.created_at|msk_short_datetime }}</time>
                 </div>
                 <p>{{ item.message }}</p>
+                {% if item.attachment_path %}
+                <a class="support-photo-link" href="/support/attachments/{{ item.id }}" target="_blank" rel="noreferrer">
+                  <img class="support-photo-preview" src="/support/attachments/{{ item.id }}" alt="Фото к сообщению" loading="lazy">
+                  <span>Открыть фотографию</span>
+                </a>
+                {% endif %}
               </div>
               {% endfor %}
             </div>
             {% if portal_active_support_request.status.value != 'resolved' %}
-            <form method="post" action="/portal/support/{{ portal_active_support_request.id }}/messages" class="portal-chat-reply">
+            <form method="post" action="/portal/support/{{ portal_active_support_request.id }}/messages" enctype="multipart/form-data" class="portal-chat-reply">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <textarea name="message" rows="3" placeholder="Написать в поддержку..." required></textarea>
+              <textarea name="message" rows="3" placeholder="Написать в поддержку..."></textarea>
+              <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" aria-label="Прикрепить фотографию">
               <button type="submit" class="button compact">Отправить</button>
             </form>
             {% else %}
@@ -783,18 +794,25 @@
               <time>{{ item.created_at|msk_short_datetime }}</time>
             </div>
             <p>{{ item.message }}</p>
+            {% if item.attachment_path %}
+            <a class="support-photo-link" href="/support/attachments/{{ item.id }}" target="_blank" rel="noreferrer">
+              <img class="support-photo-preview" src="/support/attachments/{{ item.id }}" alt="Фото к сообщению" loading="lazy">
+              <span>Открыть фотографию</span>
+            </a>
+            {% endif %}
           </div>
           {% endfor %}
         </div>
         {% if portal_active_support_request.status.value != 'resolved' %}
-        <form method="post" action="/portal/support/{{ portal_active_support_request.id }}/messages" class="portal-chat-reply">
+        <form method="post" action="/portal/support/{{ portal_active_support_request.id }}/messages" enctype="multipart/form-data" class="portal-chat-reply">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <textarea name="message" rows="3" placeholder="Написать в поддержку..." required></textarea>
+          <textarea name="message" rows="3" placeholder="Написать в поддержку..."></textarea>
+          <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" aria-label="Прикрепить фотографию">
           <button type="submit" class="button compact">Отправить</button>
         </form>
         {% endif %}
         {% else %}
-        <form method="post" action="/portal/support" class="stack portal-form">
+        <form method="post" action="/portal/support" enctype="multipart/form-data" class="stack portal-form">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <label>
             <span>Тема</span>
@@ -802,7 +820,11 @@
           </label>
           <label>
             <span>Сообщение</span>
-            <textarea name="message" rows="4" placeholder="Опишите, что произошло." required></textarea>
+            <textarea name="message" rows="4" placeholder="Опишите, что произошло."></textarea>
+          </label>
+          <label>
+            <span>Фотография (необязательно)</span>
+            <input type="file" name="photo" accept="image/jpeg,image/png,image/webp">
           </label>
           <button type="submit" class="button full">Создать обращение</button>
         </form>
@@ -826,6 +848,12 @@
                   <time>{{ item.created_at|msk_short_datetime }}</time>
                 </div>
                 <p>{{ item.message }}</p>
+                {% if item.attachment_path %}
+                <a class="support-photo-link" href="/support/attachments/{{ item.id }}" target="_blank" rel="noreferrer">
+                  <img class="support-photo-preview" src="/support/attachments/{{ item.id }}" alt="Фото к сообщению" loading="lazy">
+                  <span>Открыть фотографию</span>
+                </a>
+                {% endif %}
               </div>
               {% endfor %}
             </div>

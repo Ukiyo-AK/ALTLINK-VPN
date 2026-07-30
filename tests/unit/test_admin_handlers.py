@@ -10,6 +10,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Message, Update
 
 from altlink.presentation.bots import admin_handlers
+from altlink.presentation.bots.admin_keyboards import user_message_prompt_actions
 
 
 def test_parse_promo_payload_treats_expires_as_moscow_time():
@@ -1294,6 +1295,32 @@ async def test_user_direct_message_submit_sends_document_with_caption(monkeypatc
     assert state_cleared is True
     assert "Личное сообщение отправлено." in rendered[0]
     assert logged_payloads[0]["payload"]["attachment_kind"] == "document"
+
+
+def test_user_message_prompt_can_enable_reply_button():
+    markup = user_message_prompt_actions("user-1", reply_enabled=True).as_markup()
+
+    assert markup.inline_keyboard[0][0].text == "Кнопка ответа: включена"
+    assert markup.inline_keyboard[0][0].callback_data == "adm:umr:0:user-1"
+
+
+@pytest.mark.asyncio
+async def test_send_client_bot_payload_attaches_reply_markup_to_text():
+    sent: list[tuple[int, str, object]] = []
+    reply_markup = object()
+
+    class DummyBot:
+        async def send_message(self, chat_id: int, text: str, reply_markup=None):
+            sent.append((chat_id, text, reply_markup))
+
+    await admin_handlers.send_client_bot_payload(
+        DummyBot(),
+        404,
+        text="Личное сообщение",
+        reply_markup=reply_markup,
+    )
+
+    assert sent == [(404, "Личное сообщение", reply_markup)]
 
 
 @pytest.mark.asyncio

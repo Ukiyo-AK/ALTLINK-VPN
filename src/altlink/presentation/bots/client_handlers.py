@@ -18,7 +18,7 @@ from altlink.application.services.base import ConflictError, NotFoundError, Serv
 from altlink.application.services.registry import AppContainer
 from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.domain.billing import bytes_to_gb_cost, quantize_money
-from altlink.domain.enums import PromoRewardKind
+from altlink.domain.enums import PromoRewardKind, SupportRequestStatus, SystemEventLevel
 from altlink.domain.plans import (
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
@@ -28,9 +28,14 @@ from altlink.domain.plans import (
     is_metered_plan_code,
     parse_paid_plan_code,
 )
-from altlink.presentation.bots.admin_keyboards import payment_request_actions, support_request_actions
+from altlink.presentation.bots.admin_keyboards import (
+    payment_request_actions,
+    support_request_actions,
+    user_actions,
+)
 from altlink.presentation.bots.common import send_telegram_messages
 from altlink.presentation.bots.client_keyboards import (
+    DIRECT_MESSAGE_REPLY_PREFIX,
     agreement_actions,
     balance_actions,
     channel_actions,
@@ -78,6 +83,11 @@ class TopupStates(StatesGroup):
 
 class SupportStates(StatesGroup):
     waiting_for_issue = State()
+    waiting_for_reply = State()
+
+
+class DirectMessageReplyStates(StatesGroup):
+    waiting_for_text = State()
 
 
 class PromoStates(StatesGroup):
@@ -2321,6 +2331,96 @@ async def support_callback(callback: CallbackQuery, container: AppContainer):
         await show_support(callback, container, hub)
 
 
+@router.callback_query(F.data.startswith(f"{DIRECT_MESSAGE_REPLY_PREFIX}:"))
+async def direct_message_reply_prompt(
+    callback: CallbackQuery,
+    state: FSMContext,
+    container: AppContainer,
+):
+    try:
+        admin_telegram_id = int(callback.data.rsplit(":", 1)[-1])
+    except (TypeError, ValueError):
+        await callback.answer("Не удалось определить получателя ответа.", show_alert=True)
+        return
+
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        admin_ids = await hub.accounts.list_admin_telegram_ids()
+    if admin_telegram_id not in admin_ids:
+        await callback.answer("Этот администратор больше недоступен.", show_alert=True)
+        return
+
+    await state.set_state(DirectMessageReplyStates.waiting_for_text)
+    await state.update_data(direct_reply_admin_telegram_id=admin_telegram_id)
+    await callback.answer()
+    await callback.message.answer(
+        "Напишите ответ администратору одним текстовым сообщением."
+    )
+
+
+@router.message(DirectMessageReplyStates.waiting_for_text)
+async def direct_message_reply_submit(
+    message: Message,
+    state: FSMContext,
+    container: AppContainer,
+):
+    if await route_message_action(message, state, container):
+        return
+
+    reply_text = (message.text or "").strip()
+    if not reply_text:
+        await message.answer("Отправьте ответ текстовым сообщением.")
+        return
+    state_data = await state.get_data()
+    try:
+        admin_telegram_id = int(state_data.get("direct_reply_admin_telegram_id") or 0)
+    except (TypeError, ValueError):
+        admin_telegram_id = 0
+
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        admin_ids = await hub.accounts.list_admin_telegram_ids()
+    if not admin_telegram_id or admin_telegram_id not in admin_ids:
+        await state.clear()
+        await message.answer("Администратор больше недоступен. Обратитесь в поддержку.")
+        return
+
+    user_name = f"@{user.username}" if user.username else f"Telegram ID {user.telegram_id}"
+    sent = await send_telegram_messages(
+        bot_token=container.settings.admin_bot_token,
+        chat_ids=[admin_telegram_id],
+        text=(
+            "↩️ Ответ пользователя на личное сообщение\n\n"
+            f"Пользователь: {user_name}\n"
+            f"Telegram ID: {user.telegram_id}\n\n"
+            f"{reply_text}"
+        ),
+        reply_markup=user_actions(user.id).as_markup(),
+    )
+    if not sent:
+        await message.answer("Не удалось отправить ответ. Попробуйте ещё раз немного позже.")
+        return
+
+    async with container.hub() as hub:
+        await hub.accounts.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="direct_message_reply_sent",
+            message="Пользователь ответил на личное сообщение администратора.",
+            payload={
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "admin_telegram_id": admin_telegram_id,
+                "text_preview": reply_text[:120],
+            },
+        )
+    await state.clear()
+    await message.answer("Ответ отправлен администратору.")
+
+
 @router.callback_query(F.data == "client:support_issue")
 async def support_issue_prompt(callback: CallbackQuery, state: FSMContext, container: AppContainer):
     async with container.hub() as hub:
@@ -2332,6 +2432,32 @@ async def support_issue_prompt(callback: CallbackQuery, state: FSMContext, conta
         callback,
         "Опишите проблему одним сообщением.\n\n"
         "Например: когда перестал работать VPN, на каком устройстве это происходит и что уже пробовали сделать."
+    )
+
+
+@router.callback_query(F.data.startswith("client:support_reply:"))
+async def support_reply_prompt(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    request_id = callback.data.rsplit(":", 1)[-1]
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        try:
+            item = await hub.support.get_request(request_id)
+        except NotFoundError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        if item.user_id != user.id:
+            await callback.answer("Запрос поддержки не найден.", show_alert=True)
+            return
+        if item.status == SupportRequestStatus.RESOLVED:
+            await callback.answer("Этот запрос уже закрыт.", show_alert=True)
+            return
+    await state.set_state(SupportStates.waiting_for_reply)
+    await state.update_data(support_request_id=request_id)
+    await answer_or_edit(
+        callback,
+        "Напишите ответ поддержке одним сообщением. Он будет добавлен в текущее обращение.",
     )
 
 
@@ -2363,6 +2489,48 @@ async def support_issue_submit(message: Message, state: FSMContext, container: A
         "Запрос в поддержку создан.\n\n"
         f"Номер запроса: {item.id}\n"
         "Мы передали сообщение администраторам. Если нужно, дополнительно напишите в аккаунт поддержки.",
+        reply_markup=support_actions(support_profile_url(container.settings)).as_markup(),
+    )
+
+
+@router.message(SupportStates.waiting_for_reply)
+async def support_reply_submit(message: Message, state: FSMContext, container: AppContainer):
+    if await route_message_action(message, state, container):
+        return
+
+    state_data = await state.get_data()
+    request_id = str(state_data.get("support_request_id") or "")
+    if not request_id:
+        await state.clear()
+        await answer_or_edit(message, "Не удалось найти обращение. Откройте поддержку ещё раз.")
+        return
+
+    async with container.hub() as hub:
+        user = await ensure_client_access(message, container, hub)
+        if user is None:
+            return
+        try:
+            support_message = await hub.support.add_user_message(
+                request_id,
+                user_id=user.id,
+                message=message.text or "",
+            )
+            admin_telegram_ids = await hub.accounts.list_admin_telegram_ids()
+        except (ConflictError, NotFoundError) as exc:
+            await answer_or_edit(message, str(exc))
+            return
+        await state.clear()
+
+    await notify_admins_about_support_request(
+        container,
+        user=user,
+        request_id=request_id,
+        message=support_message.message,
+        admin_telegram_ids=admin_telegram_ids,
+    )
+    await answer_or_edit(
+        message,
+        "Ответ отправлен поддержке. Мы уведомим вас, когда администратор напишет снова.",
         reply_markup=support_actions(support_profile_url(container.settings)).as_markup(),
     )
 

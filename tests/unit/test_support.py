@@ -54,3 +54,53 @@ async def test_support_request_rejects_empty_message(test_services):
         )
         with pytest.raises(ConflictError):
             await hub.support.create_request(user_id=user.id, message="   ")
+
+
+@pytest.mark.asyncio
+async def test_support_request_accepts_photo_without_text(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14003,
+            username="photo_support",
+            first_name="Photo",
+            last_name="Support",
+            language_code="ru",
+        )
+        item = await hub.support.create_request(
+            user_id=user.id,
+            message="",
+            attachment_path="safe-photo.jpg",
+            attachment_mime_type="image/jpeg",
+            attachment_original_name="screen.jpg",
+            attachment_size=128,
+        )
+
+        assert item.message == "Прикреплена фотография."
+        loaded = await hub.support.get_request(item.id)
+        assert loaded.messages[0].attachment_path == "safe-photo.jpg"
+        assert loaded.messages[0].attachment_mime_type == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_support_user_can_reply_with_photo_only(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14004,
+            username="photo_reply",
+            first_name="Photo",
+            last_name="Reply",
+            language_code="ru",
+        )
+        item = await hub.support.create_request(user_id=user.id, message="Нужна помощь.")
+        reply = await hub.support.add_user_message(
+            item.id,
+            user_id=user.id,
+            message="",
+            attachment_path="reply.png",
+            attachment_mime_type="image/png",
+            attachment_original_name="reply.png",
+            attachment_size=256,
+        )
+
+        assert reply.message == "Прикреплена фотография."
+        assert reply.attachment_path == "reply.png"

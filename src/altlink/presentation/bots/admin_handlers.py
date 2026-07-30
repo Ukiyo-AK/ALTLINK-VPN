@@ -60,6 +60,7 @@ from altlink.presentation.bots.admin_keyboards import (
     USER_BALANCE_PREFIX,
     USER_MESSAGE_CANCEL_PREFIX,
     USER_MESSAGE_PREFIX,
+    USER_MESSAGE_REPLY_TOGGLE_PREFIX,
     USER_DEACTIVATE_PREFIX,
     USER_DELETE_CONFIRM_PREFIX,
     USER_DELETE_PREFIX,
@@ -101,6 +102,7 @@ from altlink.presentation.bots.admin_keyboards import (
     user_subscription_actions,
     user_traffic_limit_actions,
 )
+from altlink.presentation.bots.client_keyboards import direct_message_reply_actions
 from altlink.utils.media import media_path
 from altlink.utils.devices import hwid_device_view
 from altlink.utils.time import MOSCOW_TZ, format_msk_datetime
@@ -1138,7 +1140,13 @@ async def show_subscription_controls(target: Message | CallbackQuery, user_id: s
     await render_admin(target, text, reply_markup=user_subscription_actions(user_id).as_markup())
 
 
-async def show_direct_message_prompt(target: Message | CallbackQuery, user_id: str, container: AppContainer):
+async def show_direct_message_prompt(
+    target: Message | CallbackQuery,
+    user_id: str,
+    container: AppContainer,
+    *,
+    reply_enabled: bool = False,
+):
     async with container.hub() as hub:
         user = await hub.accounts.get_user(user_id)
     await render_admin(
@@ -1147,8 +1155,12 @@ async def show_direct_message_prompt(target: Message | CallbackQuery, user_id: s
         f"Пользователь: {user_label(user)}\n"
         f"Telegram ID: {user.telegram_id}\n\n"
         "Отправьте текст, файл, медиа, gif, голосовое, кружок или стикер следующим сообщением.\n"
-        "Если нужен текст вместе с вложением, добавьте подпись. Сообщение уйдёт от имени клиентского бота.",
-        reply_markup=user_message_prompt_actions(user_id).as_markup(),
+        "Если нужен текст вместе с вложением, добавьте подпись. Сообщение уйдёт от имени клиентского бота.\n\n"
+        f"Кнопка ответа: {'будет прикреплена' if reply_enabled else 'не будет прикреплена'}.",
+        reply_markup=user_message_prompt_actions(
+            user_id,
+            reply_enabled=reply_enabled,
+        ).as_markup(),
     )
 
 
@@ -1510,41 +1522,48 @@ async def send_client_bot_payload(
     attachment: dict | None = None,
     attachment_bytes: bytes | None = None,
     local_photo_path: Path | None = None,
+    reply_markup=None,
 ) -> None:
+    markup_kwargs = {"reply_markup": reply_markup} if reply_markup is not None else {}
     kind = attachment.get("kind") if attachment else None
     if local_photo_path is not None:
-        await bot.send_photo(chat_id, photo=FSInputFile(str(local_photo_path)), caption=text or None)
+        await bot.send_photo(
+            chat_id,
+            photo=FSInputFile(str(local_photo_path)),
+            caption=text or None,
+            **markup_kwargs,
+        )
         return
     if attachment is None:
-        await bot.send_message(chat_id, text)
+        await bot.send_message(chat_id, text, **markup_kwargs)
         return
     filename = attachment.get("filename") or "attachment.bin"
     media = BufferedInputFile(attachment_bytes or b"", filename=filename)
     if kind == "photo":
-        await bot.send_photo(chat_id, photo=media, caption=text or None)
+        await bot.send_photo(chat_id, photo=media, caption=text or None, **markup_kwargs)
         return
     if kind == "animation":
-        await bot.send_animation(chat_id, animation=media, caption=text or None)
+        await bot.send_animation(chat_id, animation=media, caption=text or None, **markup_kwargs)
         return
     if kind == "document":
-        await bot.send_document(chat_id, document=media, caption=text or None)
+        await bot.send_document(chat_id, document=media, caption=text or None, **markup_kwargs)
         return
     if kind == "video":
-        await bot.send_video(chat_id, video=media, caption=text or None)
+        await bot.send_video(chat_id, video=media, caption=text or None, **markup_kwargs)
         return
     if kind == "audio":
-        await bot.send_audio(chat_id, audio=media, caption=text or None)
+        await bot.send_audio(chat_id, audio=media, caption=text or None, **markup_kwargs)
         return
     if kind == "voice":
-        await bot.send_voice(chat_id, voice=media, caption=text or None)
+        await bot.send_voice(chat_id, voice=media, caption=text or None, **markup_kwargs)
         return
     if kind == "video_note":
-        await bot.send_video_note(chat_id, video_note=media)
+        await bot.send_video_note(chat_id, video_note=media, **markup_kwargs)
         if text:
             await bot.send_message(chat_id, text)
         return
     if kind == "sticker":
-        await bot.send_sticker(chat_id, sticker=media)
+        await bot.send_sticker(chat_id, sticker=media, **markup_kwargs)
         if text:
             await bot.send_message(chat_id, text)
         return
@@ -1909,8 +1928,41 @@ async def open_user_direct_message(callback: CallbackQuery, state: FSMContext, c
         return
     user_id = callback.data.split(":")[-1]
     await state.set_state(DirectMessageStates.waiting_for_text)
-    await state.update_data(direct_message_user_id=user_id)
+    await state.update_data(
+        direct_message_user_id=user_id,
+        direct_message_reply_enabled=False,
+    )
     await show_direct_message_prompt(callback, user_id, container)
+
+
+@router.callback_query(F.data.startswith(f"{USER_MESSAGE_REPLY_TOGGLE_PREFIX}:"))
+async def toggle_user_direct_message_reply(
+    callback: CallbackQuery,
+    state: FSMContext,
+    container: AppContainer,
+):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    parts = callback.data.split(":")
+    if len(parts) < 4 or parts[-2] not in {"0", "1"}:
+        await callback.answer("Некорректная настройка.", show_alert=True)
+        return
+    reply_enabled = parts[-2] == "1"
+    user_id = parts[-1]
+    await state.set_state(DirectMessageStates.waiting_for_text)
+    await state.update_data(
+        direct_message_user_id=user_id,
+        direct_message_reply_enabled=reply_enabled,
+    )
+    await callback.answer(
+        "Кнопка ответа будет добавлена." if reply_enabled else "Кнопка ответа отключена."
+    )
+    await show_direct_message_prompt(
+        callback,
+        user_id,
+        container,
+        reply_enabled=reply_enabled,
+    )
 
 
 @router.callback_query(F.data.startswith(f"{USER_MESSAGE_CANCEL_PREFIX}:"))
@@ -2081,6 +2133,7 @@ async def user_direct_message_submit(message: Message, state: FSMContext, contai
 
     data = await state.get_data()
     user_id = data.get("direct_message_user_id")
+    reply_enabled = bool(data.get("direct_message_reply_enabled", False))
     if not user_id:
         await state.clear()
         await render_admin(message, "Сценарий личного сообщения потерян. Откройте карточку пользователя заново.")
@@ -2092,7 +2145,10 @@ async def user_direct_message_submit(message: Message, state: FSMContext, contai
         await render_admin(
             message,
             "Отправьте текст, файл, медиа, gif, голосовое, кружок или стикер.",
-            reply_markup=user_message_prompt_actions(user_id).as_markup(),
+            reply_markup=user_message_prompt_actions(
+                user_id,
+                reply_enabled=reply_enabled,
+            ).as_markup(),
         )
         return
     if not container.settings.client_bot_token:
@@ -2103,6 +2159,11 @@ async def user_direct_message_submit(message: Message, state: FSMContext, contai
     async with container.hub() as hub:
         user = await hub.accounts.get_user(user_id)
         admin = await hub.accounts.get_admin_by_telegram_id(message.from_user.id)
+        reply_markup = (
+            direct_message_reply_actions(message.from_user.id).as_markup()
+            if reply_enabled
+            else None
+        )
         client_bot = Bot(token=container.settings.client_bot_token)
         try:
             attachment_bytes = await download_outbound_attachment(message.bot, attachment) if attachment else None
@@ -2112,6 +2173,7 @@ async def user_direct_message_submit(message: Message, state: FSMContext, contai
                 text=text,
                 attachment=attachment,
                 attachment_bytes=attachment_bytes,
+                reply_markup=reply_markup,
             )
         except Exception as exc:  # noqa: BLE001
             reason = broadcast_failure_reason(exc)
@@ -2121,7 +2183,10 @@ async def user_direct_message_submit(message: Message, state: FSMContext, contai
                 f"Пользователь: {user_label(user)}\n"
                 f"Telegram ID: {user.telegram_id}\n"
                 f"Причина: {reason}",
-                reply_markup=user_message_prompt_actions(user_id).as_markup(),
+                reply_markup=user_message_prompt_actions(
+                    user_id,
+                    reply_enabled=reply_enabled,
+                ).as_markup(),
             )
             return
         finally:
@@ -2136,6 +2201,7 @@ async def user_direct_message_submit(message: Message, state: FSMContext, contai
                 "telegram_id": user.telegram_id,
                 "text_preview": compact_text(text, 120) if text else None,
                 "attachment_kind": attachment.get("kind") if attachment else None,
+                "reply_button_enabled": reply_enabled,
             },
             actor_admin_id=admin.id if admin else None,
         )
@@ -2491,8 +2557,12 @@ async def support_reply_submit(message: Message, state: FSMContext, container: A
                 message=(
                     "💬 Поддержка ALTLINK ответила на ваш запрос.\n\n"
                     f"{message.text or ''}\n\n"
-                    "Ответ также доступен в личном кабинете."
+                    "Ответ также доступен в личном кабинете. Вы можете ответить кнопкой ниже."
                 ),
+                payload={
+                    "cta": "support_reply",
+                    "support_request_id": item.id,
+                },
             )
         except (ConflictError, NotFoundError, ServiceError) as exc:
             await render_admin(message, str(exc))

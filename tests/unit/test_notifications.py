@@ -169,6 +169,18 @@ def test_return_trial_notification_has_trial_button():
     ]
 
 
+def test_support_reply_notification_has_reply_button():
+    request_id = "12345678-1234-1234-1234-123456789abc"
+    markup = NotificationService._notification_reply_markup(
+        {"cta": "support_reply", "support_request_id": request_id}
+    )
+
+    assert markup is not None
+    assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
+        [f"client:support_reply:{request_id}"],
+    ]
+
+
 @pytest.mark.asyncio
 async def test_dispatch_pending_sends_notifications_and_marks_them_sent(test_services, monkeypatch):
     sent_messages: list[tuple[int, str, str | None, object | None]] = []

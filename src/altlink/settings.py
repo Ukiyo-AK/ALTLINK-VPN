@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     log_dir: str = "logs"
     log_file_max_bytes: int = 5 * 1024 * 1024
     log_file_backup_count: int = 5
+    support_upload_dir: str = "uploads/support"
+    support_photo_max_bytes: int = 8 * 1024 * 1024
 
     secret_key: str = "change-me"
     session_secret_key: str = "change-me-session"

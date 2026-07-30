@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel stack">
+  <div class="split">
+    <div>
+      <h2>Запросы пользователей</h2>
+      <p class="muted">Ответ сохраняется в чате кабинета и отправляется пользователю в Telegram.</p>
+    </div>
+    <div class="toolbar">
+      <a class="button compact{% if support_status_filter != 'open' %} ghost{% endif %}" href="/admin/support?status_filter=open">Открытые</a>
+      <a class="button compact{% if support_status_filter != 'resolved' %} ghost{% endif %}" href="/admin/support?status_filter=resolved">Закрытые</a>
+      <a class="button compact{% if support_status_filter != 'all' %} ghost{% endif %}" href="/admin/support?status_filter=all">Все</a>
+    </div>
+  </div>
+</section>
+
+<section class="admin-support-layout">
+  <aside class="panel admin-support-list">
+    {% for item in support_requests %}
+    <a
+      class="admin-support-list-item{% if selected_support_request and selected_support_request.id == item.id %} is-active{% endif %}"
+      href="/admin/support?status_filter={{ support_status_filter }}&request_id={{ item.id }}"
+    >
+      <span class="split">
+        <strong>{{ item.topic }}</strong>
+        <span class="badge{% if item.status.value != 'resolved' %} highlight{% endif %}">{{ item|support_status }}</span>
+      </span>
+      <span>{{ '@' ~ item.user.username if item.user and item.user.username else 'Telegram ID ' ~ item.user.telegram_id if item.user else 'Пользователь удалён' }}</span>
+      <small>{{ item.created_at|msk_datetime }}</small>
+    </a>
+    {% else %}
+    <p class="muted">В этой категории обращений пока нет.</p>
+    {% endfor %}
+  </aside>
+
+  <article class="panel stack admin-support-chat">
+    {% if selected_support_request %}
+    <div class="split">
+      <div>
+        <span class="badge">{{ selected_support_request|support_status }}</span>
+        <h2>{{ selected_support_request.topic }}</h2>
+        {% if selected_support_request.user %}
+        <p class="muted">
+          <a href="/admin/users/{{ selected_support_request.user.id }}">
+            {{ '@' ~ selected_support_request.user.username if selected_support_request.user.username else 'Telegram ID ' ~ selected_support_request.user.telegram_id }}
+          </a>
+          · запрос {{ selected_support_request.id }}
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="portal-chat-thread admin-support-thread">
+      {% for item in selected_support_request.messages %}
+      <div class="portal-chat-message{% if item.sender_type == 'admin' %} is-admin{% endif %}">
+        <div class="portal-chat-meta">
+          <span>{{ 'Администратор' if item.sender_type == 'admin' else 'Пользователь' }}</span>
+          <time>{{ item.created_at|msk_datetime }}</time>
+        </div>
+        <p>{{ item.message }}</p>
+        {% if item.attachment_path %}
+        <a class="support-photo-link" href="/support/attachments/{{ item.id }}" target="_blank" rel="noreferrer">
+          <img class="support-photo-preview" src="/support/attachments/{{ item.id }}" alt="Фото к сообщению" loading="lazy">
+          <span>Открыть фотографию</span>
+        </a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if selected_support_request.status.value != 'resolved' %}
+    <form method="post" action="/admin/support/{{ selected_support_request.id }}/reply" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Ответ пользователю</span>
+        <textarea name="message" rows="4" placeholder="Напишите ответ..." required></textarea>
+      </label>
+      <button type="submit" class="button">Отправить ответ</button>
+    </form>
+    <form method="post" action="/admin/support/{{ selected_support_request.id }}/resolve" class="toolbar admin-support-resolve">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="text" name="resolution_comment" maxlength="500" placeholder="Комментарий при закрытии (необязательно)">
+      <button type="submit" class="button danger compact">Закрыть обращение</button>
+    </form>
+    {% else %}
+    <p class="muted">Обращение закрыто {{ selected_support_request.resolved_at|msk_datetime if selected_support_request.resolved_at else '' }}.</p>
+    {% endif %}
+    {% else %}
+    <p class="muted">Выберите обращение слева.</p>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}

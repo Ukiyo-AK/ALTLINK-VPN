@@ -1050,6 +1050,45 @@ async def test_settings_page_uses_legacy_whitelist_latency_key_as_fallback(monke
 
 
 @pytest.mark.asyncio
+async def test_admin_support_reply_queues_notification_with_reply_button(monkeypatch):
+    request_id = "12345678-1234-1234-1234-123456789abc"
+    notifications = SimpleNamespace(queue=AsyncMock())
+    support = SimpleNamespace(
+        add_admin_message=AsyncMock(),
+        get_request=AsyncMock(
+            return_value=SimpleNamespace(id=request_id, user_id="user-1")
+        ),
+    )
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(support=support, notifications=notifications)
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    class DummyRequest(SimpleNamespace):
+        async def form(self):
+            return {"csrf_token": "token", "message": "Проверьте подключение ещё раз."}
+
+    request = DummyRequest(
+        session={"admin_id": "admin-1", "csrf_token": "token"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+
+    response = await web_routes.admin_support_reply(request, request_id)
+
+    assert response.status_code == 303
+    support.add_admin_message.assert_awaited_once()
+    notifications.queue.assert_awaited_once()
+    assert notifications.queue.await_args.kwargs["payload"] == {
+        "cta": "support_reply",
+        "support_request_id": request_id,
+    }
+
+
+@pytest.mark.asyncio
 async def test_portal_login_status_returns_missing_without_attempt_token(test_services):
     request = SimpleNamespace(
         session={},

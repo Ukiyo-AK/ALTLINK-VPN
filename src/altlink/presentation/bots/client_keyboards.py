@@ -11,6 +11,8 @@ from altlink.domain.plans import (
     UNLIMITED_WEEKLY_PRICE_RUB,
 )
 
+DIRECT_MESSAGE_REPLY_PREFIX = "client:dm_reply"
+
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -19,6 +21,16 @@ def main_menu() -> ReplyKeyboardMarkup:
         is_persistent=True,
         resize_keyboard=True,
     )
+
+
+def direct_message_reply_actions(admin_telegram_id: int) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="💬 Ответить",
+        callback_data=f"{DIRECT_MESSAGE_REPLY_PREFIX}:{admin_telegram_id}",
+        style="primary",
+    )
+    return builder
 
 
 def channel_actions(channel_url: str | None = None, agreement_url: str | None = None) -> InlineKeyboardBuilder:
