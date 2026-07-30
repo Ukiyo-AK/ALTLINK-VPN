@@ -170,6 +170,24 @@ def test_admin_support_template_has_reply_and_resolve_actions():
     assert 'href="/admin/support"' in base
 
 
+def test_admin_external_api_templates_expose_scopes_and_documentation():
+    clients = (TEMPLATE_ROOT / "api_clients.html").read_text(encoding="utf-8")
+    docs = (TEMPLATE_ROOT / "api_docs.html").read_text(encoding="utf-8")
+    base = (TEMPLATE_ROOT / "base.html").read_text(encoding="utf-8")
+
+    assert 'action="/admin/api-clients"' in clients
+    assert 'name="scopes"' in clients
+    assert "/scopes" in clients
+    assert "Показывается один раз" in clients
+    assert "data-copy-api-key" in clients
+    assert "users.telegram_id" in clients
+    assert "users.status" in clients
+    assert "users.plan" in clients
+    assert "/users/by-telegram/{telegram_id}" in docs
+    assert "X-API-Key" in docs
+    assert 'href="/admin/api-clients"' in base
+
+
 def test_landing_template_keeps_homepage_copy_compact():
     landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
 

@@ -14,6 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from altlink.application.services.registry import AppContainer
 from altlink.logging_config import configure_logging
 from altlink.presentation.api.routes.admin_api import router as admin_api_router
+from altlink.presentation.api.routes.external_api import router as external_api_router
 from altlink.presentation.web.routes import router as admin_web_router
 from altlink.settings import get_settings
 from altlink.utils.media import media_root
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
         app.mount("/media", StaticFiles(directory=shared_media_dir), name="media")
 
     app.include_router(admin_api_router)
+    app.include_router(external_api_router)
     app.include_router(admin_web_router)
 
     @app.get("/health/live")

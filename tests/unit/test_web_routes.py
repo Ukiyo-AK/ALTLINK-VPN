@@ -95,6 +95,18 @@ def test_parse_date_query_uses_moscow_day_boundaries():
     )
 
 
+def test_parse_api_key_expiration_uses_moscow_timezone():
+    assert web_routes.parse_msk_datetime_input("2026-07-30T15:30") == datetime(
+        2026,
+        7,
+        30,
+        12,
+        30,
+        tzinfo=UTC,
+    )
+    assert web_routes.parse_msk_datetime_input("") is None
+
+
 def test_group_portal_plans_keeps_device_limit_on_group():
     groups = group_portal_plans(
         [plan(PlanCode.UNLIMITED, sort_order=20, price_rub="199", period_days=30, description="unlimited", device_limit=8)]

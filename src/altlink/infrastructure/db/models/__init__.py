@@ -10,6 +10,7 @@ from altlink.infrastructure.db.models.billing import (
     TrialPeriod,
 )
 from altlink.infrastructure.db.models.catalog import Server, ServerInbound, UserServerAccess
+from altlink.infrastructure.db.models.integrations import ExternalApiClient
 from altlink.infrastructure.db.models.ops import (
     Notification,
     OnlineSessionCache,
@@ -25,6 +26,7 @@ __all__ = [
     "AdminUser",
     "BalanceTransaction",
     "Base",
+    "ExternalApiClient",
     "Notification",
     "OnlineSessionCache",
     "PortalLoginAttempt",

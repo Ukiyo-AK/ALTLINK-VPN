@@ -20,6 +20,7 @@ from altlink.application.services.backups import BackupService
 from altlink.application.services.billing import BillingService
 from altlink.application.services.catalog import CatalogService
 from altlink.application.services.dashboard import DashboardService
+from altlink.application.services.external_api import ExternalApiService
 from altlink.application.services.monitoring import MonitoringService
 from altlink.application.services.notifications import NotificationService
 from altlink.application.services.online import OnlineService
@@ -605,6 +606,7 @@ class TestServices:
             )
             dashboard = DashboardService(session, self.settings, self.remnawave)
             monitoring = MonitoringService(session, self.settings, self.remnawave)
+            external_api = ExternalApiService(session, self.settings, self.remnawave)
             yield SimpleNamespace(
                 session=session,
                 settings=self.settings,
@@ -621,6 +623,7 @@ class TestServices:
                 topups=topups,
                 dashboard=dashboard,
                 monitoring=monitoring,
+                external_api=external_api,
             )
 
 

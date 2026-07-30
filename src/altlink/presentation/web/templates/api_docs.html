@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="dashboard-section-nav" aria-label="Разделы документации">
+  <a href="#api-auth">Авторизация</a>
+  <a href="#api-scopes">Разрешения</a>
+  <a href="#api-users">Пользователи</a>
+  <a href="#api-errors">Ошибки</a>
+  <a href="#api-examples">Примеры</a>
+</nav>
+
+<section class="panel stack api-docs" id="api-auth">
+  <span class="badge highlight">External API v1</span>
+  <h2>Авторизация</h2>
+  <p>Базовый URL: <code>{{ api_base_url }}</code></p>
+  <p>Передавайте персональный ключ в каждом запросе:</p>
+  <div class="codeblock">X-API-Key: altlink_префикс_секрет</div>
+  <p class="muted">
+    Ключ создаётся в разделе API, показывается один раз и хранится на сервере только в виде хеша.
+    Не передавайте ключ в query string и не используйте его во frontend-коде.
+  </p>
+  <p><a href="/docs#/external-api">Интерактивная OpenAPI-документация</a></p>
+</section>
+
+<section class="panel stack api-docs" id="api-scopes">
+  <h2>Разрешения</h2>
+  <p>Поля без соответствующего scope не включаются в JSON-ответ.</p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Scope</th><th>Данные</th><th>Описание</th></tr></thead>
+      <tbody>
+        {% for scope in scope_definitions %}
+        <tr>
+          <td><code>{{ scope.key }}</code></td>
+          <td>{{ scope.label }}</td>
+          <td>{{ scope.description }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel stack api-docs" id="api-users">
+  <h2>Проверка ключа</h2>
+  <div class="codeblock">GET {{ api_base_url }}/client</div>
+  <p>Возвращает ID и название API-клиента, список scopes и срок действия. Секрет не возвращается.</p>
+
+  <h2>Список пользователей</h2>
+  <div class="codeblock">GET {{ api_base_url }}/users?active_only=true&amp;limit=100&amp;offset=0</div>
+  <p>По умолчанию возвращаются только пользователи с действующим платным или тестовым доступом.</p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Параметр</th><th>Описание</th></tr></thead>
+      <tbody>
+        <tr><td><code>active_only</code></td><td><code>true</code> по умолчанию; <code>false</code> включает неактивных пользователей.</td></tr>
+        <tr><td><code>plan_code</code></td><td>Фильтр по коду текущего тарифа.</td></tr>
+        <tr><td><code>limit</code></td><td>От 1 до 200, по умолчанию 100.</td></tr>
+        <tr><td><code>offset</code></td><td>Смещение для постраничной загрузки.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Для продолжения используйте <code>meta.next_offset</code>, пока <code>meta.has_more</code> равно <code>true</code>.</p>
+
+  <h3>Пример ответа с тремя основными scopes</h3>
+  <div class="codeblock">{
+  "items": [
+    {
+      "id": "36c9e70d-...",
+      "updated_at": "2026-07-30T12:00:00Z",
+      "telegram_id": 123456789,
+      "status": "active",
+      "access_active": true,
+      "plan": {
+        "code": "unlimited",
+        "name": "Pro • ежемесячно",
+        "is_trial": false,
+        "period_days": 30
+      }
+    }
+  ],
+  "meta": {
+    "limit": 100,
+    "offset": 0,
+    "count": 1,
+    "has_more": false,
+    "active_only": true,
+    "granted_fields": [
+      "users.plan",
+      "users.status",
+      "users.telegram_id"
+    ]
+  }
+}</div>
+
+  <h2>Один пользователь</h2>
+  <div class="codeblock">GET {{ api_base_url }}/users/{user_id}</div>
+  <p>Возвращает тот же набор разрешённых полей. Неизвестный ID возвращает <code>404</code>.</p>
+
+  <h2>Поиск по Telegram ID</h2>
+  <div class="codeblock">GET {{ api_base_url }}/users/by-telegram/{telegram_id}</div>
+  <p>
+    Рекомендуемый endpoint для проверки доступа при входе в другой сервис.
+    Требует <code>users.telegram_id</code> и возвращает <code>access_active</code>,
+    если ключу также выдано <code>users.status</code>.
+  </p>
+</section>
+
+<section class="panel stack api-docs" id="api-errors">
+  <h2>Ошибки</h2>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>HTTP</th><th>Причина</th></tr></thead>
+      <tbody>
+        <tr><td><code>401</code></td><td>Ключ отсутствует, неверен, отключён, отозван или истёк.</td></tr>
+        <tr><td><code>403</code></td><td>У ключа нет разрешения на запрошенную группу данных.</td></tr>
+        <tr><td><code>404</code></td><td>Объект не найден.</td></tr>
+        <tr><td><code>422</code></td><td>Некорректные query-параметры.</td></tr>
+        <tr><td><code>500</code></td><td>Внутренняя ошибка сервиса.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Формат ошибки:</p>
+  <div class="codeblock">{"detail": "Описание ошибки"}</div>
+</section>
+
+<section class="grid-two" id="api-examples">
+  <article class="panel stack api-docs">
+    <h2>cURL</h2>
+    <div class="codeblock">curl "{{ api_base_url }}/users?active_only=true" \
+  -H "X-API-Key: $ALTLINK_API_KEY"</div>
+  </article>
+  <article class="panel stack api-docs">
+    <h2>Python</h2>
+    <div class="codeblock">import os
+import httpx
+
+response = httpx.get(
+    "{{ api_base_url }}/users",
+    headers={"X-API-Key": os.environ["ALTLINK_API_KEY"]},
+    params={"active_only": "true", "limit": 100},
+    timeout=10,
+)
+response.raise_for_status()
+users = response.json()["items"]</div>
+  </article>
+</section>
+
+<section class="panel stack api-docs">
+  <h2>Правила интеграции</h2>
+  <p>Все даты передаются в ISO 8601 в UTC. Денежные значения передаются строками с двумя знаками после запятой.</p>
+  <p>Используйте <code>access_active</code>, а не только строковый статус, чтобы решать, положен ли пользователю бесплатный доступ.</p>
+  <p>Храните ключ только в секретах backend-сервиса. При утечке отключите клиент или перевыпустите ключ в админке.</p>
+  <p>Версия API закреплена в URL. Несовместимые изменения будут выпускаться под новым префиксом, например <code>/v2</code>.</p>
+</section>
+{% endblock %}

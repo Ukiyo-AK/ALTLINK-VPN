@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block content %}
+{% if error %}
+<div class="alert danger">{{ error }}</div>
+{% endif %}
+
+{% if issued_key %}
+<section class="panel stack api-key-reveal">
+  <div class="split">
+    <div>
+      <span class="badge highlight">Показывается один раз</span>
+      <h2>Ключ для {{ issued_client.name }}</h2>
+    </div>
+    <button type="button" class="button compact" data-copy-api-key>Скопировать</button>
+  </div>
+  <div class="codeblock" data-api-key-value>{{ issued_key }}</div>
+  <p class="muted">
+    Сохраните ключ сейчас. После обновления страницы восстановить его нельзя, можно только перевыпустить.
+  </p>
+</section>
+{% endif %}
+
+<section class="grid-two">
+  <article class="panel stack">
+    <div class="split">
+      <div>
+        <h2>Новый API-клиент</h2>
+        <p class="muted">Для каждого сервиса создавайте отдельный ключ и выдавайте только необходимые данные.</p>
+      </div>
+      <a class="button ghost compact" href="/admin/api-docs">Документация</a>
+    </div>
+    <form method="post" action="/admin/api-clients" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Название сервиса</span>
+        <input type="text" name="name" maxlength="128" required placeholder="Бесплатный сервис для клиентов">
+      </label>
+      <label>
+        <span>Описание</span>
+        <textarea name="description" maxlength="4000" placeholder="Для чего используется этот ключ"></textarea>
+      </label>
+      <label>
+        <span>Срок действия, МСК</span>
+        <input type="datetime-local" name="expires_at">
+      </label>
+      <div class="stack">
+        <strong>Разрешения</strong>
+        <div class="api-scope-grid">
+          {% for scope in scope_definitions %}
+          <label class="api-scope-option">
+            <input
+              type="checkbox"
+              name="scopes"
+              value="{{ scope.key }}"
+              {% if scope.key in recommended_scopes %}checked{% endif %}
+            >
+            <span>
+              <strong>{{ scope.label }}</strong>
+              <code>{{ scope.key }}</code>
+              <small>{{ scope.description }}</small>
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <button type="submit" class="button">Создать API-ключ</button>
+    </form>
+  </article>
+
+  <article class="panel stack">
+    <h2>Быстрый старт</h2>
+    <p>Для сервиса с бесплатным доступом нынешним клиентам достаточно трёх разрешений:</p>
+    <div class="codeblock">users.telegram_id
+users.status
+users.plan</div>
+    <p class="muted">Endpoint по умолчанию возвращает только пользователей с действующим доступом.</p>
+    <div class="codeblock">GET {{ api_base_url }}/users
+X-API-Key: ВАШ_КЛЮЧ</div>
+    <a class="button ghost" href="/admin/api-docs">Открыть полную документацию</a>
+  </article>
+</section>
+
+<section class="panel stack">
+  <div class="split">
+    <h2>API-клиенты</h2>
+    <span class="badge">{{ clients|length }}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Клиент</th>
+          <th>Ключ</th>
+          <th>Разрешения</th>
+          <th>Использование</th>
+          <th>Статус</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in clients %}
+        <tr>
+          <td>
+            <strong>{{ item.name }}</strong>
+            <div class="muted">{{ item.description or 'Без описания' }}</div>
+          </td>
+          <td><code>altlink_{{ item.key_prefix }}_…</code></td>
+          <td>
+            <div class="api-scope-list">
+              {% for scope in item.scopes %}
+              <code>{{ scope }}</code>
+              {% endfor %}
+            </div>
+          </td>
+          <td>
+            <strong>{{ item.request_count }}</strong>
+            <div class="muted">
+              {% if item.last_used_at %}
+              {{ item.last_used_at|msk_datetime }}
+              {% else %}
+              ещё не использовался
+              {% endif %}
+            </div>
+          </td>
+          <td>
+            {% if item.revoked_at %}
+            <span class="badge warning">Отозван</span>
+            {% elif not item.is_active %}
+            <span class="badge warning">Отключён</span>
+            {% elif item.expires_at %}
+            <span class="badge">до {{ item.expires_at|msk_datetime }}</span>
+            {% else %}
+            <span class="badge highlight">Активен</span>
+            {% endif %}
+          </td>
+          <td>
+            <div class="api-client-actions">
+              {% if not item.revoked_at %}
+              <form method="post" action="/admin/api-clients/{{ item.id }}/toggle">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button ghost compact">
+                  {{ 'Отключить' if item.is_active else 'Включить' }}
+                </button>
+              </form>
+              <form method="post" action="/admin/api-clients/{{ item.id }}/rotate">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button warning compact">Перевыпустить</button>
+              </form>
+              <details class="api-permissions-editor">
+                <summary class="button ghost compact">Права</summary>
+                <form method="post" action="/admin/api-clients/{{ item.id }}/scopes" class="stack">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  {% for scope in scope_definitions %}
+                  <label class="inline-form">
+                    <input
+                      type="checkbox"
+                      name="scopes"
+                      value="{{ scope.key }}"
+                      {% if scope.key in item.scopes %}checked{% endif %}
+                    >
+                    <span>{{ scope.label }} <code>{{ scope.key }}</code></span>
+                  </label>
+                  {% endfor %}
+                  <button type="submit" class="button compact">Сохранить права</button>
+                </form>
+              </details>
+              <form
+                method="post"
+                action="/admin/api-clients/{{ item.id }}/revoke"
+                onsubmit="return confirm('Отозвать API-клиента? Его ключ сразу перестанет работать.');"
+              >
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="button danger compact">Отозвать</button>
+              </form>
+              {% else %}
+              <span class="muted">Действий нет</span>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="muted">API-клиентов пока нет.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+  (() => {
+    const button = document.querySelector("[data-copy-api-key]");
+    const value = document.querySelector("[data-api-key-value]");
+    if (!button || !value) return;
+    button.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(value.textContent.trim());
+      button.textContent = "Скопировано";
+    });
+  })();
+</script>
+{% endblock %}

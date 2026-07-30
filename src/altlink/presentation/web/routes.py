@@ -34,6 +34,10 @@ from altlink.domain.enums import (
     TrafficLimitStrategy,
     UserStatus,
 )
+from altlink.domain.external_api import (
+    EXTERNAL_API_RECOMMENDED_SCOPES,
+    EXTERNAL_API_SCOPE_DEFINITIONS,
+)
 from altlink.domain.notifications import (
     PROMO_MESSAGE_TEMPLATES,
     promo_template_kind,
@@ -208,6 +212,19 @@ def parse_date_query(value: str | None, *, end_of_day: bool = False) -> datetime
         return None
     edge = time.max if end_of_day else time.min
     return datetime.combine(parsed, edge, tzinfo=MOSCOW_TZ).astimezone(UTC)
+
+
+def parse_msk_datetime_input(value: str | None) -> datetime | None:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ConflictError("Некорректный срок действия API-ключа.") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=MOSCOW_TZ)
+    return parsed.astimezone(UTC)
 
 
 def normalize_user_list_limit(value: int | None) -> int:
@@ -2153,6 +2170,177 @@ async def settings_save(request: Request):
         setting.updated_by_admin_id = admin.id
         set_flash(request, "Настройка сохранена.", "success")
         return RedirectResponse("/admin/settings", status_code=303)
+
+
+def external_api_base_url(request: Request) -> str:
+    configured = (request.app.state.settings.backend_public_url or "").strip().rstrip("/")
+    return configured or str(request.base_url).rstrip("/")
+
+
+async def render_api_clients_page(
+    request: Request,
+    *,
+    admin,
+    hub,
+    issued_key: str | None = None,
+    issued_client=None,
+    error: str | None = None,
+):
+    clients = await hub.external_api.list_clients()
+    return render(
+        request,
+        "api_clients.html",
+        title="Внешний API",
+        admin=admin,
+        clients=clients,
+        scope_definitions=EXTERNAL_API_SCOPE_DEFINITIONS,
+        recommended_scopes=EXTERNAL_API_RECOMMENDED_SCOPES,
+        issued_key=issued_key,
+        issued_client=issued_client,
+        error=error,
+        api_base_url=f"{external_api_base_url(request)}/api/external/v1",
+        active_nav="api",
+    )
+
+
+@router.get("/admin/api-clients")
+async def api_clients_page(request: Request):
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        return await render_api_clients_page(request, admin=admin, hub=hub)
+
+
+@router.post("/admin/api-clients")
+async def api_clients_create(request: Request):
+    form = await request.form()
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            issued = await hub.external_api.create_client(
+                name=str(form.get("name") or ""),
+                description=str(form.get("description") or ""),
+                scopes=list(form.getlist("scopes")),
+                expires_at=parse_msk_datetime_input(str(form.get("expires_at") or "")),
+                admin_id=admin.id,
+            )
+        except ConflictError as exc:
+            return await render_api_clients_page(
+                request,
+                admin=admin,
+                hub=hub,
+                error=str(exc),
+            )
+        return await render_api_clients_page(
+            request,
+            admin=admin,
+            hub=hub,
+            issued_key=issued.api_key,
+            issued_client=issued.client,
+        )
+
+
+@router.post("/admin/api-clients/{client_id}/rotate")
+async def api_client_rotate(request: Request, client_id: str):
+    form = await request.form()
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            issued = await hub.external_api.rotate_key(client_id, admin_id=admin.id)
+        except (ConflictError, NotFoundError) as exc:
+            set_flash(request, str(exc), "danger")
+            return RedirectResponse("/admin/api-clients", status_code=303)
+        return await render_api_clients_page(
+            request,
+            admin=admin,
+            hub=hub,
+            issued_key=issued.api_key,
+            issued_client=issued.client,
+        )
+
+
+@router.post("/admin/api-clients/{client_id}/toggle")
+async def api_client_toggle(request: Request, client_id: str):
+    form = await request.form()
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            client = await hub.external_api.get_client(client_id)
+            await hub.external_api.set_active(
+                client.id,
+                is_active=not client.is_active,
+                admin_id=admin.id,
+            )
+        except (ConflictError, NotFoundError) as exc:
+            set_flash(request, str(exc), "danger")
+        else:
+            set_flash(request, "Статус API-клиента изменён.")
+    return RedirectResponse("/admin/api-clients", status_code=303)
+
+
+@router.post("/admin/api-clients/{client_id}/scopes")
+async def api_client_scopes_update(request: Request, client_id: str):
+    form = await request.form()
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            await hub.external_api.update_scopes(
+                client_id,
+                scopes=list(form.getlist("scopes")),
+                admin_id=admin.id,
+            )
+        except (ConflictError, NotFoundError) as exc:
+            set_flash(request, str(exc), "danger")
+        else:
+            set_flash(request, "Разрешения API-клиента обновлены.")
+    return RedirectResponse("/admin/api-clients", status_code=303)
+
+
+@router.post("/admin/api-clients/{client_id}/revoke")
+async def api_client_revoke(request: Request, client_id: str):
+    form = await request.form()
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            await hub.external_api.revoke_client(client_id, admin_id=admin.id)
+        except NotFoundError as exc:
+            set_flash(request, str(exc), "danger")
+        else:
+            set_flash(request, "API-клиент отозван. Его ключ больше не работает.")
+    return RedirectResponse("/admin/api-clients", status_code=303)
+
+
+@router.get("/admin/api-docs")
+async def api_docs_page(request: Request):
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        return render(
+            request,
+            "api_docs.html",
+            title="Документация API",
+            admin=admin,
+            scope_definitions=EXTERNAL_API_SCOPE_DEFINITIONS,
+            api_base_url=f"{external_api_base_url(request)}/api/external/v1",
+            active_nav="api",
+        )
 
 
 @router.get("/admin/events")
