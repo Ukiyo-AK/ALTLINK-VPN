@@ -668,15 +668,29 @@ class BillingService(BaseService):
             plan_discount_rub=discount_rub,
         )
         due_at = ensure_utc(subscription.next_billing_at)
-        if due_at <= now:
+        balance_rub = Decimal(user.balance_rub)
+        renewal_is_due = due_at <= now
+        renewal_lead_minutes = max(
+            int(self.settings.billing_renewal_lead_minutes),
+            int(self.settings.billing_interval_minutes) + 5,
+            0,
+        )
+        can_renew_without_interruption = (
+            subscription.auto_renew
+            and balance_rub >= renewal_charge
+            and due_at <= now + timedelta(minutes=renewal_lead_minutes)
+        )
+        if renewal_is_due or can_renew_without_interruption:
             if not subscription.auto_renew:
                 await self._cancel_subscription(subscription, user)
                 return True
 
-            if Decimal(user.balance_rub) < renewal_charge:
+            if balance_rub < renewal_charge:
                 await self._block_subscription(subscription, user, grace_ended=was_grace)
                 return True
 
+            previous_ends_at = ensure_utc(subscription.ends_at)
+            renewed_early = due_at > now
             if renewal_charge > 0:
                 description = self._charge_description(plan)
                 if discount_promo is not None and discount_rub > 0:
@@ -716,12 +730,13 @@ class BillingService(BaseService):
                     "charged_rub": str(renewal_charge),
                     "discount_rub": str(discount_rub),
                     "promo_code": discount_promo.code if discount_promo is not None else None,
+                    "renewed_early": renewed_early,
+                    "previous_ends_at": previous_ends_at.isoformat(),
                     "ends_at": subscription.ends_at.isoformat(),
                 },
             )
             return True
 
-        balance_rub = Decimal(user.balance_rub)
         if not subscription.auto_renew and due_at - now <= timedelta(days=1):
             await self.notifications.queue(
                 user_id=user.id,

@@ -1156,6 +1156,70 @@ async def test_auto_renewal_consumes_one_time_discount_and_syncs_future_remnawav
 
 
 @pytest.mark.asyncio
+async def test_auto_renewal_extends_remnawave_before_current_access_expires(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13034,
+            username="seamless_auto_renewal",
+            first_name="Seamless",
+            last_name="Renewal",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        previous_ends_at = utc_now() + timedelta(minutes=10)
+        subscription.ends_at = previous_ends_at
+        subscription.next_billing_at = previous_ends_at
+        balance_before = Decimal(user.balance_rub)
+
+        await hub.billing.process_due_subscriptions()
+
+        refreshed_subscription = await hub.accounts.get_current_subscription(user.id)
+        remote_user = await test_services.remnawave.get_user(user.remnawave_user_uuid)
+
+    assert refreshed_subscription is not None
+    assert ensure_utc(refreshed_subscription.started_at) == ensure_utc(previous_ends_at)
+    assert ensure_utc(refreshed_subscription.ends_at) > ensure_utc(previous_ends_at)
+    assert ensure_utc(remote_user.expireAt) == ensure_utc(refreshed_subscription.ends_at)
+    assert Decimal(user.balance_rub) == balance_before - Decimal("69.00")
+
+
+@pytest.mark.asyncio
+async def test_early_renewal_window_does_not_block_user_without_enough_balance(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13035,
+            username="early_renewal_low_balance",
+            first_name="Early",
+            last_name="Low Balance",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        previous_ends_at = utc_now() + timedelta(minutes=10)
+        subscription.ends_at = previous_ends_at
+        subscription.next_billing_at = previous_ends_at
+        user.balance_rub = Decimal("0.00")
+
+        await hub.billing.process_due_subscriptions()
+
+        refreshed_subscription = await hub.accounts.get_current_subscription(user.id)
+
+    assert refreshed_subscription is not None
+    assert refreshed_subscription.status == SubscriptionStatus.ACTIVE
+    assert user.status == UserStatus.ACTIVE
+    assert ensure_utc(refreshed_subscription.ends_at) == ensure_utc(previous_ends_at)
+
+
+@pytest.mark.asyncio
 async def test_consumed_discount_is_not_reused_on_second_automatic_renewal(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
