@@ -188,6 +188,16 @@ def test_admin_external_api_templates_expose_scopes_and_documentation():
     assert 'href="/admin/api-clients"' in base
 
 
+def test_admin_user_template_exposes_start_server_reassignment():
+    user_detail = (TEMPLATE_ROOT / "user_detail.html").read_text(encoding="utf-8")
+
+    assert 'action="/admin/users/{{ user.id }}/start-server"' in user_detail
+    assert 'name="server_id"' in user_detail
+    assert "available_start_servers" in user_detail
+    assert "is_start_subscription" in user_detail
+    assert "Переназначить сервер" in user_detail
+
+
 def test_landing_template_keeps_homepage_copy_compact():
     landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
 
@@ -265,7 +275,6 @@ def test_admin_dashboard_has_mobile_section_navigation():
     for section_id in (
         "dashboard-overview",
         "dashboard-users",
-        "dashboard-load",
         "dashboard-finance",
         "dashboard-plans",
         "dashboard-lists",
@@ -275,9 +284,11 @@ def test_admin_dashboard_has_mobile_section_navigation():
     assert 'name="period"' in dashboard
     assert 'name="refresh"' in dashboard
     assert "usersChart" in dashboard
+    assert "conversionFunnelChart" in dashboard
     assert "planSignupsChart" in dashboard
-    assert "nodeLoadChart" in dashboard
-    assert "hostLoadChart" in dashboard
+    assert "nodeLoadChart" not in dashboard
+    assert "hostLoadChart" not in dashboard
+    assert "dashboard-load" not in dashboard
     assert "trafficChart" in dashboard
 
 

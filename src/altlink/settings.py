@@ -79,6 +79,7 @@ class Settings(BaseSettings):
     )
 
     sync_servers_interval_minutes: int = 30
+    server_failover_interval_minutes: int = 2
     billing_interval_minutes: int = 5
     billing_renewal_lead_minutes: int = 15
     traffic_snapshot_interval_minutes: int = 10

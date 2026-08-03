@@ -15,6 +15,7 @@ from altlink.domain.notifications import (
     inactive_subscription_promo_message,
     low_balance_message,
     renewal_disabled_expiring_message,
+    subscription_ended_auto_renew_disabled_message,
     start_whitelist_access_blocked_message,
     trial_followup_message,
     trial_expiring_message,
@@ -139,6 +140,43 @@ def test_renewal_disabled_notification_has_resume_and_topup_buttons():
         ["client:subscription_resume"],
         ["client:topup_menu"],
     ]
+
+
+def test_subscription_ended_with_disabled_autorenew_message_explains_recovery():
+    message = subscription_ended_auto_renew_disabled_message(
+        "Pro",
+        Decimal("25"),
+        Decimal("199"),
+    )
+
+    assert "Срок действия подписки закончился" in message
+    assert "Автопродление было отключено" in message
+    assert "Тариф: Pro" in message
+    assert "Текущий баланс: 25.00 ₽" in message
+    assert "Для возобновления потребуется: 199.00 ₽" in message
+
+
+def test_subscription_ended_notification_has_resume_button():
+    markup = NotificationService._notification_reply_markup(
+        {"cta": "subscription_ended_auto_renew_disabled"}
+    )
+
+    assert markup is not None
+    assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
+        ["client:subscription_resume"],
+    ]
+
+
+def test_topup_notifications_offer_correct_autorenew_action():
+    active_markup = NotificationService._notification_reply_markup({"cta": "topup_enable_auto_renew"})
+    ended_markup = NotificationService._notification_reply_markup({"cta": "topup_resume_subscription"})
+
+    assert active_markup is not None
+    assert ended_markup is not None
+    assert active_markup.inline_keyboard[0][0].callback_data == "client:subscription_resume"
+    assert active_markup.inline_keyboard[0][0].text == "🔄 Включить автопродление"
+    assert ended_markup.inline_keyboard[0][0].callback_data == "client:subscription_resume"
+    assert ended_markup.inline_keyboard[0][0].text == "🧾 Возобновить тариф"
 
 
 def test_low_balance_notification_has_topup_button():

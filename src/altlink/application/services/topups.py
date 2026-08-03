@@ -246,10 +246,33 @@ class TopupService(BaseService):
             and Decimal(transaction.balance_after) > START_WHITELIST_BALANCE_FLOOR_RUB
         ):
             await self.catalog.rebuild_user_access_matrix()
+        notification_message = topup_approved_message(Decimal(item.amount_rub))
+        notification_payload: dict[str, str] | None = None
+        current_subscription = await self.accounts.get_current_subscription(item.user_id)
+        if (
+            current_subscription is not None
+            and current_subscription.plan is not None
+            and not current_subscription.plan.is_trial
+            and not current_subscription.auto_renew
+        ):
+            notification_message += (
+                "\n\nАвтопродление подписки отключено. Включите его, чтобы доступ продолжился после окончания тарифа."
+            )
+            notification_payload = {"cta": "topup_enable_auto_renew"}
+        elif current_subscription is None:
+            latest_paid_subscription = await self.accounts.get_latest_paid_subscription(item.user_id)
+            if latest_paid_subscription is not None and not latest_paid_subscription.auto_renew:
+                plan_name = latest_paid_subscription.plan.name if latest_paid_subscription.plan is not None else "тариф"
+                notification_message += (
+                    f"\n\nПополнение не возобновляет тариф «{plan_name}» автоматически, "
+                    "потому что автопродление было отключено. Возобновите тариф, чтобы вернуть доступ."
+                )
+                notification_payload = {"cta": "topup_resume_subscription"}
         await self.notifications.queue(
             user_id=item.user_id,
             notification_type=NotificationType.TOPUP_APPROVED,
-            message=topup_approved_message(Decimal(item.amount_rub)),
+            message=notification_message,
+            payload=notification_payload,
             dedupe_key=f"topup-approved:{item.id}",
         )
         await self.log_event(

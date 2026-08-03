@@ -59,6 +59,21 @@ def renewal_disabled_expiring_message(
     )
 
 
+def subscription_ended_auto_renew_disabled_message(
+    plan_name: str,
+    balance: Decimal,
+    renewal_charge: Decimal,
+) -> str:
+    return (
+        "⌛ Срок действия подписки закончился.\n\n"
+        "Автопродление было отключено, поэтому доступ остановлен.\n"
+        f"Тариф: {plan_name}\n"
+        f"Текущий баланс: {rub(balance)}\n"
+        f"Для возобновления потребуется: {rub(renewal_charge)}\n\n"
+        "Нажмите «Включить автопродление», чтобы снова активировать этот тариф."
+    )
+
+
 def grace_started_message(balance: Decimal, debt: Decimal, grace_until: datetime) -> str:
     return (
         "⏳ Подписка перешла в льготный период.\n\n"

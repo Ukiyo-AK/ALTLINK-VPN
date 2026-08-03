@@ -262,6 +262,165 @@ async def test_sync_survives_missing_ten_gbit_server_for_existing_start_user(tes
 
 
 @pytest.mark.asyncio
+async def test_start_user_fails_over_to_another_available_start_server(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3008,
+            username="startfailover",
+            first_name="Start",
+            last_name="Failover",
+            language_code="ru",
+        )
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=False)
+        user = await hub.accounts.get_user_by_telegram_id(3008)
+        previous_server = await hub.catalog.get_server(user.assigned_server_id)
+
+        backup_node = test_services.remnawave._build_node(
+            str(uuid4()),
+            "Reserve 10G",
+            "DE",
+        )
+        test_services.remnawave.nodes[backup_node.uuid] = backup_node
+        await hub.catalog.sync_servers()
+        backup_server = next(
+            server
+            for server in await hub.catalog.list_servers()
+            if server.remnawave_node_uuid == backup_node.uuid
+        )
+        await hub.catalog.set_server_type(backup_server.id, ServerType.TEN_GBIT)
+
+        test_services.remnawave.nodes[previous_server.remnawave_node_uuid] = (
+            test_services.remnawave.nodes[previous_server.remnawave_node_uuid].model_copy(
+                update={"isConnected": True, "isDisabled": True}
+            )
+        )
+        summary = await hub.catalog.refresh_server_health_and_failover()
+
+        refreshed_user = await hub.accounts.get_user(user.id)
+        active_accesses = await hub.catalog.get_user_servers(user.id)
+        remote_user = test_services.remnawave.users[user.remnawave_user_uuid]
+        remote_squad_ids = {squad.uuid for squad in remote_user.activeInternalSquads}
+
+        assert refreshed_user.assigned_server_id == backup_server.id
+        assert previous_server.id not in {access.server_id for access in active_accesses}
+        assert backup_server.id in {access.server_id for access in active_accesses}
+        assert backup_server.remnawave_internal_squad_uuid in remote_squad_ids
+        assert previous_server.remnawave_internal_squad_uuid not in remote_squad_ids
+        assert summary["start_failovers"] == [
+            {
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "from_server_id": previous_server.id,
+                "to_server_id": backup_server.id,
+            }
+        ]
+
+        test_services.remnawave.nodes[previous_server.remnawave_node_uuid] = (
+            test_services.remnawave.nodes[previous_server.remnawave_node_uuid].model_copy(
+                update={"isConnected": True, "isDisabled": False}
+            )
+        )
+        await hub.catalog.refresh_server_health_and_failover()
+        refreshed_user = await hub.accounts.get_user(user.id)
+
+        assert refreshed_user.assigned_server_id == backup_server.id
+
+
+@pytest.mark.asyncio
+async def test_admin_can_manually_reassign_start_user_and_invalid_targets_are_rejected(
+    test_services,
+    monkeypatch,
+):
+    async with test_services.hub() as hub:
+        start_user = await hub.accounts.get_or_create_user(
+            telegram_id=3009,
+            username="manualstartserver",
+            first_name="Manual",
+            last_name="Start",
+            language_code="ru",
+        )
+        await hub.billing.activate_paid_plan(
+            start_user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=False,
+        )
+        start_user = await hub.accounts.get_user(start_user.id)
+        previous_server_id = start_user.assigned_server_id
+
+        backup_node = test_services.remnawave._build_node(
+            str(uuid4()),
+            "Manual Reserve 10G",
+            "FI",
+        )
+        test_services.remnawave.nodes[backup_node.uuid] = backup_node
+        await hub.catalog.sync_servers()
+        backup_server = next(
+            server
+            for server in await hub.catalog.list_servers()
+            if server.remnawave_node_uuid == backup_node.uuid
+        )
+        await hub.catalog.set_server_type(backup_server.id, ServerType.TEN_GBIT)
+
+        reassigned = await hub.catalog.reassign_start_server(
+            start_user.id,
+            backup_server.id,
+            admin_id=None,
+        )
+        start_user = await hub.accounts.get_user(start_user.id)
+        remote_user = test_services.remnawave.users[start_user.remnawave_user_uuid]
+        remote_squad_ids = {squad.uuid for squad in remote_user.activeInternalSquads}
+        events = await hub.accounts.list_user_events(start_user.id, limit=10)
+
+        assert reassigned.id == backup_server.id
+        assert start_user.assigned_server_id == backup_server.id
+        assert backup_server.remnawave_internal_squad_uuid in remote_squad_ids
+        assert any(
+            event.event_type == "start_server_manually_reassigned"
+            and event.payload["from_server_id"] == previous_server_id
+            and event.payload["to_server_id"] == backup_server.id
+            for event in events
+        )
+
+        original_update_user = test_services.remnawave.update_user
+
+        async def unavailable_update_user(payload: dict):
+            if payload.get("telegramId") == start_user.telegram_id:
+                raise httpx.ConnectError("temporary remote sync failure")
+            return await original_update_user(payload)
+
+        monkeypatch.setattr(test_services.remnawave, "update_user", unavailable_update_user)
+        with pytest.raises(ConflictError, match="не подтвердила назначение"):
+            await hub.catalog.reassign_start_server(start_user.id, previous_server_id)
+        start_user = await hub.accounts.get_user(start_user.id)
+        remote_user = test_services.remnawave.users[start_user.remnawave_user_uuid]
+
+        assert start_user.assigned_server_id == backup_server.id
+        assert backup_server.remnawave_internal_squad_uuid in {
+            squad.uuid for squad in remote_user.activeInternalSquads
+        }
+        monkeypatch.setattr(test_services.remnawave, "update_user", original_update_user)
+
+        pro_user = await hub.accounts.get_or_create_user(
+            telegram_id=3010,
+            username="manualproserver",
+            first_name="Manual",
+            last_name="Pro",
+            language_code="ru",
+        )
+        await hub.billing.activate_paid_plan(
+            pro_user.id,
+            PlanCode.UNLIMITED,
+            charge_user=False,
+        )
+        with pytest.raises(ConflictError, match="только пользователям тарифа Start"):
+            await hub.catalog.reassign_start_server(pro_user.id, backup_server.id)
+
+        await hub.catalog.set_server_availability(backup_server.id, False)
+        with pytest.raises(ConflictError, match="сейчас недоступен"):
+            await hub.catalog.reassign_start_server(start_user.id, backup_server.id)
+
+
+@pytest.mark.asyncio
 async def test_force_delete_server_removes_local_server_and_accesses(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(

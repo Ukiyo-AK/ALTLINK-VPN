@@ -77,6 +77,32 @@
       <p class="muted">Пустое значение или 0 снимает персональное ограничение. Смена тарифа этот лимит не сбрасывает.</p>
       <button type="submit" class="button ghost">Сохранить лимит</button>
     </form>
+    {% if is_start_subscription %}
+    <form
+      method="post"
+      action="/admin/users/{{ user.id }}/start-server"
+      class="stack"
+      onsubmit="return confirm('Переназначить пользователю Start-сервер? Доступ в Remnawave будет обновлён сразу.');"
+    >
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>
+        <span>Назначить Start-сервер</span>
+        <select name="server_id" required {% if not available_start_servers %}disabled{% endif %}>
+          {% for server in available_start_servers %}
+          <option value="{{ server.id }}" {% if user.assigned_server_id == server.id %}selected{% endif %}>
+            {{ server.name }}{% if server.country_code %} · {{ server.country_code|upper }}{% endif %} · {{ server.current_clients }} клиентов
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      {% if available_start_servers %}
+      <p class="muted">Показываются только подключённые и разрешённые серверы Start с активными inbound.</p>
+      <button type="submit" class="button ghost">Переназначить сервер</button>
+      {% else %}
+      <p class="muted">Сейчас нет доступных серверов Start.</p>
+      {% endif %}
+    </form>
+    {% endif %}
     <form method="post" action="/admin/users/{{ user.id }}/plan" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <label>

@@ -7,6 +7,8 @@ from altlink.presentation.bots.admin_keyboards import (
     SERVER_DELETE_CONFIRM_PREFIX,
     SERVER_DELETE_PREFIX,
     SERVER_OPEN_PREFIX,
+    USER_START_SERVER_ASSIGN_PREFIX,
+    USER_START_SERVERS_PREFIX,
     USERS_SYNC_NODE_ACCESS,
     broadcast_preview_actions,
     payment_browser_actions,
@@ -19,6 +21,7 @@ from altlink.presentation.bots.admin_keyboards import (
     user_devices_actions,
     user_delete_confirmation_actions,
     user_lookup_actions,
+    user_start_server_actions,
     user_subscription_actions,
 )
 
@@ -69,6 +72,42 @@ def test_user_actions_styles_destructive_and_primary_buttons():
 
     assert delete_button["style"] == "danger"
     assert subscription_button["style"] == "primary"
+
+
+def test_start_server_action_is_only_shown_for_start_user():
+    regular_buttons = inline_buttons(user_actions("user-1").as_markup())
+    start_buttons = inline_buttons(
+        user_actions("user-1", can_reassign_start_server=True).as_markup()
+    )
+
+    assert not any(button["text"] == "Переназначить Start-сервер" for button in regular_buttons)
+    button = next(button for button in start_buttons if button["text"] == "Переназначить Start-сервер")
+    assert button["callback_data"] == f"{USER_START_SERVERS_PREFIX}:0:user-1"
+
+
+def test_start_server_picker_paginates_and_keeps_callbacks_within_telegram_limit():
+    user_id = "609237c1-7ffb-4d76-9861-a14b7ddc8a6a"
+    servers = [
+        SimpleNamespace(
+            id=f"00000000-0000-0000-0000-{index:012d}",
+            name=f"Start server {index}",
+            country_code="RU",
+        )
+        for index in range(8)
+    ]
+    buttons = inline_buttons(
+        user_start_server_actions(
+            user_id,
+            servers,
+            current_server_id=servers[6].id,
+            page=1,
+        ).as_markup()
+    )
+    callbacks = [button["callback_data"] for button in buttons if "callback_data" in button]
+
+    assert any(callback.startswith(f"{USER_START_SERVER_ASSIGN_PREFIX}:1:") for callback in callbacks)
+    assert f"{USER_START_SERVERS_PREFIX}:0:{user_id}" in callbacks
+    assert all(len(callback.encode("utf-8")) <= 64 for callback in callbacks)
 
 
 def test_user_subscription_actions_keep_old_controls_in_subsection():

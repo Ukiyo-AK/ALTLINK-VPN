@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+from uuid import UUID
+
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -29,6 +32,8 @@ USER_TRAFFIC_LIMIT_PREFIX = "adm:tl"
 USER_TRAFFIC_STRATEGY_PREFIX = "adm:ts"
 USER_TRAFFIC_CLEAR_PREFIX = "adm:tc"
 USER_LOGS_PREFIX = "adm:ul"
+USER_START_SERVERS_PREFIX = "adm:sv"
+USER_START_SERVER_ASSIGN_PREFIX = "adm:sva"
 USERS_SYNC_NODE_ACCESS = "adm:usr:nodes"
 
 PROMO_TOGGLE_PREFIX = "adm:pt"
@@ -55,6 +60,15 @@ SUPPORT_RESOLVE_PREFIX = "adm:ss"
 BROADCAST_AUDIENCE_PREFIX = "adm:ba"
 
 
+def compact_callback_uuid(value: str) -> str:
+    return base64.urlsafe_b64encode(UUID(value).bytes).decode("ascii").rstrip("=")
+
+
+def expand_callback_uuid(value: str) -> str:
+    padding = "=" * (-len(value) % 4)
+    return str(UUID(bytes=base64.urlsafe_b64decode(value + padding)))
+
+
 def admin_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -73,17 +87,66 @@ def admin_menu() -> ReplyKeyboardMarkup:
     )
 
 
-def user_actions(user_id: str) -> InlineKeyboardBuilder:
+def user_actions(user_id: str, *, can_reassign_start_server: bool = False) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Подписка и статус", callback_data=f"{USER_SUBSCRIPTIONS_PREFIX}:{user_id}", style="primary")
     builder.button(text="Корректировка баланса", callback_data=f"{USER_BALANCE_PREFIX}:{user_id}", style="primary")
     builder.button(text="Написать клиенту", callback_data=f"{USER_MESSAGE_PREFIX}:{user_id}", style="success")
     builder.button(text="Устройства", callback_data=f"{USER_DEVICES_PREFIX}:0:{user_id}", style="primary")
     builder.button(text="Лимит трафика", callback_data=f"{USER_TRAFFIC_LIMIT_PREFIX}:{user_id}", style="primary")
+    if can_reassign_start_server:
+        builder.button(
+            text="Переназначить Start-сервер",
+            callback_data=f"{USER_START_SERVERS_PREFIX}:0:{user_id}",
+            style="primary",
+        )
     builder.button(text="Логи пользователя", callback_data=f"{USER_LOGS_PREFIX}:{user_id}")
     builder.button(text="Обновить карточку", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
     builder.button(text="Удалить аккаунт", callback_data=f"{USER_DELETE_PREFIX}:{user_id}", style="danger")
-    builder.adjust(2, 2, 2, 2)
+    builder.adjust(2, 2, 2, 2, 1)
+    return builder
+
+
+def user_start_server_actions(
+    user_id: str,
+    servers: list,
+    *,
+    current_server_id: str | None,
+    page: int,
+    page_size: int = 6,
+) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    start = page * page_size
+    visible_servers = servers[start : start + page_size]
+    for server in visible_servers:
+        marker = "✓ " if server.id == current_server_id else ""
+        country = f" [{server.country_code.upper()}]" if server.country_code else ""
+        builder.button(
+            text=f"{marker}{server.name}{country}"[:60],
+            callback_data=(
+                f"{USER_START_SERVER_ASSIGN_PREFIX}:{page}:"
+                f"{compact_callback_uuid(server.id)}:{compact_callback_uuid(user_id)}"
+            ),
+            style="success" if server.id == current_server_id else "primary",
+        )
+    total_pages = max((len(servers) + page_size - 1) // page_size, 1)
+    if page > 0:
+        builder.button(
+            text="← Назад",
+            callback_data=f"{USER_START_SERVERS_PREFIX}:{page - 1}:{user_id}",
+        )
+    if page + 1 < total_pages:
+        builder.button(
+            text="Вперёд →",
+            callback_data=f"{USER_START_SERVERS_PREFIX}:{page + 1}:{user_id}",
+        )
+    builder.button(text="К карточке", callback_data=f"{USER_OPEN_PREFIX}:{user_id}")
+    rows = [1] * len(visible_servers)
+    navigation_count = int(page > 0) + int(page + 1 < total_pages)
+    if navigation_count:
+        rows.append(navigation_count)
+    rows.append(1)
+    builder.adjust(*rows)
     return builder
 
 

@@ -1542,6 +1542,7 @@ async def user_detail(request: Request, user_id: str):
         card = await hub.accounts.user_card(user_id)
         bundle = await hub.accounts.get_subscription_bundle(user_id)
         user_servers = await hub.catalog.get_user_servers(user_id)
+        available_start_servers = await hub.catalog.list_available_start_servers()
         plans = await hub.dashboard.list_plans()
         devices, devices_error = await safe_user_hwid_device_views(hub, user_id)
         has_paid_history = await hub.accounts.has_paid_subscription_history(user_id)
@@ -1557,6 +1558,12 @@ async def user_detail(request: Request, user_id: str):
             card=card,
             bundle=bundle,
             user_servers=user_servers,
+            available_start_servers=available_start_servers,
+            is_start_subscription=bool(
+                card["subscription"]
+                and card["subscription"].plan
+                and is_metered_plan_code(card["subscription"].plan.code)
+            ),
             plans=plans,
             devices=devices,
             devices_error=devices_error,
@@ -1581,6 +1588,28 @@ async def user_detail(request: Request, user_id: str):
             ),
             active_nav="users",
         )
+
+
+@router.post("/admin/users/{user_id}/start-server")
+async def user_start_server(request: Request, user_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    server_id = str(form.get("server_id") or "").strip()
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            server = await hub.catalog.reassign_start_server(
+                user_id,
+                server_id,
+                admin_id=admin.id,
+            )
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+        else:
+            set_flash(request, f"Пользователю назначен Start-сервер «{server.name}».")
+    return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
 @router.post("/admin/users/{user_id}/traffic-limit")

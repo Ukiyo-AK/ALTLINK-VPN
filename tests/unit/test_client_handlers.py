@@ -12,7 +12,7 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
-from altlink.domain.enums import PlanCode, PromoRewardKind, SupportRequestStatus
+from altlink.domain.enums import PlanCode, PromoRewardKind, SubscriptionStatus, SupportRequestStatus
 from altlink.presentation.bots import client_handlers
 from altlink.settings import Settings
 
@@ -375,6 +375,29 @@ def test_home_text_without_subscription_points_user_to_subscription_button():
     assert "Тариф пока не выбран" in text
     assert "«Подписка»" in text
     assert "«Выбрать тариф»" in text
+
+
+def test_expired_paid_subscription_with_disabled_autorenew_explains_one_click_resume():
+    settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
+    user = SimpleNamespace(balance_rub=Decimal("199.00"), status="canceled")
+    latest_subscription = SimpleNamespace(
+        status=SubscriptionStatus.CANCELED,
+        auto_renew=False,
+        plan=SimpleNamespace(name="Pro", is_trial=False, code=PlanCode.UNLIMITED),
+    )
+
+    text = client_handlers.subscription_text(
+        {"user": user, "subscription": None},
+        user_servers=[],
+        settings=settings,
+        latest_subscription=latest_subscription,
+    )
+    markup = client_handlers.subscription_markup(None, latest_subscription=latest_subscription)
+
+    assert "Статус: завершена" in text
+    assert "автопродление было отключено" in text
+    assert "Включить автопродление" in text
+    assert markup.inline_keyboard[0][0].callback_data == "client:subscription_resume"
 
 
 def test_subscription_text_hides_billing_cycle_line():

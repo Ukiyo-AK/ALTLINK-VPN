@@ -13,6 +13,7 @@ from altlink.scheduler.jobs import (
     notifications_job,
     online_job,
     remnawave_health_job,
+    server_failover_job,
     server_latency_job,
     sync_servers_job,
     topups_job,
@@ -43,6 +44,12 @@ async def run_scheduler() -> None:
         args=[container],
     )
     scheduler.add_job(sync_servers_job, "interval", minutes=settings.sync_servers_interval_minutes, args=[container])
+    scheduler.add_job(
+        server_failover_job,
+        "interval",
+        minutes=settings.server_failover_interval_minutes,
+        args=[container],
+    )
     scheduler.add_job(billing_job, "interval", minutes=settings.billing_interval_minutes, args=[container])
     scheduler.add_job(traffic_job, "interval", minutes=settings.traffic_snapshot_interval_minutes, args=[container])
     scheduler.add_job(

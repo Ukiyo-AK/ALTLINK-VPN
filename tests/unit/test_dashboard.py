@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 
 from altlink.domain.enums import BalanceTransactionType, PlanCode
+from altlink.utils.time import utc_now
 
 
 @pytest.mark.asyncio
@@ -111,7 +113,7 @@ async def test_dashboard_overview_contains_start_pro_plan_mix(test_services):
 
 
 @pytest.mark.asyncio
-async def test_dashboard_overview_contains_period_analytics_and_load_charts(test_services):
+async def test_dashboard_overview_contains_daily_user_snapshots_without_load_charts(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=12007,
@@ -123,22 +125,107 @@ async def test_dashboard_overview_contains_period_analytics_and_load_charts(test
         await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
         await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
 
+        trial_user = await hub.accounts.get_or_create_user(
+            telegram_id=12010,
+            username="analytics_trial_user",
+            first_name="Analytics",
+            last_name="Trial",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(trial_user.id)
+
         overview = await hub.dashboard.overview(period="1d")
 
     charts = overview["charts"]
 
     assert overview["period"] == "1d"
     assert overview["period_label"] == "1 день"
-    assert overview["new_users_in_period"] >= 1
+    assert overview["new_users_in_period"] >= 2
     assert overview["new_paid_users_in_period"] >= 1
     assert Decimal(overview["payments_total_rub"]) >= Decimal("500")
-    assert len(charts["users"]["labels"]) == 24
-    assert sum(charts["users"]["datasets"]["new_users"]) >= 1
+    assert len(charts["users"]["labels"]) == 1
+    assert charts["users"]["datasets"]["active_paid_users"][-1] >= 1
+    assert charts["users"]["datasets"]["trial_users"][-1] >= 1
+    assert sum(charts["users"]["datasets"]["new_users"]) >= 2
     assert sum(charts["users"]["datasets"]["new_paid_users"]) >= 1
     assert charts["plan_signups"]["datasets"]
-    assert charts["server_loads"]["items"]
-    assert charts["host_loads"]["items"]
+    assert "server_loads" not in charts
+    assert "host_loads" not in charts
     assert "traffic" in charts
+
+
+@pytest.mark.asyncio
+async def test_dashboard_conversion_funnel_tracks_trial_connection_and_paid_conversion(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=12011,
+            username="conversion_user",
+            first_name="Conversion",
+            last_name="User",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        user = await hub.accounts.get_user(user.id)
+        test_services.remnawave.set_usage(
+            user.remnawave_user_uuid,
+            used_bytes=64 * 1024**2,
+            lifetime_used_bytes=64 * 1024**2,
+        )
+        await hub.billing.snapshot_traffic()
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=True)
+
+        overview = await hub.dashboard.overview(period="1d")
+
+    funnel = overview["charts"]["conversion_funnel"]
+    assert funnel["counts"] == [1, 1, 1, 1]
+    assert funnel["percentages"] == [100.0, 100.0, 100.0, 100.0]
+    assert [stage["percent_from_previous"] for stage in funnel["stages"]] == [100.0, 100.0, 100.0, 100.0]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_weekly_user_chart_uses_separate_daily_snapshots(test_services):
+    async with test_services.hub() as hub:
+        paid_user = await hub.accounts.get_or_create_user(
+            telegram_id=12012,
+            username="daily_paid_user",
+            first_name="Daily",
+            last_name="Paid",
+            language_code="ru",
+        )
+        trial_user = await hub.accounts.get_or_create_user(
+            telegram_id=12013,
+            username="daily_trial_user",
+            first_name="Daily",
+            last_name="Trial",
+            language_code="ru",
+        )
+        paid_subscription = await hub.billing.activate_paid_plan(
+            paid_user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=False,
+        )
+        trial_subscription = await hub.billing.activate_trial(trial_user.id)
+
+        now = utc_now()
+        started_at = now - timedelta(days=3)
+        for user in (paid_user, trial_user):
+            user.created_at = started_at
+        for subscription in (paid_subscription, trial_subscription):
+            subscription.created_at = started_at
+            subscription.started_at = started_at
+            subscription.ends_at = now + timedelta(days=2)
+        await hub.session.flush()
+
+        overview = await hub.dashboard.overview(period="1w")
+
+    users = overview["charts"]["users"]
+    assert len(users["labels"]) == 7
+    assert users["datasets"]["active_paid_users"][0] == 0
+    assert users["datasets"]["trial_users"][0] == 0
+    assert users["datasets"]["active_paid_users"][-1] == 1
+    assert users["datasets"]["trial_users"][-1] == 1
+    assert sum(users["datasets"]["new_users"]) == 2
 
 
 @pytest.mark.asyncio

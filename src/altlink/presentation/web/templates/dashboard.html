@@ -3,9 +3,8 @@
 <nav class="dashboard-section-nav" aria-label="Разделы админской панели">
   <a href="#dashboard-overview">Обзор</a>
   <a href="#dashboard-users">Пользователи</a>
-  <a href="#dashboard-load">Нагрузка</a>
   <a href="#dashboard-finance">Финансы</a>
-  <a href="#dashboard-plans">Срез</a>
+  <a href="#dashboard-plans">Тарифы и срез</a>
   <a href="#dashboard-lists">Списки</a>
 </nav>
 
@@ -14,7 +13,7 @@
     <span class="badge highlight">Аналитика</span>
     <h1>Дашборд ALTLINK</h1>
     <p class="muted">
-      Графики строятся за выбранный период. Нагрузка нод и хостов показывает последний сохранённый срез после обновления.
+      Графики строятся за выбранный период по данным пользователей, подписок, платежей и трафика.
     </p>
   </div>
   <form method="get" action="/admin/dashboard" class="dashboard-filter-form">
@@ -44,81 +43,35 @@
   <article class="panel chart-box chart-box-tall">
     <div class="split chart-head">
       <div>
-        <h2>Пользователи по времени</h2>
-        <p class="muted">Регистрации, первые платные подписки и пробные периоды.</p>
+        <h2>Динамика пользователей по дням</h2>
+        <p class="muted">Активные платные и тестовые — срез на конец дня, новые — регистрации за день.</p>
       </div>
-      <label class="chart-control">
-        <span class="muted">Показать</span>
-        <select id="usersChartMode">
-          <option value="all">Все линии</option>
-          <option value="new_users">Новые пользователи</option>
-          <option value="new_paid_users">Новые платные</option>
-          <option value="trial_users">Пробные периоды</option>
-        </select>
-      </label>
+      <span class="badge">{{ overview.period_label }}</span>
     </div>
     <canvas id="usersChart"></canvas>
   </article>
 
-  <article class="panel chart-box chart-box-tall">
+  <article class="panel chart-box chart-box-tall conversion-chart-box">
     <div class="split chart-head">
       <div>
-        <h2>Новые подписки по тарифам</h2>
-        <p class="muted">Сравнение разных тарифов за выбранный период.</p>
+        <h2>Конверсия новых пользователей</h2>
+        <p class="muted">Последовательная воронка для зарегистрировавшихся за выбранный период.</p>
       </div>
       <span class="badge">{{ overview.period_label }}</span>
     </div>
-    <canvas id="planSignupsChart"></canvas>
-  </article>
-</section>
-
-<section class="grid-two dashboard-section" id="dashboard-load" data-section-title="Нагрузка">
-  <article class="panel chart-box chart-box-tall">
-    <div class="split chart-head">
-      <div>
-        <h2>Нагрузка на ноды</h2>
-        <p class="muted">Последний срез из локальной базы после синхронизации с Remnawave.</p>
+    <div class="conversion-stages" aria-label="Этапы конверсии">
+      {% for stage in charts["conversion_funnel"]["stages"] %}
+      <div class="conversion-stage">
+        <strong>{{ stage.count }}</strong>
+        <span>{{ stage.label }}</span>
+        <small>
+          {{ stage.percent_of_new }}% от новых
+          {% if not loop.first %}· {{ stage.percent_from_previous }}% от прошлого шага{% endif %}
+        </small>
       </div>
-      <div class="chart-controls-row">
-        <select id="nodeTypeFilter" aria-label="Фильтр нод по типу">
-          <option value="all">Все типы</option>
-          <option value="ten_gbit">Start</option>
-          <option value="whitelist">Белые списки</option>
-          <option value="regular">Обычные</option>
-        </select>
-        <select id="nodeMetricSelect" aria-label="Метрика нод">
-          <option value="load">Нагрузка, %</option>
-          <option value="online">Онлайн</option>
-          <option value="assigned">Выдано доступов</option>
-          <option value="capacity">Ёмкость</option>
-        </select>
-      </div>
+      {% endfor %}
     </div>
-    <canvas id="nodeLoadChart"></canvas>
-  </article>
-
-  <article class="panel chart-box chart-box-tall">
-    <div class="split chart-head">
-      <div>
-        <h2>Нагрузка на хосты</h2>
-        <p class="muted">Активные inbound/host-метрики внутри нод.</p>
-      </div>
-      <div class="chart-controls-row">
-        <select id="hostTypeFilter" aria-label="Фильтр хостов по типу сервера">
-          <option value="all">Все типы</option>
-          <option value="ten_gbit">Start</option>
-          <option value="whitelist">Белые списки</option>
-          <option value="regular">Обычные</option>
-        </select>
-        <select id="hostMetricSelect" aria-label="Метрика хостов">
-          <option value="load">Нагрузка, %</option>
-          <option value="clients">Клиенты</option>
-          <option value="capacity">Ёмкость</option>
-          <option value="port">Порт</option>
-        </select>
-      </div>
-    </div>
-    <canvas id="hostLoadChart"></canvas>
+    <canvas id="conversionFunnelChart"></canvas>
   </article>
 </section>
 
@@ -140,7 +93,18 @@
   </article>
 </section>
 
-<section class="grid-two dashboard-section" id="dashboard-plans" data-section-title="Текущий срез">
+<section class="grid-two dashboard-section" id="dashboard-plans" data-section-title="Тарифы и текущий срез">
+  <article class="panel chart-box chart-box-tall">
+    <div class="split chart-head">
+      <div>
+        <h2>Новые подписки по тарифам</h2>
+        <p class="muted">Сравнение активаций разных тарифов за выбранный период.</p>
+      </div>
+      <span class="badge">{{ overview.period_label }}</span>
+    </div>
+    <canvas id="planSignupsChart"></canvas>
+  </article>
+
   <article class="panel chart-box">
     <div class="split">
       <h2>Статусы пользователей</h2>
@@ -262,33 +226,69 @@
   }
 
   const usersSeries = charts.users.series || [];
-  const usersChart = new Chart(document.getElementById("usersChart"), {
+  new Chart(document.getElementById("usersChart"), {
     type: "line",
     data: {
       labels: charts.users.labels,
       datasets: usersSeries.map((item, index) => {
         const color = chartColor(index);
+        const isBar = item.chart_type === "bar";
         return {
+          type: item.chart_type || "line",
           label: item.label,
           data: item.values,
           borderColor: color,
-          backgroundColor: alpha(color, 0.12),
-          fill: true,
+          backgroundColor: alpha(color, isBar ? 0.58 : 0.12),
+          fill: !isBar,
           tension: 0.34,
-          pointRadius: 2,
-          key: item.key
+          pointRadius: isBar ? 0 : 3,
+          borderRadius: isBar ? 7 : 0,
+          order: isBar ? 2 : 1
         };
       })
     },
-    options: commonOptions()
+    options: commonOptions({ scales: { y: { beginAtZero: true } } })
   });
 
-  document.getElementById("usersChartMode")?.addEventListener("change", (event) => {
-    const mode = event.target.value;
-    usersChart.data.datasets.forEach((dataset) => {
-      dataset.hidden = mode !== "all" && dataset.key !== mode;
-    });
-    usersChart.update();
+  const conversionStages = charts.conversion_funnel.stages || [];
+  new Chart(document.getElementById("conversionFunnelChart"), {
+    type: "bar",
+    data: {
+      labels: conversionStages.map((stage) => `${stage.label} · ${stage.count}`),
+      datasets: [{
+        label: "% от новых пользователей",
+        data: conversionStages.map((stage) => stage.percent_of_new),
+        backgroundColor: conversionStages.map((_, index) => alpha(chartColor(index), 0.72)),
+        borderColor: conversionStages.map((_, index) => chartColor(index)),
+        borderWidth: 1,
+        borderRadius: 10
+      }]
+    },
+    options: commonOptions({
+      indexAxis: "y",
+      scales: {
+        x: {
+          beginAtZero: true,
+          max: 100,
+          ticks: { callback: (value) => `${value}%` }
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              const stage = conversionStages[context.dataIndex];
+              return `${stage.count} пользователей · ${stage.percent_of_new}% от новых`;
+            },
+            afterLabel(context) {
+              const stage = conversionStages[context.dataIndex];
+              return context.dataIndex > 0 ? `${stage.percent_from_previous}% от прошлого шага` : "Базовый этап";
+            }
+          }
+        }
+      }
+    })
   });
 
   new Chart(document.getElementById("planSignupsChart"), {
@@ -308,76 +308,6 @@
       scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }
     })
   });
-
-  function serverColor(type) {
-    if (type === "ten_gbit") return mint;
-    if (type === "whitelist") return blue;
-    return green;
-  }
-
-  function filteredItems(items, filterKey) {
-    return filterKey === "all" ? items : items.filter((item) => (item.type || item.server_type) === filterKey);
-  }
-
-  function renderMetricChart(canvasId, items, metricSelectId, filterSelectId, valueResolver) {
-    const metricSelect = document.getElementById(metricSelectId);
-    const filterSelect = document.getElementById(filterSelectId);
-    const chart = new Chart(document.getElementById(canvasId), {
-      type: "bar",
-      data: { labels: [], datasets: [{ label: "", data: [], backgroundColor: [] }] },
-      options: commonOptions({
-        indexAxis: "y",
-        scales: { x: { beginAtZero: true } },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            callbacks: {
-              afterLabel(context) {
-                const item = chart.$items?.[context.dataIndex];
-                if (!item) return "";
-                if (item.tag) return `${item.server} · ${item.protocol}/${item.network} · port ${item.port || "—"}`;
-                return `${item.type_label} · онлайн ${item.online || 0} · ёмкость ${item.capacity || "—"}`;
-              }
-            }
-          }
-        }
-      })
-    });
-
-    function update() {
-      const metric = metricSelect?.value || "load";
-      const filter = filterSelect?.value || "all";
-      const visible = filteredItems(items, filter).slice(0, 18);
-      const metricLabel = metricSelect?.selectedOptions?.[0]?.textContent || "Метрика";
-      chart.$items = visible;
-      chart.data.labels = visible.map((item) => item.label);
-      chart.data.datasets[0].label = metricLabel;
-      chart.data.datasets[0].data = visible.map((item) => valueResolver(item, metric));
-      chart.data.datasets[0].backgroundColor = visible.map((item) => alpha(serverColor(item.type || item.server_type), 0.72));
-      chart.update();
-    }
-
-    metricSelect?.addEventListener("change", update);
-    filterSelect?.addEventListener("change", update);
-    update();
-    return chart;
-  }
-
-  renderMetricChart(
-    "nodeLoadChart",
-    charts.server_loads.items || [],
-    "nodeMetricSelect",
-    "nodeTypeFilter",
-    (item, metric) => Number(item[metric] || 0)
-  );
-
-  renderMetricChart(
-    "hostLoadChart",
-    charts.host_loads.items || [],
-    "hostMetricSelect",
-    "hostTypeFilter",
-    (item, metric) => Number(item[metric] || 0)
-  );
 
   new Chart(document.getElementById("paymentsChart"), {
     type: "line",

@@ -35,6 +35,7 @@ from altlink.domain.notifications import (
     inactive_subscription_promo_message,
     low_balance_message,
     renewal_disabled_expiring_message,
+    subscription_ended_auto_renew_disabled_message,
     RETURN_TRIAL_TEMPLATE_IDS,
     return_trial_offer_message,
     start_whitelist_access_blocked_message,
@@ -407,7 +408,21 @@ class BillingService(BaseService):
 
     async def restore_subscription_renewal(self, user_id: str) -> Subscription:
         subscription = await self.accounts.get_current_subscription(user_id)
-        if subscription is None or subscription.plan is None or subscription.plan.is_trial:
+        if subscription is None:
+            latest_subscription = await self.accounts.get_latest_paid_subscription(user_id)
+            if (
+                latest_subscription is None
+                or latest_subscription.plan is None
+                or latest_subscription.status != SubscriptionStatus.CANCELED
+                or latest_subscription.auto_renew
+            ):
+                raise ConflictError("У пользователя нет подписки с отключённым автопродлением.")
+            return await self.activate_paid_plan(
+                user_id,
+                latest_subscription.plan.code,
+                charge_user=True,
+            )
+        if subscription.plan is None or subscription.plan.is_trial:
             raise ConflictError("Включить автопродление можно только у платной подписки.")
         subscription.auto_renew = True
         await self.log_event(
@@ -682,7 +697,11 @@ class BillingService(BaseService):
         )
         if renewal_is_due or can_renew_without_interruption:
             if not subscription.auto_renew:
-                await self._cancel_subscription(subscription, user)
+                await self._cancel_subscription(
+                    subscription,
+                    user,
+                    renewal_charge=renewal_charge,
+                )
                 return True
 
             if balance_rub < renewal_charge:
@@ -887,11 +906,32 @@ class BillingService(BaseService):
             await self.catalog.rebuild_user_access_matrix()
         return subscription
 
-    async def _cancel_subscription(self, subscription: Subscription, user: User) -> None:
+    async def _cancel_subscription(
+        self,
+        subscription: Subscription,
+        user: User,
+        *,
+        renewal_charge: Decimal,
+    ) -> None:
         subscription.status = SubscriptionStatus.CANCELED
         subscription.canceled_at = utc_now()
         user.status = UserStatus.CANCELED
         await self._disable_remote_user_best_effort(user, event_type="subscription_cancel_disable_failed")
+        plan_name = subscription.plan.name if subscription.plan is not None else "последний тариф"
+        await self.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.BROADCAST,
+            message=subscription_ended_auto_renew_disabled_message(
+                plan_name,
+                Decimal(user.balance_rub),
+                renewal_charge,
+            ),
+            payload={
+                "kind": "subscription_ended_auto_renew_disabled",
+                "cta": "subscription_ended_auto_renew_disabled",
+            },
+            dedupe_key=f"subscription-ended-auto-renew-disabled:{subscription.id}",
+        )
 
     async def _block_subscription(self, subscription: Subscription, user: User, *, grace_ended: bool = False) -> None:
         subscription.status = SubscriptionStatus.BLOCKED

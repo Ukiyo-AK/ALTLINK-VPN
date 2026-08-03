@@ -130,6 +130,23 @@ async def sync_servers_job(container: AppContainer) -> None:
         )
 
 
+async def server_failover_job(container: AppContainer) -> None:
+    admin_ids: list[int] = []
+    alerts = []
+    async with container.hub() as hub:
+        await hub.catalog.refresh_server_health_and_failover()
+        servers = await hub.catalog.list_servers()
+        alerts = await hub.monitoring.record_server_operational_state(servers)
+        if alerts:
+            admin_ids = await hub.accounts.list_admin_telegram_ids()
+    if alerts:
+        await send_telegram_messages(
+            bot_token=container.settings.admin_bot_token,
+            chat_ids=admin_ids,
+            text=format_server_operational_alert(alerts),
+        )
+
+
 async def billing_job(container: AppContainer) -> None:
     async with container.hub() as hub:
         await hub.billing.process_due_subscriptions()

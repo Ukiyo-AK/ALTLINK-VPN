@@ -225,6 +225,39 @@ class NotificationService(BaseService):
                     [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
                 ]
             )
+        if cta == "subscription_ended_auto_renew_disabled":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔄 Включить автопродление",
+                            callback_data="client:subscription_resume",
+                        )
+                    ],
+                ]
+            )
+        if cta == "topup_enable_auto_renew":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🔄 Включить автопродление",
+                            callback_data="client:subscription_resume",
+                        )
+                    ],
+                ]
+            )
+        if cta == "topup_resume_subscription":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🧾 Возобновить тариф",
+                            callback_data="client:subscription_resume",
+                        )
+                    ],
+                ]
+            )
         if cta == "low_balance":
             return InlineKeyboardMarkup(
                 inline_keyboard=[

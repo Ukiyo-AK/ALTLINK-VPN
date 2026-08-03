@@ -207,6 +207,20 @@ def subscription_actions(
     return builder
 
 
+def expired_subscription_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="🔄 Включить автопродление",
+        callback_data="client:subscription_resume",
+        style="success",
+    )
+    builder.button(text="🧾 Выбрать другой тариф", callback_data="client:plan_menu", style="primary")
+    builder.button(text="➕ Пополнить баланс", callback_data="client:topup_menu", style="success")
+    builder.button(text="🏠 Меню", callback_data="client:home")
+    builder.adjust(1, 1, 1, 1)
+    return builder
+
+
 def subscription_details_actions(*, can_manage_auto_renew: bool, auto_renew_disabled: bool) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if can_manage_auto_renew and not auto_renew_disabled:

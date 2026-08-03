@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, selectinload
 
-from altlink.application.services.base import BaseService, ConflictError, NotFoundError
+from altlink.application.services.base import BaseService, ConflictError, NotFoundError, ServiceError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType, SubscriptionStatus, SystemEventLevel, UserStatus
 from altlink.domain.plans import START_WHITELIST_BALANCE_FLOOR_RUB, is_metered_plan_code, is_unlimited_plan_code
 from altlink.domain.traffic_limits import effective_traffic_limit
@@ -83,7 +83,7 @@ class CatalogService(BaseService):
             server.name = node.name
             server.address = node.address
             server.country_code = node.countryCode
-            server.is_connected = bool(node.isConnected)
+            server.is_connected = bool(node.isConnected and not node.isDisabled)
             server.last_status_message = node.lastStatusMessage
             server.last_status_change = node.lastStatusChange
             server.users_online = node.usersOnline or 0
@@ -166,6 +166,116 @@ class CatalogService(BaseService):
         )
         return await self.list_servers()
 
+    async def refresh_server_health_and_failover(self) -> dict:
+        """Refresh lightweight node health and reroute users only when routing changed."""
+        if self.remnawave is None:
+            return {
+                "checked": 0,
+                "changed_servers": [],
+                "start_failovers": [],
+                "skipped": "remnawave_not_configured",
+            }
+
+        remote_nodes = await self.remnawave.list_nodes()
+        if not remote_nodes:
+            # An empty panel response is more likely a transient/partial API failure than
+            # every node disappearing at once. The full catalog sync will reconcile removals.
+            logger.warning("Skipping server failover because Remnawave returned an empty node list.")
+            return {
+                "checked": 0,
+                "changed_servers": [],
+                "start_failovers": [],
+                "skipped": "empty_remote_catalog",
+            }
+
+        now = utc_now()
+        remote_by_uuid = {node.uuid: node for node in remote_nodes}
+        servers = list(
+            (
+                await self.session.scalars(
+                    select(Server).options(selectinload(Server.inbounds))
+                )
+            ).all()
+        )
+        changed_servers: list[dict] = []
+        unusable_start_server_ids: set[str] = set()
+
+        for server in servers:
+            was_usable = self._server_is_usable(server)
+            remote = remote_by_uuid.get(server.remnawave_node_uuid)
+            if remote is None:
+                server.is_connected = False
+                server.last_status_message = "Нода отсутствует в текущем ответе Remnawave."
+                server.last_status_change = now
+            else:
+                server.is_connected = bool(remote.isConnected and not remote.isDisabled)
+                server.last_status_message = remote.lastStatusMessage
+                server.last_status_change = remote.lastStatusChange
+                server.users_online = remote.usersOnline or 0
+                server.raw_payload = remote.model_dump(mode="json")
+                server.last_sync_at = now
+
+            is_usable = self._server_is_usable(server)
+            if server.server_type == ServerType.TEN_GBIT and not is_usable:
+                unusable_start_server_ids.add(server.id)
+            if was_usable != is_usable:
+                changed_servers.append(
+                    {
+                        "server_id": server.id,
+                        "name": server.name,
+                        "was_usable": was_usable,
+                        "is_usable": is_usable,
+                    }
+                )
+
+        has_available_start_server = any(
+            server.server_type == ServerType.TEN_GBIT and self._server_is_usable(server)
+            for server in servers
+        )
+        stranded_users = []
+        if unusable_start_server_ids and has_available_start_server:
+            stranded_users = list(
+                (
+                    await self.session.scalars(
+                        select(User).where(User.assigned_server_id.in_(unusable_start_server_ids))
+                    )
+                ).all()
+            )
+        previous_assignments = {user.id: user.assigned_server_id for user in stranded_users}
+
+        if changed_servers or stranded_users:
+            await self.rebuild_user_access_matrix()
+            await self.session.flush()
+
+        start_failovers = [
+            {
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "from_server_id": previous_assignments[user.id],
+                "to_server_id": user.assigned_server_id,
+            }
+            for user in stranded_users
+            if user.assigned_server_id
+            and user.assigned_server_id != previous_assignments[user.id]
+        ]
+        if changed_servers or start_failovers:
+            await self.log_event(
+                level=SystemEventLevel.WARNING if changed_servers else SystemEventLevel.INFO,
+                event_type="server_health_failover",
+                message="Проверено состояние серверов и выполнено автоматическое переназначение доступа.",
+                payload={
+                    "changed_servers": changed_servers,
+                    "start_failovers": start_failovers,
+                },
+            )
+
+        return {
+            "checked": len(servers),
+            "changed_servers": changed_servers,
+            "start_failovers": start_failovers,
+            "skipped": None,
+        }
+
     async def set_server_availability(self, server_id: str, is_available: bool) -> Server:
         server = await self.session.get(Server, server_id)
         if server is None:
@@ -245,6 +355,98 @@ class CatalogService(BaseService):
         server = await self._pick_preferred_server_for_plan(plan_code)
         user.assigned_server_id = server.id
         await self.session.flush()
+        return server
+
+    async def list_available_start_servers(self) -> list[Server]:
+        servers = await self.list_servers()
+        available = [
+            server
+            for server in servers
+            if server.server_type == ServerType.TEN_GBIT and self._server_is_usable(server)
+        ]
+        available.sort(key=self._server_assignment_sort_key)
+        return available
+
+    async def reassign_start_server(
+        self,
+        user_id: str,
+        server_id: str,
+        *,
+        admin_id: str | None = None,
+    ) -> Server:
+        user = await self.session.get(User, user_id, options=[joinedload(User.assigned_server)])
+        if user is None:
+            raise NotFoundError("Пользователь не найден.")
+        subscription = await self.session.scalar(
+            select(Subscription)
+            .where(
+                Subscription.user_id == user.id,
+                Subscription.status.in_(
+                    [SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL, SubscriptionStatus.GRACE]
+                ),
+            )
+            .options(joinedload(Subscription.plan))
+            .order_by(Subscription.created_at.desc())
+        )
+        if (
+            subscription is None
+            or subscription.plan is None
+            or not is_metered_plan_code(subscription.plan.code)
+        ):
+            raise ConflictError("Ручное переназначение доступно только пользователям тарифа Start.")
+        expire_at = (
+            subscription.grace_until
+            if subscription.status == SubscriptionStatus.GRACE and subscription.grace_until is not None
+            else subscription.ends_at
+        )
+        if ensure_utc(expire_at) <= utc_now():
+            raise ConflictError("Подписка Start уже истекла. Сначала восстановите доступ пользователя.")
+
+        server = await self.get_server(server_id)
+        if server.server_type != ServerType.TEN_GBIT:
+            raise ConflictError("Можно выбрать только сервер типа Start.")
+        if not self._server_is_usable(server):
+            raise ConflictError("Выбранный Start-сервер сейчас недоступен.")
+
+        previous_server_id = user.assigned_server_id
+        user.assigned_server_id = server.id
+        try:
+            await self.rebuild_user_access_matrix()
+            await self.session.flush()
+            if self.remnawave is not None and user.remnawave_user_uuid:
+                remote_user = await self.remnawave.get_user(user.remnawave_user_uuid)
+                remote_squad_ids = {
+                    squad.uuid for squad in (remote_user.activeInternalSquads or [])
+                }
+                if (
+                    not server.remnawave_internal_squad_uuid
+                    or server.remnawave_internal_squad_uuid not in remote_squad_ids
+                ):
+                    raise ConflictError("Remnawave не подтвердила назначение выбранного Start-сервера.")
+        except Exception as exc:
+            user.assigned_server_id = previous_server_id
+            await self.rebuild_user_access_matrix()
+            await self.session.flush()
+            if isinstance(exc, ServiceError):
+                raise
+            if isinstance(exc, httpx.HTTPError):
+                raise ConflictError("Не удалось подтвердить назначение сервера в Remnawave.") from exc
+            raise
+
+        await self.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="start_server_manually_reassigned",
+            message="Администратор вручную переназначил Start-сервер пользователя.",
+            payload={
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "from_server_id": previous_server_id,
+                "to_server_id": server.id,
+                "to_server_name": server.name,
+            },
+            actor_admin_id=admin_id,
+            subject_user_id=user.id,
+        )
         return server
 
     async def get_user_servers(self, user_id: str, *, active_only: bool = True) -> list[UserServerAccess]:

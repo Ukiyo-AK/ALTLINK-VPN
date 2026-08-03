@@ -1090,6 +1090,53 @@ async def test_renewal_reminders_require_enabled_autorenew_and_insufficient_bala
 
 
 @pytest.mark.asyncio
+async def test_disabled_autorenew_expiration_notifies_and_resume_reactivates_same_plan(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13038,
+            username="disabled_autorenew_expired",
+            first_name="Expired",
+            last_name="Renewal",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("200"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        balance_before_expiration = Decimal(user.balance_rub)
+        subscription.auto_renew = False
+        subscription.ends_at = utc_now() - timedelta(minutes=1)
+        subscription.next_billing_at = subscription.ends_at
+
+        await hub.billing.process_due_subscriptions()
+
+        assert await hub.accounts.get_current_subscription(user.id) is None
+        expired_subscription = await hub.accounts.get_latest_paid_subscription(user.id)
+        assert expired_subscription is not None
+        assert expired_subscription.status == SubscriptionStatus.CANCELED
+        assert Decimal(user.balance_rub) == balance_before_expiration
+        ended_notices = [
+            item
+            for item in (await hub.session.scalars(await hub.notifications.pending_query(limit=30))).all()
+            if item.user_id == user.id
+            and item.payload
+            and item.payload.get("kind") == "subscription_ended_auto_renew_disabled"
+        ]
+        assert len(ended_notices) == 1
+        assert ended_notices[0].payload["cta"] == "subscription_ended_auto_renew_disabled"
+
+        resumed_subscription = await hub.billing.restore_subscription_renewal(user.id)
+
+        assert resumed_subscription.id != expired_subscription.id
+        assert resumed_subscription.plan.code == PlanCode.SINGLE_10GBIT
+        assert resumed_subscription.status == SubscriptionStatus.ACTIVE
+        assert resumed_subscription.auto_renew is True
+        assert Decimal(user.balance_rub) == balance_before_expiration - SINGLE_10GBIT_MONTHLY_PRICE_RUB
+
+
+@pytest.mark.asyncio
 async def test_auto_renewal_consumes_one_time_discount_and_syncs_future_remnawave_expiration(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(

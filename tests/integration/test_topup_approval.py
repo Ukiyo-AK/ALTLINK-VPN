@@ -11,7 +11,7 @@ from sqlalchemy import select
 from altlink.application.services.base import ConflictError
 from altlink.application.services.topups import TopupService
 from altlink.domain.enums import BalanceTransactionType, NotificationType, PlanCode
-from altlink.infrastructure.db.models import BalanceTransaction
+from altlink.infrastructure.db.models import BalanceTransaction, Notification
 from altlink.scheduler.jobs import topups_job
 from altlink.utils.time import utc_now
 
@@ -65,6 +65,65 @@ async def test_stub_topup_adds_money_and_notification(test_services):
         pending = await hub.notifications.pending_query()
         queued = list((await hub.session.scalars(pending)).all())
         assert any(item.user_id == user.id for item in queued)
+
+
+@pytest.mark.asyncio
+async def test_topup_after_disabled_autorenew_expiration_offers_plan_resume(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3016,
+            username="resume_after_topup",
+            first_name="Resume",
+            last_name="AfterTopup",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        subscription.auto_renew = False
+        subscription.ends_at = utc_now() - timedelta(minutes=1)
+        subscription.next_billing_at = subscription.ends_at
+        await hub.billing.process_due_subscriptions()
+
+        topup = await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        notification = await hub.session.scalar(
+            select(Notification).where(Notification.dedupe_key == f"topup-approved:{topup.id}")
+        )
+
+        assert notification is not None
+        assert notification.payload["cta"] == "topup_resume_subscription"
+        assert "Возобновите тариф" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_topup_for_active_subscription_with_disabled_autorenew_offers_enable(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3017,
+            username="enable_after_topup",
+            first_name="Enable",
+            last_name="AfterTopup",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("200"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+            charge_user=True,
+        )
+        subscription.auto_renew = False
+
+        topup = await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        notification = await hub.session.scalar(
+            select(Notification).where(Notification.dedupe_key == f"topup-approved:{topup.id}")
+        )
+
+        assert notification is not None
+        assert notification.payload["cta"] == "topup_enable_auto_renew"
+        assert "Автопродление подписки отключено" in notification.message
 
 
 @pytest.mark.asyncio

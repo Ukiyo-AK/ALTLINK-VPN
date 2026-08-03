@@ -18,7 +18,7 @@ from altlink.application.services.base import ConflictError, NotFoundError, Serv
 from altlink.application.services.registry import AppContainer
 from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.domain.billing import bytes_to_gb_cost, quantize_money
-from altlink.domain.enums import PlanCode, PromoRewardKind, SupportRequestStatus, SystemEventLevel
+from altlink.domain.enums import PlanCode, PromoRewardKind, SubscriptionStatus, SupportRequestStatus, SystemEventLevel
 from altlink.domain.plans import (
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
@@ -42,6 +42,7 @@ from altlink.presentation.bots.client_keyboards import (
     device_delete_confirmation_actions,
     device_detail_actions,
     device_list_actions,
+    expired_subscription_actions,
     main_menu,
     menu_actions,
     plan_actions,
@@ -742,7 +743,16 @@ def activation_link_pending_note() -> str:
     )
 
 
-def subscription_markup(subscription):
+def subscription_markup(subscription, *, latest_subscription=None):
+    if (
+        subscription is None
+        and latest_subscription is not None
+        and latest_subscription.plan is not None
+        and not latest_subscription.plan.is_trial
+        and latest_subscription.status == SubscriptionStatus.CANCELED
+        and not latest_subscription.auto_renew
+    ):
+        return expired_subscription_actions().as_markup()
     return subscription_actions(
         show_link=bool(subscription),
         show_traffic=show_metered_usage(subscription),
@@ -1328,6 +1338,21 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
                 "Если на балансе не хватает средств, сначала пополните его.\n\n"
                 f"{access_links_text(settings)}"
             )
+        if (
+            latest_plan is not None
+            and subscription_for_state.status == SubscriptionStatus.CANCELED
+            and not subscription_for_state.auto_renew
+        ):
+            return (
+                "🔐 Подписка\n\n"
+                f"Последний тариф: {latest_plan.name}\n"
+                "Статус: завершена\n"
+                f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n\n"
+                "Срок действия подписки закончился, потому что автопродление было отключено.\n"
+                "Пополните баланс при необходимости и нажмите «Включить автопродление», "
+                "чтобы снова активировать прежний тариф. Также можно выбрать другой тариф.\n\n"
+                f"{access_links_text(settings)}"
+            )
         return (
             "🔐 Подписка\n\n"
             f"Последний тариф: {subscription_for_state.plan.name if subscription_for_state.plan else 'не выбран'}\n"
@@ -1879,7 +1904,7 @@ async def show_subscription(target: Message | CallbackQuery, container: AppConta
             container.settings,
             latest_subscription=latest_subscription,
         ),
-        primary_markup=subscription_markup(subscription),
+        primary_markup=subscription_markup(subscription, latest_subscription=latest_subscription),
         media_section="subscription",
         force_new_message=not isinstance(target, CallbackQuery),
     )
@@ -3377,13 +3402,33 @@ async def subscription_resume(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
+        previous_subscription = await hub.accounts.get_current_subscription(user.id)
         try:
             subscription = await hub.billing.restore_subscription_renewal(user.id)
-            text = "Автопродление снова включено."
+            text = (
+                "Тариф снова активирован, автопродление включено."
+                if previous_subscription is None
+                else "Автопродление снова включено."
+            )
         except (ConflictError, NotFoundError, ServiceError) as exc:
             text = str(exc)
             subscription = await hub.accounts.get_current_subscription(user.id)
-    await answer_or_edit(callback, text, reply_markup=subscription_details_markup(subscription))
+            latest_subscription = (
+                await hub.accounts.get_latest_paid_subscription(user.id)
+                if subscription is None
+                else subscription
+            )
+        else:
+            latest_subscription = subscription
+    await answer_or_edit(
+        callback,
+        text,
+        reply_markup=(
+            subscription_details_markup(subscription)
+            if subscription is not None
+            else subscription_markup(None, latest_subscription=latest_subscription)
+        ),
+    )
 
 
 @router.callback_query(F.data == "client:subscription_link")

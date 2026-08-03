@@ -75,6 +75,8 @@ from altlink.presentation.bots.admin_keyboards import (
     USER_TRAFFIC_LIMIT_PREFIX,
     USER_TRAFFIC_STRATEGY_PREFIX,
     USER_TRIAL_PREFIX,
+    USER_START_SERVERS_PREFIX,
+    USER_START_SERVER_ASSIGN_PREFIX,
     BROADCAST_AUDIENCE_PREFIX,
     admin_menu,
     broadcast_media_actions,
@@ -82,6 +84,7 @@ from altlink.presentation.bots.admin_keyboards import (
     database_import_confirmation_actions,
     database_import_prompt_actions,
     broadcast_preview_actions,
+    expand_callback_uuid,
     maintenance_actions,
     maintenance_prompt_actions,
     maintenance_user_pick_actions,
@@ -100,6 +103,7 @@ from altlink.presentation.bots.admin_keyboards import (
     user_logs_actions,
     user_message_prompt_actions,
     user_subscription_actions,
+    user_start_server_actions,
     user_traffic_limit_actions,
 )
 from altlink.presentation.bots.client_keyboards import direct_message_reply_actions
@@ -1020,7 +1024,18 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
     lines.extend([""] + format_activity_summary(activity_summary))
     text = "\n".join(lines)
     try:
-        await render_admin(target, text, reply_markup=user_actions(user_id).as_markup())
+        await render_admin(
+            target,
+            text,
+            reply_markup=user_actions(
+                user_id,
+                can_reassign_start_server=bool(
+                    subscription
+                    and subscription.plan
+                    and is_metered_plan_code(subscription.plan.code)
+                ),
+            ).as_markup(),
+        )
     except TelegramBadRequest:
         logger.warning("Failed to render user card markup for user_id=%s, sending plain text fallback.", user_id)
         await render_admin(target, text)
@@ -1044,6 +1059,41 @@ async def show_user_traffic_limit(target: Message | CallbackQuery, user_id: str,
         "Выберите стратегию сброса, затем отправьте количество ГБ. "
         "Настройка сохранится при смене тарифа и синхронизации.",
         reply_markup=user_traffic_limit_actions(user_id).as_markup(),
+    )
+
+
+async def show_user_start_servers(
+    target: Message | CallbackQuery,
+    user_id: str,
+    container: AppContainer,
+    *,
+    page: int,
+) -> None:
+    async with container.hub() as hub:
+        user = await hub.accounts.get_user(user_id)
+        subscription = await hub.accounts.get_current_subscription(user_id)
+        if (
+            subscription is None
+            or subscription.plan is None
+            or not is_metered_plan_code(subscription.plan.code)
+        ):
+            raise ConflictError("Переназначение сервера доступно только для тарифа Start.")
+        servers = await hub.catalog.list_available_start_servers()
+    total_pages = max((len(servers) + 5) // 6, 1)
+    page = min(max(page, 0), total_pages - 1)
+    current_name = user.assigned_server.name if user.assigned_server else "не назначен"
+    await render_admin(
+        target,
+        "Переназначение Start-сервера\n\n"
+        f"Пользователь: {user_label(user)}\n"
+        f"Текущий сервер: {current_name}\n\n"
+        + ("Выберите новый доступный Start-сервер." if servers else "Доступных Start-серверов сейчас нет."),
+        reply_markup=user_start_server_actions(
+            user_id,
+            servers,
+            current_server_id=user.assigned_server_id,
+            page=page,
+        ).as_markup(),
     )
 
 
@@ -1871,6 +1921,52 @@ async def open_user_traffic_limit(callback: CallbackQuery, container: AppContain
     if not await is_admin(callback.from_user.id, container):
         return
     await show_user_traffic_limit(callback, callback.data.split(":")[-1], container)
+
+
+@router.callback_query(F.data.startswith(f"{USER_START_SERVERS_PREFIX}:"))
+async def open_user_start_servers(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    try:
+        page_token, user_id = callback.data.removeprefix(f"{USER_START_SERVERS_PREFIX}:").split(":", 1)
+        page = int(page_token)
+        await show_user_start_servers(callback, user_id, container, page=page)
+    except (ConflictError, NotFoundError, TypeError, ValueError) as exc:
+        await callback.answer(str(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith(f"{USER_START_SERVER_ASSIGN_PREFIX}:"))
+async def assign_user_start_server(callback: CallbackQuery, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    try:
+        page_token, server_token, user_token = callback.data.removeprefix(
+            f"{USER_START_SERVER_ASSIGN_PREFIX}:"
+        ).split(":", 2)
+        page = int(page_token)
+        server_id = expand_callback_uuid(server_token)
+        user_id = expand_callback_uuid(user_token)
+    except (TypeError, ValueError):
+        await callback.answer("Некорректный сервер.", show_alert=True)
+        return
+    async with container.hub() as hub:
+        servers = await hub.catalog.list_available_start_servers()
+        server = next((item for item in servers if item.id == server_id), None)
+        if server is None:
+            await callback.answer("Список серверов изменился. Откройте его заново.", show_alert=True)
+            return
+        admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
+        try:
+            server = await hub.catalog.reassign_start_server(
+                user_id,
+                server.id,
+                admin_id=admin.id if admin else None,
+            )
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+    await callback.answer(f"Назначен сервер: {server.name}")
+    await show_user_start_servers(callback, user_id, container, page=page)
 
 
 @router.callback_query(F.data.startswith(f"{USER_LOGS_PREFIX}:"))
