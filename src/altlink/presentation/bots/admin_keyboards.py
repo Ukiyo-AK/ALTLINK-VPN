@@ -58,6 +58,11 @@ SERVER_DELETE_CONFIRM_PREFIX = "adm:sc"
 SUPPORT_REPLY_PREFIX = "adm:sr"
 SUPPORT_RESOLVE_PREFIX = "adm:ss"
 BROADCAST_AUDIENCE_PREFIX = "adm:ba"
+BROADCAST_PROMO_OPEN = "adm:bpo"
+BROADCAST_PROMO_PAGE_PREFIX = "adm:bpp"
+BROADCAST_PROMO_PICK_PREFIX = "adm:bpk"
+BROADCAST_PROMO_CLEAR = "adm:bpc"
+BROADCAST_PROMO_BACK = "adm:bpb"
 
 
 def compact_callback_uuid(value: str) -> str:
@@ -500,12 +505,17 @@ def broadcast_media_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Использовать логотип", callback_data="admin:broadcast:default", style="primary")
     builder.button(text="Без вложения", callback_data="admin:broadcast:text_only")
+    builder.button(text="Добавить промокод", callback_data=BROADCAST_PROMO_OPEN, style="success")
     builder.button(text="Отмена", callback_data="admin:broadcast:cancel", style="danger")
-    builder.adjust(1, 1, 1)
+    builder.adjust(1, 1, 1, 1)
     return builder
 
 
-def broadcast_preview_actions(selected_audience: str = "all") -> InlineKeyboardBuilder:
+def broadcast_preview_actions(
+    selected_audience: str = "all",
+    *,
+    promo_code: str | None = None,
+) -> InlineKeyboardBuilder:
     def marker(value: str, label: str) -> str:
         return f"✓ {label}" if selected_audience == value else label
 
@@ -525,7 +535,45 @@ def broadcast_preview_actions(selected_audience: str = "all") -> InlineKeyboardB
         text=marker("unlimited_weekly", "Pro неделя"),
         callback_data=f"{BROADCAST_AUDIENCE_PREFIX}:unlimited_weekly",
     )
+    builder.button(
+        text=f"Промокод: {promo_code}" if promo_code else "Добавить промокод",
+        callback_data=BROADCAST_PROMO_OPEN,
+        style="success" if promo_code else "primary",
+    )
     builder.button(text="Отправить выбранным", callback_data="admin:broadcast:confirm", style="success")
     builder.button(text="Отмена", callback_data="admin:broadcast:cancel", style="danger")
-    builder.adjust(1, 2, 2, 2, 2, 1, 1)
+    builder.adjust(1, 2, 2, 2, 2, 1, 1, 1)
+    return builder
+
+
+def broadcast_promo_picker_actions(
+    items,
+    *,
+    page: int,
+    total_pages: int,
+    selected_promo_id: str | None = None,
+) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    for item in items:
+        marker = "✓ " if item.id == selected_promo_id else ""
+        builder.button(
+            text=f"{marker}{item.code}",
+            callback_data=f"{BROADCAST_PROMO_PICK_PREFIX}:{compact_callback_uuid(item.id)}",
+            style="success" if item.id == selected_promo_id else "primary",
+        )
+    if page > 0:
+        builder.button(text="←", callback_data=f"{BROADCAST_PROMO_PAGE_PREFIX}:{page - 1}")
+    if page + 1 < total_pages:
+        builder.button(text="→", callback_data=f"{BROADCAST_PROMO_PAGE_PREFIX}:{page + 1}")
+    if selected_promo_id:
+        builder.button(text="Убрать промокод", callback_data=BROADCAST_PROMO_CLEAR, style="danger")
+    builder.button(text="Назад к рассылке", callback_data=BROADCAST_PROMO_BACK)
+    row_sizes = [1] * len(items)
+    navigation_count = int(page > 0) + int(page + 1 < total_pages)
+    if navigation_count:
+        row_sizes.append(navigation_count)
+    if selected_promo_id:
+        row_sizes.append(1)
+    row_sizes.append(1)
+    builder.adjust(*row_sizes)
     return builder

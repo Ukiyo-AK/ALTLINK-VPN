@@ -5,7 +5,7 @@ import hmac
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.accounts import AccountService
@@ -13,7 +13,7 @@ from altlink.application.services.base import BaseService, ConflictError, NotFou
 from altlink.domain.billing import quantize_money
 from altlink.domain.enums import BalanceTransactionType, PromoRewardKind, SystemEventLevel
 from altlink.infrastructure.db.models import PromoCode, PromoCodeRedemption
-from altlink.utils.time import utc_now
+from altlink.utils.time import ensure_utc, utc_now
 
 
 class PromoService(BaseService):
@@ -38,6 +38,55 @@ class PromoService(BaseService):
                 await self.session.scalars(query)
             ).all()
         )
+
+    async def list_broadcast_codes(
+        self,
+        *,
+        page: int = 0,
+        page_size: int = 6,
+    ) -> tuple[list[PromoCode], int]:
+        normalized_page = max(int(page), 0)
+        normalized_page_size = min(max(int(page_size), 1), 20)
+        now = utc_now()
+        filters = (
+            PromoCode.assigned_user_id.is_(None),
+            PromoCode.is_active.is_(True),
+            or_(PromoCode.expires_at.is_(None), PromoCode.expires_at > now),
+            or_(PromoCode.usage_limit.is_(None), PromoCode.used_count < PromoCode.usage_limit),
+            func.length(PromoCode.code) <= 40,
+        )
+        total = int(
+            await self.session.scalar(
+                select(func.count(PromoCode.id)).where(*filters)
+            )
+            or 0
+        )
+        items = list(
+            (
+                await self.session.scalars(
+                    select(PromoCode)
+                    .where(*filters)
+                    .order_by(PromoCode.created_at.desc())
+                    .offset(normalized_page * normalized_page_size)
+                    .limit(normalized_page_size)
+                )
+            ).all()
+        )
+        return items, total
+
+    async def get_broadcast_code(self, promo_id: str) -> PromoCode:
+        promo = await self.session.get(PromoCode, promo_id)
+        now = utc_now()
+        if (
+            promo is None
+            or promo.assigned_user_id is not None
+            or not promo.is_active
+            or (promo.expires_at is not None and ensure_utc(promo.expires_at) <= now)
+            or (promo.usage_limit is not None and promo.used_count >= promo.usage_limit)
+            or len(promo.code) > 40
+        ):
+            raise ConflictError("Промокод больше недоступен для рассылки.")
+        return promo
 
     async def find_by_code(self, code: str) -> PromoCode | None:
         normalized = self.normalize_code(code)

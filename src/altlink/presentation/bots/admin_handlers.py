@@ -15,7 +15,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
@@ -78,8 +78,14 @@ from altlink.presentation.bots.admin_keyboards import (
     USER_START_SERVERS_PREFIX,
     USER_START_SERVER_ASSIGN_PREFIX,
     BROADCAST_AUDIENCE_PREFIX,
+    BROADCAST_PROMO_BACK,
+    BROADCAST_PROMO_CLEAR,
+    BROADCAST_PROMO_OPEN,
+    BROADCAST_PROMO_PAGE_PREFIX,
+    BROADCAST_PROMO_PICK_PREFIX,
     admin_menu,
     broadcast_media_actions,
+    broadcast_promo_picker_actions,
     database_backup_actions,
     database_import_confirmation_actions,
     database_import_prompt_actions,
@@ -1611,14 +1617,14 @@ async def send_client_bot_payload(
         await bot.send_voice(chat_id, voice=media, caption=text or None, **markup_kwargs)
         return
     if kind == "video_note":
-        await bot.send_video_note(chat_id, video_note=media, **markup_kwargs)
+        await bot.send_video_note(chat_id, video_note=media)
         if text:
-            await bot.send_message(chat_id, text)
+            await bot.send_message(chat_id, text, **markup_kwargs)
         return
     if kind == "sticker":
-        await bot.send_sticker(chat_id, sticker=media, **markup_kwargs)
+        await bot.send_sticker(chat_id, sticker=media)
         if text:
-            await bot.send_message(chat_id, text)
+            await bot.send_message(chat_id, text, **markup_kwargs)
         return
     raise ValueError(f"Unsupported attachment kind: {kind}")
 
@@ -1682,15 +1688,55 @@ async def show_broadcast_preview(
         else "нет"
     )
     audience = normalize_broadcast_audience(data.get("broadcast_audience"))
+    promo_code = data.get("broadcast_promo_code")
     preview_text = "Предпросмотр рассылки\n\n"
     if text:
         preview_text += f"{text}\n\n"
     preview_text += f"Вложение: {attachment_label}\n"
+    preview_text += f"Промокод: {promo_code or 'нет'}\n"
     preview_text += f"Аудитория: {broadcast_audience_label(audience)}"
     await render_admin(
         target,
         preview_text,
-        reply_markup=broadcast_preview_actions(audience).as_markup(),
+        reply_markup=broadcast_preview_actions(audience, promo_code=promo_code).as_markup(),
+        force_new=True,
+    )
+
+
+async def show_broadcast_promo_picker(
+    target: Message | CallbackQuery,
+    state: FSMContext,
+    container: AppContainer,
+    *,
+    page: int = 0,
+) -> None:
+    page_size = 6
+    normalized_page = max(int(page), 0)
+    async with container.hub() as hub:
+        items, total = await hub.promos.list_broadcast_codes(page=normalized_page, page_size=page_size)
+        total_pages = max((total + page_size - 1) // page_size, 1)
+        if normalized_page >= total_pages:
+            normalized_page = total_pages - 1
+            items, total = await hub.promos.list_broadcast_codes(page=normalized_page, page_size=page_size)
+    data = await state.get_data()
+    selected_code = data.get("broadcast_promo_code")
+    lines = ["Промокод для рассылки", ""]
+    if items:
+        lines.append("Выберите активный промокод из списка.")
+        lines.append(f"Страница {normalized_page + 1} из {total_pages}.")
+    else:
+        lines.append("Сейчас нет доступных промокодов.")
+    if selected_code:
+        lines.extend(["", f"Выбран: {selected_code}"])
+    await render_admin(
+        target,
+        "\n".join(lines),
+        reply_markup=broadcast_promo_picker_actions(
+            items,
+            page=normalized_page,
+            total_pages=total_pages,
+            selected_promo_id=data.get("broadcast_promo_id"),
+        ).as_markup(),
         force_new=True,
     )
 
@@ -1718,7 +1764,7 @@ async def admin_help(message: Message, container: AppContainer):
         "Пользователи: поиск по Telegram ID, @username, локальному UUID и Remnawave UUID.\n"
         "Карточка пользователя: подписка, баланс, online, удаление аккаунта и личные сообщения с любыми вложениями.\n"
         "Промокоды: создание и быстрый контроль активности.\n"
-        "Рассылка: сообщение всем пользователям с текстом, файлами, медиа, gif, голосовыми, кружками и стикерами.\n"
+        "Рассылка: сообщение всем пользователям с текстом, медиа и кнопкой применения выбранного промокода.\n"
         "Логи: последние системные события приложения.\n"
         "База данных: экспорт JSON backup и импорт с подтверждением через админ-бота.\n"
         "Техработы: ручное отключение клиентского бота и список исключений для тестовых пользователей.\n"
@@ -2798,6 +2844,8 @@ async def broadcast_prompt(message: Message, state: FSMContext, container: AppCo
         broadcast_attachment=None,
         broadcast_use_default=False,
         broadcast_audience="all",
+        broadcast_promo_id=None,
+        broadcast_promo_code=None,
     )
     await render_admin(
         message,
@@ -2856,6 +2904,60 @@ async def broadcast_text_only(callback: CallbackQuery, state: FSMContext, contai
     await show_broadcast_preview(callback, state, use_default_logo=False)
 
 
+@router.callback_query(F.data == BROADCAST_PROMO_OPEN)
+async def broadcast_promo_open(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await show_broadcast_promo_picker(callback, state, container)
+
+
+@router.callback_query(F.data.startswith(f"{BROADCAST_PROMO_PAGE_PREFIX}:"))
+async def broadcast_promo_page(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    try:
+        page = int((callback.data or "").rsplit(":", 1)[-1])
+    except ValueError:
+        page = 0
+    await show_broadcast_promo_picker(callback, state, container, page=page)
+
+
+@router.callback_query(F.data.startswith(f"{BROADCAST_PROMO_PICK_PREFIX}:"))
+async def broadcast_promo_pick(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    try:
+        promo_id = expand_callback_uuid((callback.data or "").rsplit(":", 1)[-1])
+        async with container.hub() as hub:
+            promo = await hub.promos.get_broadcast_code(promo_id)
+    except (ValueError, ConflictError):
+        await callback.answer("Промокод больше недоступен.", show_alert=True)
+        await show_broadcast_promo_picker(callback, state, container)
+        return
+    await state.update_data(broadcast_promo_id=promo.id, broadcast_promo_code=promo.code)
+    data = await state.get_data()
+    await show_broadcast_preview(callback, state, use_default_logo=bool(data.get("broadcast_use_default")))
+    await callback.answer(f"Выбран промокод {promo.code}")
+
+
+@router.callback_query(F.data == BROADCAST_PROMO_CLEAR)
+async def broadcast_promo_clear(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    await state.update_data(broadcast_promo_id=None, broadcast_promo_code=None)
+    data = await state.get_data()
+    await show_broadcast_preview(callback, state, use_default_logo=bool(data.get("broadcast_use_default")))
+    await callback.answer("Промокод убран")
+
+
+@router.callback_query(F.data == BROADCAST_PROMO_BACK)
+async def broadcast_promo_back(callback: CallbackQuery, state: FSMContext, container: AppContainer):
+    if not await is_admin(callback.from_user.id, container):
+        return
+    data = await state.get_data()
+    await show_broadcast_preview(callback, state, use_default_logo=bool(data.get("broadcast_use_default")))
+
+
 @router.callback_query(F.data == "admin:broadcast:cancel")
 async def broadcast_cancel(callback: CallbackQuery, state: FSMContext, container: AppContainer):
     if not await is_admin(callback.from_user.id, container):
@@ -2909,6 +3011,7 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
     attachment = data.get("broadcast_attachment")
     file_id = data.get("broadcast_file_id")
     use_default_logo = bool(data.get("broadcast_use_default"))
+    promo_id = data.get("broadcast_promo_id")
     audience = normalize_broadcast_audience(data.get("broadcast_audience"))
     if attachment is None and file_id:
         attachment = {
@@ -2926,6 +3029,13 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
     failure_examples: list[str] = []
 
     async with container.hub() as hub:
+        promo = None
+        if promo_id:
+            try:
+                promo = await hub.promos.get_broadcast_code(str(promo_id))
+            except ConflictError as exc:
+                await callback.answer(str(exc), show_alert=True)
+                return
         users = await hub.accounts.list_user_targets(audience_filter=audience)
         if not users:
             await callback.answer("Для выбранного фильтра нет получателей.", show_alert=True)
@@ -2933,6 +3043,20 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
         sent_count = 0
         failed_count = 0
         logo = broadcast_logo_path() if use_default_logo and not file_id else None
+        reply_markup = (
+            InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text=f"Применить {promo.code}",
+                            callback_data=f"client:promo_apply:{promo.code}",
+                        )
+                    ]
+                ]
+            )
+            if promo is not None
+            else None
+        )
         client_bot = Bot(token=container.settings.client_bot_token)
         try:
             for user in users:
@@ -2944,6 +3068,7 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
                         attachment=attachment,
                         attachment_bytes=attachment_bytes,
                         local_photo_path=logo,
+                        reply_markup=reply_markup,
                     )
                     sent_count += 1
                 except Exception as exc:  # noqa: BLE001
@@ -2967,6 +3092,8 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
                 "recipient_count": len(users),
                 "failure_reasons": dict(failure_counts),
                 "attachment_kind": attachment.get("kind") if attachment else ("photo" if logo is not None else None),
+                "promo_code_id": promo.id if promo is not None else None,
+                "promo_code": promo.code if promo is not None else None,
             },
         )
     await state.clear()
@@ -2978,6 +3105,8 @@ async def broadcast_confirm(callback: CallbackQuery, state: FSMContext, containe
         f"Отправлено: {sent_count}",
         f"Ошибок: {failed_count}",
     ]
+    if promo is not None:
+        lines.append(f"Промокод: {promo.code}")
     if failure_counts:
         lines.extend(["", "Почему часть сообщений не доставлена:"])
         for reason, count in failure_counts.most_common():

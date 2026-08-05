@@ -685,7 +685,8 @@ async def test_broadcast_confirm_uses_selected_audience_filter(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_broadcast_confirm_downloads_admin_photo_for_client_bot(monkeypatch):
-    sent_photos: list[tuple[str, int, str, str]] = []
+    sent_photos: list[tuple[str, int, str, str, str, str]] = []
+    promo = SimpleNamespace(id="promo-1", code="MAIL10")
 
     async def fake_is_admin(telegram_id: int, container) -> bool:
         return True
@@ -707,8 +708,18 @@ async def test_broadcast_confirm_downloads_admin_photo_for_client_bot(monkeypatc
         async def send_message(self, chat_id: int, text: str):
             raise AssertionError("text path should not be used")
 
-        async def send_photo(self, chat_id: int, photo, caption: str):
-            sent_photos.append((self.token, chat_id, caption, getattr(photo, "filename", "")))
+        async def send_photo(self, chat_id: int, photo, caption: str, reply_markup=None):
+            button = reply_markup.inline_keyboard[0][0]
+            sent_photos.append(
+                (
+                    self.token,
+                    chat_id,
+                    caption,
+                    getattr(photo, "filename", ""),
+                    button.text,
+                    button.callback_data,
+                )
+            )
 
         async def close(self):
             return None
@@ -732,6 +743,8 @@ async def test_broadcast_confirm_downloads_admin_photo_for_client_bot(monkeypatc
                 "broadcast_text": "photo update",
                 "broadcast_file_id": "photo-file-id",
                 "broadcast_use_default": False,
+                "broadcast_promo_id": promo.id,
+                "broadcast_promo_code": promo.code,
             }
 
         async def clear(self):
@@ -739,7 +752,10 @@ async def test_broadcast_confirm_downloads_admin_photo_for_client_bot(monkeypatc
 
     @asynccontextmanager
     async def fake_hub():
-        yield SimpleNamespace(accounts=SimpleNamespace(list_user_targets=fake_list_user_targets, log_event=fake_log_event))
+        yield SimpleNamespace(
+            accounts=SimpleNamespace(list_user_targets=fake_list_user_targets, log_event=fake_log_event),
+            promos=SimpleNamespace(get_broadcast_code=AsyncMock(return_value=promo)),
+        )
 
     container = SimpleNamespace(settings=SimpleNamespace(client_bot_token="client-token"), hub=fake_hub)
     monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
@@ -753,6 +769,8 @@ async def test_broadcast_confirm_downloads_admin_photo_for_client_bot(monkeypatc
     assert sent_photos[0][1] == 303
     assert sent_photos[0][2] == "photo update"
     assert sent_photos[0][3].startswith("broadcast-")
+    assert sent_photos[0][4] == "Применить MAIL10"
+    assert sent_photos[0][5] == "client:promo_apply:MAIL10"
 
 
 @pytest.mark.asyncio

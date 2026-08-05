@@ -224,3 +224,67 @@ async def test_repeat_trial_promo_is_not_consumed_while_access_is_active(test_se
 
     assert redemption is None
     assert promo.used_count == 0
+
+
+@pytest.mark.asyncio
+async def test_broadcast_promo_list_is_paginated_and_excludes_unavailable_codes(test_services):
+    async with test_services.hub() as hub:
+        valid_codes = []
+        for index in range(3):
+            valid_codes.append(
+                await hub.promos.create_code(
+                    code=f"MAIL{index}",
+                    name=f"Broadcast promo {index}",
+                    reward_kind=PromoRewardKind.PLAN_DISCOUNT,
+                    reward_value=Decimal("10"),
+                    usage_limit=10,
+                    expires_at=None,
+                    new_users_only=False,
+                    admin_id=None,
+                )
+            )
+        inactive = await hub.promos.create_code(
+            code="INACTIVE",
+            name="Inactive broadcast promo",
+            reward_kind=PromoRewardKind.BALANCE,
+            reward_value=Decimal("10"),
+            usage_limit=10,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+        )
+        inactive.is_active = False
+        expired = await hub.promos.create_code(
+            code="EXPIRED",
+            name="Expired broadcast promo",
+            reward_kind=PromoRewardKind.BALANCE,
+            reward_value=Decimal("10"),
+            usage_limit=10,
+            expires_at=utc_now() - timedelta(minutes=1),
+            new_users_only=False,
+            admin_id=None,
+        )
+        exhausted = await hub.promos.create_code(
+            code="EXHAUSTED",
+            name="Exhausted broadcast promo",
+            reward_kind=PromoRewardKind.BALANCE,
+            reward_value=Decimal("10"),
+            usage_limit=1,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+        )
+        exhausted.used_count = 1
+        await hub.session.flush()
+
+        first_page, total = await hub.promos.list_broadcast_codes(page=0, page_size=2)
+        second_page, second_total = await hub.promos.list_broadcast_codes(page=1, page_size=2)
+
+    visible_ids = {item.id for item in first_page + second_page}
+    assert total == second_total == 3
+    assert len(first_page) == 2
+    assert len(second_page) == 1
+    assert visible_ids == {item.id for item in valid_codes}
+    assert inactive.id not in visible_ids
+    assert expired.id not in visible_ids
+    assert exhausted.id not in visible_ids

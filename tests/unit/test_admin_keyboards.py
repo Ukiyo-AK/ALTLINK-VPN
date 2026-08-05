@@ -4,12 +4,16 @@ from types import SimpleNamespace
 
 from altlink.presentation.bots.admin_keyboards import (
     BROADCAST_AUDIENCE_PREFIX,
+    BROADCAST_PROMO_OPEN,
+    BROADCAST_PROMO_PAGE_PREFIX,
     SERVER_DELETE_CONFIRM_PREFIX,
     SERVER_DELETE_PREFIX,
     SERVER_OPEN_PREFIX,
     USER_START_SERVER_ASSIGN_PREFIX,
     USER_START_SERVERS_PREFIX,
     USERS_SYNC_NODE_ACCESS,
+    broadcast_media_actions,
+    broadcast_promo_picker_actions,
     broadcast_preview_actions,
     payment_browser_actions,
     payment_request_actions,
@@ -63,6 +67,27 @@ def test_broadcast_preview_actions_exposes_audience_filters():
     assert f"{BROADCAST_AUDIENCE_PREFIX}:unlimited_weekly" in callback_data
     assert "✓ Все Pro" in labels
     assert "Отправить выбранным" in labels
+
+
+def test_broadcast_actions_allow_selecting_and_paging_promo_codes():
+    promo_id = "609237c1-7ffb-4d76-9861-a14b7ddc8a6a"
+    media_buttons = inline_buttons(broadcast_media_actions().as_markup())
+    preview_buttons = inline_buttons(broadcast_preview_actions("all", promo_code="MAIL10").as_markup())
+    picker_buttons = inline_buttons(
+        broadcast_promo_picker_actions(
+            [SimpleNamespace(id=promo_id, code="MAIL10")],
+            page=1,
+            total_pages=3,
+            selected_promo_id=promo_id,
+        ).as_markup()
+    )
+
+    assert any(button.get("callback_data") == BROADCAST_PROMO_OPEN for button in media_buttons)
+    assert any(button["text"] == "Промокод: MAIL10" for button in preview_buttons)
+    assert any(button["text"] == "✓ MAIL10" for button in picker_buttons)
+    assert f"{BROADCAST_PROMO_PAGE_PREFIX}:0" in {button.get("callback_data") for button in picker_buttons}
+    assert f"{BROADCAST_PROMO_PAGE_PREFIX}:2" in {button.get("callback_data") for button in picker_buttons}
+    assert all(len(button.get("callback_data", "").encode("utf-8")) <= 64 for button in picker_buttons)
 
 
 def test_user_actions_styles_destructive_and_primary_buttons():
