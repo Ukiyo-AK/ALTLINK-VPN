@@ -90,6 +90,7 @@ class SupportRequestStatus(StrEnum):
 class PromoRewardKind(StrEnum):
     BALANCE = "balance"
     PLAN_DISCOUNT = "plan_discount"
+    REPEAT_TRIAL = "repeat_trial"
 
 
 class AccessStatus(StrEnum):

@@ -54,6 +54,55 @@
   </article>
 </section>
 
+<section class="panel stack">
+  <div class="split">
+    <div>
+      <h2>Создать промокод</h2>
+      <p class="muted">Повторный тест работает даже для пользователей, которые уже использовали пробный период.</p>
+    </div>
+    <span class="badge highlight">Редактор</span>
+  </div>
+  <form method="post" action="/admin/promos/create" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="grid-two">
+      <label>
+        <span>Код</span>
+        <input type="text" name="code" maxlength="64" required placeholder="RETURN2">
+      </label>
+      <label>
+        <span>Название</span>
+        <input type="text" name="name" maxlength="255" required placeholder="Повторный тест на 2 дня">
+      </label>
+      <label>
+        <span>Тип</span>
+        <select name="reward_kind" required>
+          <option value="balance">Бонус на баланс</option>
+          <option value="plan_discount">Скидка на тариф</option>
+          <option value="repeat_trial">Повторный тест</option>
+        </select>
+      </label>
+      <label>
+        <span>Размер награды</span>
+        <input type="number" name="reward_value" min="0.01" step="0.01" required value="2">
+        <small class="muted">Рубли для баланса, проценты для скидки или количество дней теста.</small>
+      </label>
+      <label>
+        <span>Лимит использований</span>
+        <input type="number" name="usage_limit" min="1" step="1" placeholder="Без ограничений">
+      </label>
+      <label>
+        <span>Действует до, МСК</span>
+        <input type="datetime-local" name="expires_at">
+      </label>
+    </div>
+    <label class="inline-form">
+      <input type="checkbox" name="new_users_only" value="1">
+      <span>Только для новых пользователей без транзакций</span>
+    </label>
+    <button type="submit" class="button">Создать промокод</button>
+  </form>
+</section>
+
 <section class="grid-two">
   <article class="panel chart-box">
     <div class="split">
@@ -81,7 +130,15 @@
         {% for item in manual_codes %}
         <tr>
           <td><code>{{ item.code }}</code></td>
-          <td>{{ 'Баланс' if item.reward_kind.value == 'balance' else 'Скидка ' ~ (item.reward_value|rub) ~ '%' }}</td>
+          <td>
+            {% if item.reward_kind.value == 'balance' %}
+              Баланс +{{ item.reward_value|rub }} ₽
+            {% elif item.reward_kind.value == 'plan_discount' %}
+              Скидка {{ item.reward_value|rub }}%
+            {% else %}
+              Повторный тест · {{ item.reward_value|int }} дн.
+            {% endif %}
+          </td>
           <td>{{ item.used_count }}/{{ item.usage_limit if item.usage_limit is not none else '∞' }}</td>
           <td>{{ 'активен' if item.is_active else 'отключён' }}</td>
         </tr>

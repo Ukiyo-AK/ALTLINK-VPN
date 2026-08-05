@@ -23,6 +23,7 @@ from altlink.domain.enums import (
     NotificationStatus,
     NotificationType,
     PlanCode,
+    PromoRewardKind,
     ServerType,
     SubscriptionStatus,
     SystemEventLevel,
@@ -182,7 +183,42 @@ class BillingService(BaseService):
         await self.session.flush()
         return user
 
-    async def activate_trial(self, user_id: str) -> Subscription:
+    async def redeem_promo_code(
+        self,
+        user_id: str,
+        code: str,
+    ) -> tuple[PromoCode, PromoCodeRedemption, str]:
+        promo = await self.promos.find_by_code(code)
+        if promo is None or promo.reward_kind != PromoRewardKind.REPEAT_TRIAL:
+            return await self.promos.redeem_code(user_id, code)
+
+        current = await self.accounts.get_current_subscription(user_id)
+        if current is not None:
+            raise ConflictError("Повторный тест можно активировать только после окончания текущего доступа.")
+
+        async with self.session.begin_nested():
+            promo, redemption, _ = await self.promos.redeem_code(user_id, code)
+            trial_days = int(Decimal(promo.reward_value))
+            subscription = await self.activate_trial(
+                user_id,
+                repeat_trial_promo=promo,
+                repeat_trial_redemption=redemption,
+                duration_days=trial_days,
+            )
+        return (
+            promo,
+            redemption,
+            f"Промокод применён. Повторный тест на {trial_days} дн. активирован.",
+        )
+
+    async def activate_trial(
+        self,
+        user_id: str,
+        *,
+        repeat_trial_promo: PromoCode | None = None,
+        repeat_trial_redemption: PromoCodeRedemption | None = None,
+        duration_days: int | None = None,
+    ) -> Subscription:
         user = await self.accounts.get_user(user_id)
         now = utc_now()
         current = await self.accounts.get_current_subscription(user_id)
@@ -193,16 +229,30 @@ class BillingService(BaseService):
         }:
             raise ConflictError("У пользователя уже есть активный доступ.")
 
+        repeat_trial_authorized = bool(
+            repeat_trial_promo is not None
+            and repeat_trial_promo.reward_kind == PromoRewardKind.REPEAT_TRIAL
+            and repeat_trial_redemption is not None
+            and repeat_trial_redemption.user_id == user.id
+            and repeat_trial_redemption.promo_code_id == repeat_trial_promo.id
+            and repeat_trial_redemption.applied_at is None
+        )
         existing_trial = await self.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user.id))
         if existing_trial and existing_trial.consumed:
-            promo_settings = await self._promo_campaign_settings()
-            cooldown_days = max(int(promo_settings["return_trial_cooldown_days"]), 0)
-            repeat_allowed_at = ensure_utc(existing_trial.ends_at) + timedelta(days=cooldown_days)
-            if not promo_settings["return_trial_enabled"] or now < repeat_allowed_at:
-                raise ConflictError("Тестовый период уже был использован.")
+            if not repeat_trial_authorized:
+                promo_settings = await self._promo_campaign_settings()
+                cooldown_days = max(int(promo_settings["return_trial_cooldown_days"]), 0)
+                repeat_allowed_at = ensure_utc(existing_trial.ends_at) + timedelta(days=cooldown_days)
+                if not promo_settings["return_trial_enabled"] or now < repeat_allowed_at:
+                    raise ConflictError("Тестовый период уже был использован.")
 
         plan = await self.accounts.get_plan(PlanCode.TRIAL)
-        ends_at = compute_period_end(now, self.settings.trial_duration_days or plan.period_days)
+        promo_duration_days = duration_days if repeat_trial_authorized else None
+        effective_duration_days = max(
+            int(promo_duration_days or self.settings.trial_duration_days or plan.period_days),
+            1,
+        )
+        ends_at = compute_period_end(now, effective_duration_days)
         subscription = Subscription(
             user_id=user.id,
             plan_id=plan.id,
@@ -234,11 +284,20 @@ class BillingService(BaseService):
         user.status = UserStatus.TRIAL
         await self.catalog.rebuild_user_access_matrix()
         await self._sync_user_remote_access(user, subscription, plan, enable=True, reset_traffic=True)
+        if repeat_trial_authorized and repeat_trial_redemption is not None:
+            await self.session.flush()
+            repeat_trial_redemption.applied_at = now
+            repeat_trial_redemption.applied_subscription_id = subscription.id
+            repeat_trial_redemption.reward_value_applied = Decimal(effective_duration_days)
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="trial_activated",
             message="Активирован тестовый период.",
-            payload={"user_id": user.id},
+            payload={
+                "user_id": user.id,
+                "duration_days": effective_duration_days,
+                "promo_code_id": repeat_trial_promo.id if repeat_trial_authorized and repeat_trial_promo else None,
+            },
         )
         return subscription
 

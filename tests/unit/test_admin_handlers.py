@@ -29,6 +29,24 @@ def test_parse_promo_payload_treats_expires_as_moscow_time():
     assert payload["expires_at"] == datetime(2026, 7, 8, 9, 30, tzinfo=UTC)
 
 
+def test_parse_promo_payload_supports_repeat_trial():
+    payload = admin_handlers.parse_promo_payload(
+        "\n".join(
+            [
+                "CODE=RETURN2",
+                "TYPE=repeat_trial",
+                "VALUE=2",
+                "USES=25",
+                "EXPIRES=*",
+            ]
+        )
+    )
+
+    assert payload["reward_kind"].value == "repeat_trial"
+    assert payload["reward_value"] == 2
+    assert payload["usage_limit"] == 25
+
+
 @pytest.mark.asyncio
 async def test_users_search_handles_reply_after_prompt(monkeypatch):
     bot = Bot("123456:ABCDEF")

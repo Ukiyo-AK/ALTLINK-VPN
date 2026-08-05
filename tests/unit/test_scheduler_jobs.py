@@ -48,6 +48,29 @@ async def test_user_abuse_monitor_job_ignores_many_active_ip_alerts(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_hwid_device_cleanup_job_uses_configured_retention_and_concurrency():
+    cleanup = AsyncMock(return_value={"devices_deleted": 1})
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            accounts=SimpleNamespace(cleanup_inactive_hwid_devices=cleanup),
+        )
+
+    container = SimpleNamespace(
+        hub=fake_hub,
+        settings=SimpleNamespace(
+            hwid_device_inactive_days=30,
+            hwid_device_cleanup_concurrency=6,
+        ),
+    )
+
+    await scheduler_jobs.hwid_device_cleanup_job(container)
+
+    cleanup.assert_awaited_once_with(inactive_days=30, concurrency=6)
+
+
+@pytest.mark.asyncio
 async def test_server_latency_job_uses_manual_domain_for_whitelist_servers(monkeypatch):
     calls: list[tuple[str, str | None, int | None]] = []
 

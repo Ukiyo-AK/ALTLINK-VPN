@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
 
 from altlink.application.services.base import ConflictError
-from altlink.domain.enums import BalanceTransactionType
-from altlink.infrastructure.db.models import BalanceTransaction
-from altlink.utils.time import utc_now
+from altlink.domain.enums import BalanceTransactionType, PromoRewardKind, SubscriptionStatus, UserStatus
+from altlink.infrastructure.db.models import BalanceTransaction, PromoCodeRedemption
+from altlink.utils.time import ensure_utc, utc_now
 
 
 @pytest.mark.asyncio
@@ -144,3 +145,82 @@ async def test_discount_promo_application_creates_visible_zero_value_transaction
     assert transaction.amount_rub == Decimal("0.00")
     assert promo.code in transaction.description
     assert trial_is_still_available is True
+
+
+@pytest.mark.asyncio
+async def test_repeat_trial_promo_reactivates_consumed_trial_for_configured_days(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=19506,
+            username="repeat_trial_promo",
+            first_name="Repeat",
+            last_name="Trial",
+            language_code="ru",
+        )
+        previous = await hub.billing.activate_trial(user.id)
+        previous.status = SubscriptionStatus.CANCELED
+        previous.canceled_at = utc_now()
+        user.status = UserStatus.CANCELED
+
+        with pytest.raises(ConflictError, match="уже был использован"):
+            await hub.billing.activate_trial(user.id)
+
+        promo = await hub.promos.create_code(
+            code="RETURN3",
+            name="Repeat trial for three days",
+            reward_kind=PromoRewardKind.REPEAT_TRIAL,
+            reward_value=Decimal("3"),
+            usage_limit=10,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+        )
+        activated_at = utc_now()
+        redeemed_promo, redemption, message = await hub.billing.redeem_promo_code(user.id, promo.code)
+        current = await hub.accounts.get_current_subscription(user.id)
+        refreshed_redemption = await hub.session.get(PromoCodeRedemption, redemption.id)
+
+    assert redeemed_promo.id == promo.id
+    assert current is not None
+    assert current.status == SubscriptionStatus.TRIAL
+    current_ends_at = ensure_utc(current.ends_at)
+    assert activated_at + timedelta(days=3) - timedelta(seconds=5) <= current_ends_at
+    assert current_ends_at <= activated_at + timedelta(days=3) + timedelta(seconds=5)
+    assert refreshed_redemption.applied_at is not None
+    assert refreshed_redemption.applied_subscription_id == current.id
+    assert refreshed_redemption.reward_value_applied == Decimal("3.00")
+    assert promo.used_count == 1
+    assert "Повторный тест на 3 дн. активирован" in message
+
+
+@pytest.mark.asyncio
+async def test_repeat_trial_promo_is_not_consumed_while_access_is_active(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=19507,
+            username="active_repeat_trial_promo",
+            first_name="Active",
+            last_name="Trial",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        promo = await hub.promos.create_code(
+            code="LATER2",
+            name="Repeat trial later",
+            reward_kind=PromoRewardKind.REPEAT_TRIAL,
+            reward_value=Decimal("2"),
+            usage_limit=1,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+        )
+
+        with pytest.raises(ConflictError, match="после окончания текущего доступа"):
+            await hub.billing.redeem_promo_code(user.id, promo.code)
+
+        redemption = await hub.session.scalar(
+            select(PromoCodeRedemption).where(PromoCodeRedemption.promo_code_id == promo.id)
+        )
+
+    assert redemption is None
+    assert promo.used_count == 0

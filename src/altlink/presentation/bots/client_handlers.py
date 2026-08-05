@@ -1296,12 +1296,13 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
     return "\n".join(lines)
 
 
-def profile_text(user, subscription, settings) -> str:
+def profile_text(user, subscription, settings, *, total_traffic_bytes: int = 0) -> str:
     plan_name = subscription.plan.name if subscription and subscription.plan else "не выбран"
     lines = [
         "👤 Профиль",
         "",
         f"💳 Баланс: {Decimal(user.balance_rub):.2f} ₽",
+        f"📊 Общий трафик: {max(int(total_traffic_bytes), 0) / 1024**3:.2f} ГБ",
         f"Тариф: {plan_name}",
     ]
     if subscription:
@@ -1869,11 +1870,18 @@ async def show_home(target: Message | CallbackQuery, container: AppContainer, hu
 async def show_profile(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
     user = await ensure_user(target.from_user, container, hub)
     await sync_visible_trial_state(hub, user.id)
+    await hub.billing.refresh_subscription_traffic(user.id)
     subscription = await hub.accounts.get_current_subscription(user.id)
+    total_traffic_bytes = await hub.accounts.get_user_total_traffic_bytes(user.id)
     portal_url = await create_portal_autologin_url(hub, container.settings, user.id)
     await send_card_with_optional_media(
         target,
-        profile_text(user, subscription, container.settings),
+        profile_text(
+            user,
+            subscription,
+            container.settings,
+            total_traffic_bytes=total_traffic_bytes,
+        ),
         primary_markup=profile_actions(
             agreement_url=agreement_url(container.settings),
             privacy_url=privacy_url(container.settings),
@@ -2988,7 +2996,7 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
             if user is None:
                 return
         try:
-            promo, _, result_text = await hub.promos.redeem_code(user.id, message.text or "")
+            promo, _, result_text = await hub.billing.redeem_promo_code(user.id, message.text or "")
         except ConflictError as exc:
             if promo_source == "onboarding":
                 await answer_or_edit(
@@ -3033,24 +3041,29 @@ async def promo_submit(message: Message, state: FSMContext, container: AppContai
 async def promo_apply_and_open_plans(callback: CallbackQuery, container: AppContainer):
     promo_code = (callback.data or "").split(":", 2)[-1]
     result_text: str
+    promo = None
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
         try:
-            promo, _, _ = await hub.promos.redeem_code(user.id, promo_code)
-            result_text = (
-                f"✅ Промокод <code>{html.escape(promo.code)}</code> активирован.\n"
-                f"Скидка {format_percent_compact(Decimal(promo.reward_value))} будет использована один раз "
-                "при ближайшей оплате тарифа, включая автоматическое продление."
-            )
+            promo, _, raw_result = await hub.billing.redeem_promo_code(user.id, promo_code)
+            if promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT:
+                result_text = (
+                    f"✅ Промокод <code>{html.escape(promo.code)}</code> активирован.\n"
+                    f"Скидка {format_percent_compact(Decimal(promo.reward_value))} будет использована один раз "
+                    "при ближайшей оплате тарифа, включая автоматическое продление."
+                )
+            else:
+                result_text = f"✅ {html.escape(raw_result)}"
         except ConflictError as exc:
             result_text = f"⚠️ {html.escape(str(exc))}"
 
+    show_plans = promo is not None and promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT
     await answer_or_edit(
         callback,
-        f"{result_text}\n\n{plan_menu_text()}",
-        reply_markup=plan_actions().as_markup(),
+        f"{result_text}\n\n{plan_menu_text()}" if show_plans else result_text,
+        reply_markup=plan_actions().as_markup() if show_plans else balance_actions().as_markup(),
         parse_mode="HTML",
     )
 
@@ -3633,7 +3646,7 @@ async def auto_redeem_plain_text_promo(message: Message, container: AppContainer
 
         complete_onboarding = needs_promo_onboarding(user, hub)
         try:
-            promo, _, result_text = await hub.promos.redeem_code(user.id, promo_code)
+            promo, _, result_text = await hub.billing.redeem_promo_code(user.id, promo_code)
         except ConflictError as exc:
             await answer_or_edit(message, str(exc), reply_markup=balance_actions().as_markup())
             return

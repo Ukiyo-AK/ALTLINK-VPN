@@ -172,6 +172,14 @@ async def online_job(container: AppContainer) -> None:
         await hub.online.refresh_online_cache(detailed=False)
 
 
+async def hwid_device_cleanup_job(container: AppContainer) -> None:
+    async with container.hub() as hub:
+        await hub.accounts.cleanup_inactive_hwid_devices(
+            inactive_days=container.settings.hwid_device_inactive_days,
+            concurrency=container.settings.hwid_device_cleanup_concurrency,
+        )
+
+
 async def user_abuse_monitor_job(container: AppContainer) -> None:
     admin_ids: list[int] = []
     alerts = []

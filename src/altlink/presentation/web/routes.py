@@ -6,7 +6,7 @@ import base64
 import json
 import re
 from datetime import UTC, datetime, time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -2136,6 +2136,52 @@ async def promos_settings_save(request: Request):
         return RedirectResponse("/admin/promos", status_code=303)
 
 
+@router.post("/admin/promos/create")
+async def promos_create(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            try:
+                reward_kind = PromoRewardKind(str(form.get("reward_kind") or ""))
+            except ValueError as exc:
+                raise ConflictError("Выберите корректный тип промокода.") from exc
+            try:
+                reward_value = Decimal(str(form.get("reward_value") or "").replace(",", "."))
+            except InvalidOperation as exc:
+                raise ConflictError("Укажите корректный размер награды.") from exc
+
+            usage_limit_raw = str(form.get("usage_limit") or "").strip()
+            try:
+                usage_limit = int(usage_limit_raw) if usage_limit_raw else None
+            except ValueError as exc:
+                raise ConflictError("Лимит использований должен быть целым числом.") from exc
+
+            try:
+                expires_at = parse_msk_datetime_input(str(form.get("expires_at") or ""))
+            except ConflictError as exc:
+                raise ConflictError("Некорректный срок действия промокода.") from exc
+
+            promo = await hub.promos.create_code(
+                code=str(form.get("code") or ""),
+                name=str(form.get("name") or ""),
+                reward_kind=reward_kind,
+                reward_value=reward_value,
+                usage_limit=usage_limit,
+                expires_at=expires_at,
+                new_users_only=form.get("new_users_only") == "1",
+                admin_id=admin.id,
+            )
+        except (ConflictError, InvalidOperation) as exc:
+            set_flash(request, str(exc), "danger")
+        else:
+            set_flash(request, f"Промокод {promo.code} создан.", "success")
+        return RedirectResponse("/admin/promos", status_code=303)
+
+
 @router.get("/admin/settings")
 async def settings_page(request: Request):
     async with request.app.state.container.hub() as hub:
@@ -2896,7 +2942,7 @@ async def portal_promo_apply(request: Request) -> JSONResponse:
         if user is None:
             return JSONResponse({"success": False, "message": "Нужно войти в кабинет."}, status_code=401)
         try:
-            promo, redemption, _ = await hub.promos.redeem_code(user.id, code)
+            promo, redemption, result_message = await hub.billing.redeem_promo_code(user.id, code)
         except (ConflictError, NotFoundError, ServiceError) as exc:
             return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
 
@@ -2904,9 +2950,12 @@ async def portal_promo_apply(request: Request) -> JSONResponse:
             applied = redemption.reward_value_applied or promo.reward_value
             message = f"Промокод применён. На баланс зачислено {format_rub_amount(applied)} ₽."
             payload = {"balance_delta": str(applied), "bonus": str(applied)}
-        else:
+        elif promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT:
             message = f"Промокод применён. Скидка {format_rub_amount(promo.reward_value)}% появится в ценах тарифа."
             payload = {"discount": str(promo.reward_value)}
+        else:
+            message = result_message
+            payload = {"trial_days": int(promo.reward_value), "trial_activated": True}
     return JSONResponse({"success": True, "message": message, **payload})
 
 

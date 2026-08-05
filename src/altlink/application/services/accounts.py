@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from collections.abc import Sequence
@@ -420,6 +421,14 @@ class AccountService(BaseService):
         ).all()
         return {str(user_id): int(value or 0) for user_id, value in rows}
 
+    async def get_user_total_traffic_bytes(self, user_id: str) -> int:
+        total = await self.session.scalar(
+            select(func.max(TrafficSnapshot.lifetime_used_bytes)).where(
+                TrafficSnapshot.user_id == user_id
+            )
+        )
+        return max(int(total or 0), 0)
+
     async def _load_user_list_node_traffic(self, user_ids: Sequence[str], node_id: str | None) -> dict[str, int]:
         if not user_ids or not node_id:
             return {}
@@ -689,6 +698,97 @@ class AccountService(BaseService):
         except Exception as exc:
             logger.warning("Failed to delete Remnawave HWID device for user %s.", user.id, exc_info=True)
             raise ConflictError("Не удалось удалить устройство. Попробуйте ещё раз чуть позже.") from exc
+
+    async def cleanup_inactive_hwid_devices(
+        self,
+        *,
+        inactive_days: int = 30,
+        concurrency: int = 8,
+    ) -> dict[str, int]:
+        summary = {
+            "users_scanned": 0,
+            "users_updated": 0,
+            "devices_deleted": 0,
+            "failed_users": 0,
+            "failed_deletions": 0,
+        }
+        if self.remnawave is None:
+            return summary
+
+        now = utc_now()
+        cutoff = now - timedelta(days=max(int(inactive_days), 1))
+        users = list(
+            (
+                await self.session.scalars(
+                    select(User).where(
+                        User.remnawave_user_uuid.is_not(None),
+                        User.remnawave_user_uuid != "",
+                    )
+                )
+            ).all()
+        )
+        summary["users_scanned"] = len(users)
+        semaphore = asyncio.Semaphore(max(int(concurrency), 1))
+
+        async def cleanup_remote_user(user: User) -> tuple[str, int | None, int, int]:
+            remote_user_uuid = user.remnawave_user_uuid
+            if not remote_user_uuid:
+                return user.id, None, 0, 0
+            async with semaphore:
+                try:
+                    devices = await self.remnawave.get_user_hwid_devices(remote_user_uuid)
+                except Exception:
+                    return user.id, None, 0, 0
+
+                remaining_devices = devices
+                deleted_count = 0
+                failed_deletions = 0
+                for device in devices:
+                    if ensure_utc(device.updatedAt) >= cutoff:
+                        continue
+                    try:
+                        remaining_devices = await self.remnawave.delete_user_hwid_device(
+                            remote_user_uuid,
+                            device.hwid,
+                        )
+                    except Exception:
+                        failed_deletions += 1
+                    else:
+                        deleted_count += 1
+                return user.id, len(remaining_devices), deleted_count, failed_deletions
+
+        results = await asyncio.gather(*(cleanup_remote_user(user) for user in users))
+        users_by_id = {user.id: user for user in users}
+        for user_id, remaining_count, deleted_count, failed_deletions in results:
+            if remaining_count is None:
+                summary["failed_users"] += 1
+                continue
+            user = users_by_id[user_id]
+            user.hwid_device_count = remaining_count
+            user.hwid_devices_checked_at = now
+            summary["users_updated"] += 1
+            summary["devices_deleted"] += deleted_count
+            summary["failed_deletions"] += failed_deletions
+
+        await self.session.flush()
+        if summary["failed_users"] or summary["failed_deletions"]:
+            logger.warning(
+                "Inactive HWID cleanup completed with errors: failed_users=%s, failed_deletions=%s.",
+                summary["failed_users"],
+                summary["failed_deletions"],
+            )
+        if summary["devices_deleted"] or summary["failed_users"] or summary["failed_deletions"]:
+            await self.log_event(
+                level=(
+                    SystemEventLevel.WARNING
+                    if summary["failed_users"] or summary["failed_deletions"]
+                    else SystemEventLevel.INFO
+                ),
+                event_type="inactive_hwid_devices_cleanup",
+                message="Завершена автоматическая очистка неактивных HWID-устройств.",
+                payload={**summary, "inactive_days": max(int(inactive_days), 1)},
+            )
+        return summary
 
     async def revoke_user_subscription_link(self, user_id: str) -> RemoteUser:
         user = await self.get_user(user_id)

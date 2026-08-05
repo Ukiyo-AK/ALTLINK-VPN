@@ -67,6 +67,10 @@ class PromoService(BaseService):
             raise ConflictError("Лимит использований должен быть больше нуля.")
         if reward_kind == PromoRewardKind.PLAN_DISCOUNT and Decimal(reward_value) > Decimal("100"):
             raise ConflictError("Скидка на тариф не может быть больше 100%.")
+        if reward_kind == PromoRewardKind.REPEAT_TRIAL:
+            trial_days = Decimal(reward_value)
+            if trial_days != trial_days.to_integral_value() or trial_days > Decimal("365"):
+                raise ConflictError("Количество дней повторного теста должно быть целым числом от 1 до 365.")
         if await self.find_by_code(normalized):
             raise ConflictError("Промокод с таким кодом уже существует.")
 
@@ -212,11 +216,12 @@ class PromoService(BaseService):
         redemption = PromoCodeRedemption(promo_code_id=promo.id, user_id=user.id)
         self.session.add(redemption)
         promo.used_count += 1
-        reward_description = (
-            f"скидка {Decimal(promo.reward_value):g}%"
-            if promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT
-            else f"бонус {quantize_money(Decimal(promo.reward_value)):g} ₽"
-        )
+        if promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT:
+            reward_description = f"скидка {Decimal(promo.reward_value):g}%"
+        elif promo.reward_kind == PromoRewardKind.REPEAT_TRIAL:
+            reward_description = f"повторный тест на {Decimal(promo.reward_value):g} дн."
+        else:
+            reward_description = f"бонус {quantize_money(Decimal(promo.reward_value)):g} ₽"
         await self.accounts.adjust_balance(
             user_id=user.id,
             amount_rub=Decimal("0"),
@@ -235,11 +240,16 @@ class PromoService(BaseService):
             redemption.applied_at = now
             redemption.reward_value_applied = amount
             result = f"Промокод применён. На баланс зачислено {amount:.2f} ₽."
-        else:
+        elif promo.reward_kind == PromoRewardKind.PLAN_DISCOUNT:
             result = (
                 f"Промокод {promo.code} активирован. "
                 f"Скидка {Decimal(promo.reward_value):.2f}% применится при следующей оплате тарифа, "
                 "включая автоматическое продление."
+            )
+        else:
+            result = (
+                f"Промокод {promo.code} активирован. "
+                f"Доступен повторный тест на {int(promo.reward_value)} дн."
             )
 
         await self.log_event(

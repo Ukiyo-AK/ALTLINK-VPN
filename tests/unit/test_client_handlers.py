@@ -333,9 +333,15 @@ def test_profile_text_keeps_only_key_details_and_links():
         next_billing_at=datetime(2026, 1, 1, 12, 0, 0),
     )
 
-    text = client_handlers.profile_text(user, subscription, settings)
+    text = client_handlers.profile_text(
+        user,
+        subscription,
+        settings,
+        total_traffic_bytes=12 * 1024**3,
+    )
 
     assert "💳 Баланс: 99.00 ₽" in text
+    assert "📊 Общий трафик: 12.00 ГБ" in text
     assert "Тариф: Pro" in text
     assert "Сайт: https://altlink.online" not in text
     assert "Кабинет: https://altlink.online/portal" not in text
@@ -1188,6 +1194,7 @@ async def test_personal_promo_button_applies_code_and_opens_plan_menu(monkeypatc
     promo = SimpleNamespace(
         code="ALT10-PERSONAL",
         reward_value=Decimal("10"),
+        reward_kind=PromoRewardKind.PLAN_DISCOUNT,
     )
     redeem_code = AsyncMock(return_value=(promo, SimpleNamespace(), "activated"))
 
@@ -1201,7 +1208,7 @@ async def test_personal_promo_button_applies_code_and_opens_plan_menu(monkeypatc
 
     @asynccontextmanager
     async def fake_hub():
-        yield SimpleNamespace(promos=SimpleNamespace(redeem_code=redeem_code))
+        yield SimpleNamespace(billing=SimpleNamespace(redeem_promo_code=redeem_code))
 
     monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
     monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)

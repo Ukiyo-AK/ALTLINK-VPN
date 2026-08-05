@@ -92,6 +92,9 @@ class Settings(BaseSettings):
     user_abuse_ip_fetch_poll_attempts: int = 5
     user_abuse_ip_fetch_poll_delay_seconds: float = 1.0
     user_abuse_hwid_fetch_concurrency: int = 8
+    hwid_device_cleanup_interval_minutes: int = 1440
+    hwid_device_inactive_days: int = 30
+    hwid_device_cleanup_concurrency: int = 8
     user_abuse_daily_traffic_gb: int = 50
     user_abuse_monthly_traffic_gb: int = 1024
     vless_keys_download_cooldown_seconds: int = 300

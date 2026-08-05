@@ -1334,11 +1334,12 @@ def format_promo_list(items) -> str:
         return "\n".join(lines)
 
     for item in items[:12]:
-        reward_label = (
-            f"баланс +{Decimal(item.reward_value):.2f} ₽"
-            if item.reward_kind == PromoRewardKind.BALANCE
-            else f"скидка {Decimal(item.reward_value):.2f}%"
-        )
+        if item.reward_kind == PromoRewardKind.BALANCE:
+            reward_label = f"баланс +{Decimal(item.reward_value):.2f} ₽"
+        elif item.reward_kind == PromoRewardKind.PLAN_DISCOUNT:
+            reward_label = f"скидка {Decimal(item.reward_value):.2f}%"
+        else:
+            reward_label = f"повторный тест на {int(item.reward_value)} дн."
         uses_label = (
             f"{item.used_count}/{item.usage_limit}"
             if item.usage_limit is not None
@@ -1363,8 +1364,8 @@ def promo_create_help_text() -> str:
         "Отправьте параметры одним сообщением, по одному в строке:\n"
         "CODE=START100\n"
         "NAME=Стартовый бонус\n"
-        "TYPE=balance или discount\n"
-        "VALUE=100\n"
+        "TYPE=balance, discount или repeat_trial\n"
+        "VALUE=100 (₽, %, либо количество дней)\n"
         "USES=50 или *\n"
         "EXPIRES=2026-05-31 23:59 МСК или *\n"
         "NEW_ONLY=yes или no"
@@ -1392,8 +1393,10 @@ def parse_promo_payload(raw_text: str) -> dict:
         reward_kind = PromoRewardKind.BALANCE
     elif type_raw in {"discount", "plan_discount", "tariff_discount"}:
         reward_kind = PromoRewardKind.PLAN_DISCOUNT
+    elif type_raw in {"trial", "repeat_trial", "return_trial", "retrial"}:
+        reward_kind = PromoRewardKind.REPEAT_TRIAL
     else:
-        raise ConflictError("TYPE должен быть balance или discount.")
+        raise ConflictError("TYPE должен быть balance, discount или repeat_trial.")
 
     value_raw = values.get("value")
     if value_raw is None:

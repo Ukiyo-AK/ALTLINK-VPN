@@ -48,6 +48,16 @@ def test_portal_login_template_uses_bot_confirm_flow_instead_of_widget():
     assert "portal-login-reload" in content
 
 
+def test_admin_promos_template_has_promo_editor_and_repeat_trial_type():
+    content = (TEMPLATE_ROOT / "promos.html").read_text(encoding="utf-8")
+
+    assert 'action="/admin/promos/create"' in content
+    assert 'name="reward_kind"' in content
+    assert 'value="repeat_trial"' in content
+    assert 'name="usage_limit"' in content
+    assert 'name="expires_at"' in content
+
+
 def test_portal_dashboard_template_supports_one_tap_copy_for_subscription_link():
     content = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
 

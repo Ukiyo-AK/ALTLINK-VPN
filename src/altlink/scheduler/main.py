@@ -10,6 +10,7 @@ from altlink.logging_config import configure_logging
 from altlink.presentation.bots.common import heartbeat_loop
 from altlink.scheduler.jobs import (
     billing_job,
+    hwid_device_cleanup_job,
     notifications_job,
     online_job,
     remnawave_health_job,
@@ -72,6 +73,14 @@ async def run_scheduler() -> None:
     )
     scheduler.add_job(online_job, "interval", minutes=settings.online_refresh_interval_minutes, args=[container])
     scheduler.add_job(
+        hwid_device_cleanup_job,
+        "interval",
+        minutes=settings.hwid_device_cleanup_interval_minutes,
+        args=[container],
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
         user_abuse_monitor_job,
         "interval",
         minutes=settings.user_abuse_monitor_interval_minutes,
@@ -87,6 +96,7 @@ async def run_scheduler() -> None:
         await run_startup_job(billing_job, container, "billing")
         await run_startup_job(traffic_job, container, "traffic")
         await run_startup_job(online_job, container, "online")
+        await run_startup_job(hwid_device_cleanup_job, container, "hwid_device_cleanup")
         await run_startup_job(user_abuse_monitor_job, container, "user_abuse_monitor")
         await run_startup_job(topups_job, container, "topups")
         await run_startup_job(notifications_job, container, "notifications")

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -146,6 +146,54 @@ async def test_list_users_for_admin_loads_visible_metrics_after_regular_sort(tes
     assert page.users[0].admin_total_traffic_bytes == 6 * 1024**3
     assert page.users[0].admin_whitelist_traffic_bytes == 2 * 1024**3
     assert page.users[0].admin_device_count == 1
+
+
+@pytest.mark.asyncio
+async def test_get_user_total_traffic_uses_lifetime_snapshots_and_defaults_to_zero(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=11036,
+            username="profile_total_traffic",
+            first_name="Profile",
+            last_name="Traffic",
+            language_code="ru",
+        )
+        empty_user = await hub.accounts.get_or_create_user(
+            telegram_id=11037,
+            username="profile_without_traffic",
+            first_name="No",
+            last_name="Traffic",
+            language_code="ru",
+        )
+        hub.session.add_all(
+            [
+                TrafficSnapshot(
+                    user_id=user.id,
+                    subscription_id=None,
+                    server_id=None,
+                    snapshot_date=date.today(),
+                    used_bytes=2 * 1024**3,
+                    lifetime_used_bytes=4 * 1024**3,
+                    source="test",
+                ),
+                TrafficSnapshot(
+                    user_id=user.id,
+                    subscription_id=None,
+                    server_id=None,
+                    snapshot_date=date.today(),
+                    used_bytes=3 * 1024**3,
+                    lifetime_used_bytes=7 * 1024**3,
+                    source="test",
+                ),
+            ]
+        )
+        await hub.session.flush()
+
+        total = await hub.accounts.get_user_total_traffic_bytes(user.id)
+        empty_total = await hub.accounts.get_user_total_traffic_bytes(empty_user.id)
+
+    assert total == 7 * 1024**3
+    assert empty_total == 0
 
 
 @pytest.mark.asyncio
@@ -322,6 +370,78 @@ async def test_hwid_devices_are_loaded_and_deleted_for_current_user_only(test_se
     assert first_after_delete.hwid_devices_checked_at is not None
     assert second_after_load.hwid_device_count == 1
     assert second_after_load.hwid_devices_checked_at is not None
+
+
+@pytest.mark.asyncio
+async def test_inactive_hwid_device_cleanup_deletes_only_devices_older_than_month(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=11033,
+            username="stale_device_user",
+            first_name="Stale",
+            last_name="Device",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        stale_device = test_services.remnawave.add_hwid_device(user.remnawave_user_uuid, hwid="stale-hwid")
+        recent_device = test_services.remnawave.add_hwid_device(user.remnawave_user_uuid, hwid="recent-hwid")
+        stale_device.updatedAt = datetime.now(UTC) - timedelta(days=31)
+        recent_device.updatedAt = datetime.now(UTC) - timedelta(days=29)
+
+        summary = await hub.accounts.cleanup_inactive_hwid_devices(inactive_days=30, concurrency=2)
+        remaining_devices = await test_services.remnawave.get_user_hwid_devices(user.remnawave_user_uuid)
+        refreshed_user = await hub.accounts.get_user(user.id)
+
+    assert [device.hwid for device in remaining_devices] == ["recent-hwid"]
+    assert refreshed_user.hwid_device_count == 1
+    assert refreshed_user.hwid_devices_checked_at is not None
+    assert summary == {
+        "users_scanned": 1,
+        "users_updated": 1,
+        "devices_deleted": 1,
+        "failed_users": 0,
+        "failed_deletions": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_inactive_hwid_device_cleanup_continues_when_one_user_fails(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        failing_user = await hub.accounts.get_or_create_user(
+            telegram_id=11034,
+            username="device_cleanup_failure",
+            first_name="Cleanup",
+            last_name="Failure",
+            language_code="ru",
+        )
+        healthy_user = await hub.accounts.get_or_create_user(
+            telegram_id=11035,
+            username="device_cleanup_healthy",
+            first_name="Cleanup",
+            last_name="Healthy",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(failing_user.id)
+        await hub.billing.activate_trial(healthy_user.id)
+        test_services.remnawave.add_hwid_device(healthy_user.remnawave_user_uuid, hwid="healthy-hwid")
+        original_get_devices = test_services.remnawave.get_user_hwid_devices
+
+        async def get_devices_with_failure(user_uuid: str):
+            if user_uuid == failing_user.remnawave_user_uuid:
+                raise httpx.ConnectError("Remnawave temporarily unavailable")
+            return await original_get_devices(user_uuid)
+
+        monkeypatch.setattr(test_services.remnawave, "get_user_hwid_devices", get_devices_with_failure)
+
+        summary = await hub.accounts.cleanup_inactive_hwid_devices(inactive_days=30, concurrency=2)
+        refreshed_healthy_user = await hub.accounts.get_user(healthy_user.id)
+
+    assert summary["users_scanned"] == 2
+    assert summary["users_updated"] == 1
+    assert summary["failed_users"] == 1
+    assert summary["devices_deleted"] == 0
+    assert refreshed_healthy_user.hwid_device_count == 1
+    assert refreshed_healthy_user.hwid_devices_checked_at is not None
 
 
 @pytest.mark.asyncio
