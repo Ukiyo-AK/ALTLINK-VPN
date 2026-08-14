@@ -1617,12 +1617,12 @@ async def send_client_bot_payload(
         await bot.send_voice(chat_id, voice=media, caption=text or None, **markup_kwargs)
         return
     if kind == "video_note":
-        await bot.send_video_note(chat_id, video_note=media)
+        await bot.send_video_note(chat_id, video_note=media, **({} if text else markup_kwargs))
         if text:
             await bot.send_message(chat_id, text, **markup_kwargs)
         return
     if kind == "sticker":
-        await bot.send_sticker(chat_id, sticker=media)
+        await bot.send_sticker(chat_id, sticker=media, **({} if text else markup_kwargs))
         if text:
             await bot.send_message(chat_id, text, **markup_kwargs)
         return

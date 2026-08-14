@@ -55,24 +55,18 @@ class PromoService(BaseService):
             or_(PromoCode.usage_limit.is_(None), PromoCode.used_count < PromoCode.usage_limit),
             func.length(PromoCode.code) <= 40,
         )
-        total = int(
-            await self.session.scalar(
-                select(func.count(PromoCode.id)).where(*filters)
-            )
-            or 0
-        )
-        items = list(
+        candidates = list(
             (
                 await self.session.scalars(
                     select(PromoCode)
                     .where(*filters)
                     .order_by(PromoCode.created_at.desc())
-                    .offset(normalized_page * normalized_page_size)
-                    .limit(normalized_page_size)
                 )
             ).all()
         )
-        return items, total
+        candidates = [promo for promo in candidates if self.is_broadcast_code_safe(promo.code)]
+        offset = normalized_page * normalized_page_size
+        return candidates[offset : offset + normalized_page_size], len(candidates)
 
     async def get_broadcast_code(self, promo_id: str) -> PromoCode:
         promo = await self.session.get(PromoCode, promo_id)
@@ -83,10 +77,15 @@ class PromoService(BaseService):
             or not promo.is_active
             or (promo.expires_at is not None and ensure_utc(promo.expires_at) <= now)
             or (promo.usage_limit is not None and promo.used_count >= promo.usage_limit)
-            or len(promo.code) > 40
+            or not self.is_broadcast_code_safe(promo.code)
         ):
             raise ConflictError("Промокод больше недоступен для рассылки.")
         return promo
+
+    @staticmethod
+    def is_broadcast_code_safe(code: str) -> bool:
+        callback_data = f"client:promo_apply:{code}"
+        return len(code) <= 40 and len(callback_data.encode("utf-8")) <= 64
 
     async def find_by_code(self, code: str) -> PromoCode | None:
         normalized = self.normalize_code(code)

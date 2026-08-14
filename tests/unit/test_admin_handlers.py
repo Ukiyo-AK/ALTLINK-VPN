@@ -1360,6 +1360,27 @@ async def test_send_client_bot_payload_attaches_reply_markup_to_text():
 
 
 @pytest.mark.asyncio
+async def test_send_client_bot_payload_keeps_promo_button_on_sticker_without_text():
+    sent: list[tuple[int, object]] = []
+    reply_markup = object()
+
+    class DummyBot:
+        async def send_sticker(self, chat_id: int, sticker, reply_markup=None):
+            sent.append((chat_id, reply_markup))
+
+    await admin_handlers.send_client_bot_payload(
+        DummyBot(),
+        405,
+        text="",
+        attachment={"kind": "sticker", "file_id": "sticker-id", "filename": "promo.webp"},
+        attachment_bytes=b"sticker",
+        reply_markup=reply_markup,
+    )
+
+    assert sent == [(405, reply_markup)]
+
+
+@pytest.mark.asyncio
 async def test_database_backup_export_sends_document(monkeypatch):
     sent_documents: list[tuple[str, str]] = []
     callback_answers: list[str] = []

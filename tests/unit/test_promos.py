@@ -275,6 +275,16 @@ async def test_broadcast_promo_list_is_paginated_and_excludes_unavailable_codes(
             admin_id=None,
         )
         exhausted.used_count = 1
+        unicode_too_long = await hub.promos.create_code(
+            code="Я" * 30,
+            name="Callback is too long in UTF-8",
+            reward_kind=PromoRewardKind.BALANCE,
+            reward_value=Decimal("10"),
+            usage_limit=10,
+            expires_at=None,
+            new_users_only=False,
+            admin_id=None,
+        )
         await hub.session.flush()
 
         first_page, total = await hub.promos.list_broadcast_codes(page=0, page_size=2)
@@ -288,3 +298,4 @@ async def test_broadcast_promo_list_is_paginated_and_excludes_unavailable_codes(
     assert inactive.id not in visible_ids
     assert expired.id not in visible_ids
     assert exhausted.id not in visible_ids
+    assert unicode_too_long.id not in visible_ids
