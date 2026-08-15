@@ -860,7 +860,14 @@ class AccountService(BaseService):
         admin_id: str | None = None,
         topup_request_id: str | None = None,
     ) -> BalanceTransaction:
-        user = await self.get_user(user_id)
+        user = await self.session.scalar(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if user is None:
+            raise NotFoundError("Пользователь не найден.")
         before = Decimal(user.balance_rub)
         after = before + Decimal(amount_rub)
         user.balance_rub = after

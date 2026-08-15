@@ -12,7 +12,7 @@ from altlink.domain.plans import (
 
 def test_weekly_single_server_price_is_rounded_to_clean_customer_value():
     assert SINGLE_10GBIT_MONTHLY_PRICE_RUB == Decimal("69")
-    assert SINGLE_10GBIT_WEEKLY_PRICE_RUB == Decimal("25")
+    assert SINGLE_10GBIT_WEEKLY_PRICE_RUB == Decimal("30")
 
 
 def test_weekly_unlimited_price_is_rounded_to_clean_customer_value():

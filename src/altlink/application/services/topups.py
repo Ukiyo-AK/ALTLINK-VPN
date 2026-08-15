@@ -222,7 +222,15 @@ class TopupService(BaseService):
         return item
 
     async def approve(self, request_id: str, admin_id: str | None, comment: str | None = None) -> TopupRequest:
-        item = await self.get_request(request_id)
+        item = await self.session.scalar(
+            select(TopupRequest)
+            .options(joinedload(TopupRequest.user))
+            .where(TopupRequest.id == request_id)
+            .with_for_update(of=TopupRequest)
+            .execution_options(populate_existing=True)
+        )
+        if item is None:
+            raise NotFoundError("Платёж не найден.")
         if item.status != TopupStatus.NEW:
             raise ConflictError("Подтвердить можно только новый платёж.")
         if admin_id is not None and self._request_provider(item) != "manual":
@@ -240,15 +248,20 @@ class TopupService(BaseService):
             admin_id=admin_id,
             topup_request_id=item.id,
         )
-        if (
-            self.catalog is not None
-            and Decimal(transaction.balance_before) <= START_WHITELIST_BALANCE_FLOOR_RUB
-            and Decimal(transaction.balance_after) > START_WHITELIST_BALANCE_FLOOR_RUB
-        ):
-            await self.catalog.rebuild_user_access_matrix()
         notification_message = topup_approved_message(Decimal(item.amount_rub))
         notification_payload: dict[str, str] | None = None
         current_subscription = await self.accounts.get_current_subscription(item.user_id)
+        legacy_whitelist_restored = (
+            Decimal(transaction.balance_before) <= START_WHITELIST_BALANCE_FLOOR_RUB
+            and Decimal(transaction.balance_after) > START_WHITELIST_BALANCE_FLOOR_RUB
+        )
+        versioned_whitelist_restored = bool(
+            current_subscription is not None
+            and int(current_subscription.whitelist_billing_version or 1) >= 2
+            and Decimal(transaction.balance_before) <= 0 < Decimal(transaction.balance_after)
+        )
+        if self.catalog is not None and (legacy_whitelist_restored or versioned_whitelist_restored):
+            await self.catalog.rebuild_user_access_matrix()
         if (
             current_subscription is not None
             and current_subscription.plan is not None

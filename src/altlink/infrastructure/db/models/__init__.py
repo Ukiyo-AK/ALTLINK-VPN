@@ -8,6 +8,7 @@ from altlink.infrastructure.db.models.billing import (
     Subscription,
     TopupRequest,
     TrialPeriod,
+    WhitelistPackagePurchase,
 )
 from altlink.infrastructure.db.models.catalog import Server, ServerInbound, UserServerAccess
 from altlink.infrastructure.db.models.integrations import ExternalApiClient
@@ -45,4 +46,5 @@ __all__ = [
     "TrialPeriod",
     "User",
     "UserServerAccess",
+    "WhitelistPackagePurchase",
 ]

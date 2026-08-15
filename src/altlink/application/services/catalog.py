@@ -11,7 +11,12 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.base import BaseService, ConflictError, NotFoundError, ServiceError
 from altlink.domain.enums import AccessStatus, PlanCode, ServerType, SubscriptionStatus, SystemEventLevel, UserStatus
-from altlink.domain.plans import START_WHITELIST_BALANCE_FLOOR_RUB, is_metered_plan_code, is_unlimited_plan_code
+from altlink.domain.plans import (
+    START_WHITELIST_BALANCE_FLOOR_RUB,
+    WHITELIST_BILLING_VERSION,
+    is_metered_plan_code,
+    is_unlimited_plan_code,
+)
 from altlink.domain.traffic_limits import effective_traffic_limit
 from altlink.infrastructure.db.models import (
     OnlineSessionCache,
@@ -568,11 +573,32 @@ class CatalogService(BaseService):
         servers: Sequence[Server],
     ) -> set[str]:
         available_servers = [server for server in servers if self._server_is_usable(server)]
-        if subscription.plan.code == PlanCode.TRIAL or is_unlimited_plan_code(subscription.plan.code):
+        if subscription.plan.code == PlanCode.TRIAL:
             return {server.id for server in available_servers}
 
-        if is_metered_plan_code(subscription.plan.code):
+        versioned_whitelist = int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION
+        if versioned_whitelist:
+            included_remaining = max(
+                int(subscription.whitelist_included_limit_bytes or 0)
+                - int(subscription.whitelist_included_consumed_bytes or 0),
+                0,
+            )
+            whitelist_allowed = bool(
+                included_remaining
+                or int(user.whitelist_extra_traffic_bytes or 0) > 0
+                or Decimal(user.balance_rub) > 0
+            )
+        else:
             whitelist_allowed = Decimal(user.balance_rub) > START_WHITELIST_BALANCE_FLOOR_RUB
+
+        if is_unlimited_plan_code(subscription.plan.code):
+            return {
+                server.id
+                for server in available_servers
+                if server.server_type != ServerType.WHITELIST or whitelist_allowed or not versioned_whitelist
+            }
+
+        if is_metered_plan_code(subscription.plan.code):
             desired_server_ids = (
                 {server.id for server in available_servers if server.server_type == ServerType.WHITELIST}
                 if whitelist_allowed

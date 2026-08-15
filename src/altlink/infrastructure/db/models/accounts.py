@@ -40,6 +40,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     language_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
     balance_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"), nullable=False)
+    whitelist_extra_traffic_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     status: Mapped[UserStatus] = mapped_column(enum_values(UserStatus), default=UserStatus.NEW, nullable=False)
     registration_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     consent_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

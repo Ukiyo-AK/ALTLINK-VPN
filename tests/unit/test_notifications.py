@@ -76,11 +76,11 @@ def test_blocked_message_can_explain_finished_grace_period():
 
 
 def test_start_whitelist_access_blocked_message_is_partial_access_warning():
-    message = start_whitelist_access_blocked_message(Decimal("-50"))
+    message = start_whitelist_access_blocked_message(Decimal("-10"))
 
     assert "белых списков" in message
     assert "Основной сервер Start продолжает работать" in message
-    assert "Текущий баланс: -50.00 ₽" in message
+    assert "Текущий баланс: -10.00 ₽" in message
     assert "Доступ к VPN заблокирован" not in message
 
 

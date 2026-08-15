@@ -389,6 +389,23 @@ def test_topup_checkout_actions_preserve_selected_plan_until_payment():
     assert plan_button["style"] == "primary"
 
 
+def test_topup_checkout_actions_preserve_whitelist_package_context():
+    markup = topup_checkout_actions(
+        payment_url="https://pay.example/demo",
+        request_id="req-whitelist",
+        can_check=True,
+        whitelist_topup=True,
+    ).as_markup()
+    buttons = inline_buttons(markup)
+
+    check_button = next(button for button in buttons if button["text"] == "🔎 Проверить оплату")
+    return_button = next(
+        button for button in buttons if button["text"] == "🛡 Вернуться к покупке пакета"
+    )
+    assert check_button["callback_data"] == "client:topup_check:req-whitelist:wl"
+    assert return_button["callback_data"] == "client:whitelist_packages"
+
+
 def test_device_list_actions_paginate_more_than_eight_devices():
     devices = [{"name": f"Device {index}"} for index in range(10)]
 

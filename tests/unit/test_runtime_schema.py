@@ -185,6 +185,80 @@ async def test_runtime_schema_adds_missing_topup_provider_columns(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_runtime_schema_adds_versioned_whitelist_billing_columns(tmp_path: Path):
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy_whitelist.db'}"
+    engine = create_async_engine(database_url, future=True)
+
+    async with engine.begin() as connection:
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                telegram_id BIGINT NOT NULL,
+                balance_rub NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                status VARCHAR(16) NOT NULL
+            )
+            """
+        )
+        await connection.exec_driver_sql(
+            """
+            CREATE TABLE subscriptions (
+                id TEXT PRIMARY KEY,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL,
+                user_id TEXT NOT NULL,
+                plan_id TEXT NOT NULL,
+                status VARCHAR(16) NOT NULL
+            )
+            """
+        )
+        await connection.exec_driver_sql(
+            """
+            INSERT INTO subscriptions (id, created_at, updated_at, user_id, plan_id, status)
+            VALUES ('legacy-sub', '2026-08-01 00:00:00', '2026-08-01 00:00:00', 'legacy-user', 'plan', 'active')
+            """
+        )
+
+    await ensure_runtime_schema(engine)
+
+    async with engine.begin() as connection:
+        user_columns = await connection.run_sync(
+            lambda sync_connection: {
+                column["name"]: column for column in inspect(sync_connection).get_columns("users")
+            }
+        )
+        subscription_columns = await connection.run_sync(
+            lambda sync_connection: {
+                column["name"]: column for column in inspect(sync_connection).get_columns("subscriptions")
+            }
+        )
+        table_names = await connection.run_sync(
+            lambda sync_connection: set(inspect(sync_connection).get_table_names())
+        )
+        legacy_row = (
+            await connection.exec_driver_sql(
+                "SELECT whitelist_billing_version, whitelist_usage_cursor_bytes "
+                "FROM subscriptions WHERE id = 'legacy-sub'"
+            )
+        ).one()
+
+    await engine.dispose()
+
+    assert "whitelist_extra_traffic_bytes" in user_columns
+    assert "whitelist_billing_version" in subscription_columns
+    assert "whitelist_included_limit_bytes" in subscription_columns
+    assert "whitelist_included_consumed_bytes" in subscription_columns
+    assert "whitelist_usage_cursor_bytes" in subscription_columns
+    assert "whitelist_traffic_accounted_bytes" in subscription_columns
+    assert "whitelist_notification_threshold" in subscription_columns
+    assert "whitelist_package_purchases" in table_names
+    assert legacy_row.whitelist_billing_version == 1
+    assert legacy_row.whitelist_usage_cursor_bytes == -1
+
+
+@pytest.mark.asyncio
 async def test_runtime_schema_adds_missing_server_inbound_access_type(tmp_path: Path):
     database_url = f"sqlite+aiosqlite:///{tmp_path / 'legacy_inbounds.db'}"
     engine = create_async_engine(database_url, future=True)

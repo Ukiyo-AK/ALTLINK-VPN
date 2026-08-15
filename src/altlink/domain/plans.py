@@ -6,12 +6,31 @@ from altlink.domain.enums import PlanCode
 
 GIGABYTE = 1024**3
 WHITELIST_GB_PRICE_RUB = Decimal("2")
-START_WHITELIST_BALANCE_FLOOR_RUB = Decimal("-50.00")
+START_WHITELIST_BALANCE_FLOOR_RUB = Decimal("-10.00")
+WHITELIST_BILLING_VERSION = 2
+
+WHITELIST_INCLUDED_GB_BY_PLAN = {
+    PlanCode.SINGLE_10GBIT: 5,
+    PlanCode.SINGLE_10GBIT_WEEKLY: 1,
+    PlanCode.UNLIMITED: 50,
+    PlanCode.UNLIMITED_WEEKLY: 10,
+}
+
+WHITELIST_TRAFFIC_PACKAGES = {
+    "25": {"gigabytes": 25, "price_rub": Decimal("45")},
+    "50": {"gigabytes": 50, "price_rub": Decimal("85")},
+    "100": {"gigabytes": 100, "price_rub": Decimal("159")},
+    "250": {"gigabytes": 250, "price_rub": Decimal("375")},
+}
+
+
+def whitelist_included_bytes(plan_code: PlanCode | None) -> int:
+    return int(WHITELIST_INCLUDED_GB_BY_PLAN.get(plan_code, 0)) * GIGABYTE
 
 SINGLE_10GBIT_MONTHLY_PRICE_RUB = Decimal("69")
 UNLIMITED_MONTHLY_PRICE_RUB = Decimal("199")
 # Weekly 10 Gbit is intentionally rounded to a clean customer-facing price.
-SINGLE_10GBIT_WEEKLY_PRICE_RUB = Decimal("25")
+SINGLE_10GBIT_WEEKLY_PRICE_RUB = Decimal("30")
 # Weekly Pro is also pinned to a clean customer-facing price.
 UNLIMITED_WEEKLY_PRICE_RUB = Decimal("65")
 
@@ -41,7 +60,7 @@ DEFAULT_PLAN_SEEDS = [
         "is_trial": False,
         "description": (
             "Один автоматически назначенный 10 Гбит сервер. "
-            "Серверы типа «Белые списки» доступны отдельно и тарифицируются по 2 ₽ за ГБ. "
+            "Включено 5 ГБ трафика белых списков, далее 2 ₽ за ГБ. "
             "Лимит — 2 устройства."
         ),
         "sort_order": 10,
@@ -56,8 +75,8 @@ DEFAULT_PLAN_SEEDS = [
         "is_trial": False,
         "description": (
             "Тот же доступ к 10 Гбит серверу, но с еженедельным списанием. "
-            "Серверы типа «Белые списки» доступны отдельно и тарифицируются по 2 ₽ за ГБ. "
-            "В пересчёте на месяц стоит на 30% дороже. Лимит — 2 устройства."
+            "Включён 1 ГБ трафика белых списков, далее 2 ₽ за ГБ. "
+            "Лимит — 2 устройства."
         ),
         "sort_order": 15,
     },
@@ -69,7 +88,7 @@ DEFAULT_PLAN_SEEDS = [
         "traffic_limit_bytes": None,
         "device_limit": 8,
         "is_trial": False,
-        "description": "Полный доступ ко всем активным серверам. Трафик на них не тарифицируется. Лимит — 8 устройств.",
+        "description": "Все активные серверы, 50 ГБ трафика белых списков, далее 2 ₽ за ГБ. Лимит — 8 устройств.",
         "sort_order": 20,
     },
     {
@@ -80,7 +99,7 @@ DEFAULT_PLAN_SEEDS = [
         "traffic_limit_bytes": None,
         "device_limit": 8,
         "is_trial": False,
-        "description": "Безлимит на все серверы с еженедельным списанием. В пересчёте на месяц стоит на 30% дороже. Лимит — 8 устройств.",
+        "description": "Все активные серверы, 10 ГБ трафика белых списков, далее 2 ₽ за ГБ. Лимит — 8 устройств.",
         "sort_order": 25,
     },
 ]

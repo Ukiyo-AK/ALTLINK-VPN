@@ -60,6 +60,12 @@ class Subscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     whitelist_traffic_used_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     whitelist_traffic_billed_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    whitelist_billing_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    whitelist_included_limit_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    whitelist_included_consumed_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    whitelist_usage_cursor_bytes: Mapped[int] = mapped_column(BigInteger, default=-1, nullable=False)
+    whitelist_traffic_accounted_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    whitelist_notification_threshold: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_traffic_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_notification_threshold: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     auto_renew: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -69,6 +75,28 @@ class Subscription(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user: Mapped["User"] = relationship(back_populates="subscriptions")
     plan: Mapped["Plan"] = relationship(back_populates="subscriptions")
     traffic_snapshots: Mapped[list["TrafficSnapshot"]] = relationship(back_populates="subscription")
+
+
+class WhitelistPackagePurchase(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "whitelist_package_purchases"
+    __table_args__ = (UniqueConstraint("request_key", name="uq_whitelist_package_purchase_request"),)
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    subscription_id: Mapped[str | None] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    request_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    package_code: Mapped[str] = mapped_column(String(16), nullable=False)
+    traffic_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    price_rub: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="completed", nullable=False)
+    balance_transaction_id: Mapped[str | None] = mapped_column(
+        ForeignKey("balance_transactions.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by_admin_id: Mapped[str | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class BalanceTransaction(UUIDPrimaryKeyMixin, TimestampMixin, Base):

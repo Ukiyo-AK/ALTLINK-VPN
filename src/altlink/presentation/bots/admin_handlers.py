@@ -971,6 +971,11 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         get_latest = getattr(hub.accounts, "get_latest_subscription", None)
         latest_subscription = await get_latest(user.id) if subscription is None and get_latest is not None else subscription
         activity_summary = await hub.online.get_user_activity_summary(user.id) if getattr(hub, "online", None) else None
+        whitelist_status = (
+            await hub.billing.get_whitelist_traffic_status(user.id)
+            if getattr(hub, "billing", None) is not None
+            else None
+        )
         registered = hub.accounts.is_registered(user)
         topups = card.get("topups", [])
         transactions = card.get("transactions", [])
@@ -1027,6 +1032,22 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
             lines.append(f"Белые списки: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ")
         if subscription.notes:
             lines.extend(["", f"Примечание: {subscription.notes}"])
+    if whitelist_status is not None:
+        billing_label = "legacy до продления" if whitelist_status.legacy else "новая схема"
+        lines.extend(
+            [
+                "",
+                f"Биллинг БС: {billing_label}",
+                (
+                    "Включённый БС-трафик: "
+                    f"{whitelist_status.included_used_bytes / BYTES_PER_GIB:.2f} / "
+                    f"{whitelist_status.included_limit_bytes / BYTES_PER_GIB:.2f} ГБ"
+                ),
+                f"Дополнительный БС-трафик: {whitelist_status.extra_remaining_bytes / BYTES_PER_GIB:.2f} ГБ",
+                f"Оплачено по факту: {whitelist_status.paid_cost_rub:.2f} ₽",
+                f"Доступ к БС: {'разрешён' if whitelist_status.access_allowed else 'приостановлен'}",
+            ]
+        )
     lines.extend([""] + format_activity_summary(activity_summary))
     text = "\n".join(lines)
     try:

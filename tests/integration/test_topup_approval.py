@@ -152,6 +152,38 @@ async def test_manual_topup_stays_pending_until_admin_approval(test_services):
 
 
 @pytest.mark.asyncio
+async def test_repeated_topup_approval_never_credits_balance_twice(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3018,
+            username="single_topup_credit",
+            first_name="Single",
+            last_name="Credit",
+            language_code="ru",
+        )
+        request = await hub.topups.create_request(user.id, Decimal("150"), auto_complete=False)
+        await hub.topups.approve(request.id, admin_id=None, comment="first approval")
+
+        with pytest.raises(ConflictError, match="только новый"):
+            await hub.topups.approve(request.id, admin_id=None, comment="repeated approval")
+
+        refreshed = await hub.accounts.get_user(user.id)
+        transactions = list(
+            (
+                await hub.session.scalars(
+                    select(BalanceTransaction).where(
+                        BalanceTransaction.user_id == user.id,
+                        BalanceTransaction.topup_request_id == request.id,
+                    )
+                )
+            ).all()
+        )
+
+    assert Decimal(refreshed.balance_rub) == Decimal("150.00")
+    assert len(transactions) == 1
+
+
+@pytest.mark.asyncio
 async def test_topup_checkout_stays_manual_by_default(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(

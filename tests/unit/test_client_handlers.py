@@ -317,7 +317,7 @@ def test_home_text_for_start_shows_whitelist_tariff_warning_and_totals():
     text = client_handlers.home_text(user, subscription, settings)
 
     assert "⚠️ Start: белые списки тарифицируются отдельно — 2 ₽/ГБ." in text
-    assert "При балансе -50 ₽ доступ к белым спискам временно закрывается." in text
+    assert "При балансе -10 ₽ доступ к белым спискам временно закрывается." in text
     assert "БС: 2.00 ГБ • учтено 4.00 ₽" in text
 
 
@@ -368,7 +368,7 @@ def test_profile_text_for_start_shows_whitelist_tariff_warning_and_totals():
     text = client_handlers.profile_text(user, subscription, settings)
 
     assert "⚠️ Start: белые списки тарифицируются отдельно — 2 ₽/ГБ." in text
-    assert "При балансе -50 ₽ доступ к белым спискам временно закрывается." in text
+    assert "При балансе -10 ₽ доступ к белым спискам временно закрывается." in text
     assert "БС: 2.00 ГБ • учтено 4.00 ₽" in text
 
 
@@ -655,7 +655,7 @@ def test_topup_menu_text_lists_tariff_prices():
 
     assert "Выберите сумму пополнения." in text
     assert "Ориентир по тарифам:" in text
-    assert "Start: 25 ₽ в неделю или 69 ₽ в месяц" in text
+    assert "Start: 30 ₽ в неделю или 69 ₽ в месяц" in text
     assert "Pro: 65 ₽ в неделю или 199 ₽ в месяц" in text
 
 
@@ -781,6 +781,57 @@ async def test_show_subscription_tolerates_missing_remote_subscription_info(test
     assert "Подписка" in str(message.answers[0]["text"])
     assert "Тариф" in str(message.answers[0]["text"])
     assert short_uuid is not None
+
+
+@pytest.mark.asyncio
+async def test_show_subscription_explains_legacy_whitelist_period(test_services):
+    message = DummyMessage(text="Подписка", user_id=21057)
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        await hub.accounts.complete_registration(user.id)
+        await hub.accounts.mark_channel_verified(user.id)
+        await hub.accounts.mark_promo_onboarding_completed(user.id)
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        subscription.whitelist_billing_version = 1
+
+    async with test_services.hub() as hub:
+        await client_handlers.show_subscription(message, test_services, hub)
+
+    assert len(message.answers) == 1
+    assert "Новые условия БС начнут действовать со следующего продления" in str(message.answers[0]["text"])
+
+
+@pytest.mark.asyncio
+async def test_legacy_user_cannot_open_whitelist_package_purchase(test_services):
+    callback = DummyCallback()
+    callback.from_user = SimpleNamespace(
+        id=21058,
+        username="legacy_packages",
+        first_name="Legacy",
+        last_name="Packages",
+        language_code="ru",
+    )
+
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_user(callback.from_user, test_services, hub)
+        await hub.accounts.complete_registration(user.id)
+        await hub.accounts.mark_channel_verified(user.id)
+        await hub.accounts.mark_promo_onboarding_completed(user.id)
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        subscription.whitelist_billing_version = 1
+
+    await client_handlers.whitelist_packages(callback, test_services)
+
+    assert callback.callback_answers == [
+        {
+            "text": "Пакеты станут доступны после ближайшего продления.",
+            "show_alert": True,
+            "url": None,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -1179,9 +1230,9 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "До 8 устройств" in text
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "серверы со скоростью до 10 Гбит/с" in text
-    assert "🛡️ Белые списки отдельно: 2 ₽ за 1 ГБ" in text
-    assert "лимит долга -50 ₽" not in text
-    assert "🛡️ Поддержка режима белых списков" in text
+    assert "🛡️ БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ" in text
+    assert "🛡️ БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ" in text
+    assert "лимит долга -10 ₽" not in text
     assert "⚡ — высокоскоростной сервер" in text
     assert "«БС» — сервер белых списков" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
@@ -1260,7 +1311,7 @@ async def test_plan_family_menu_uses_updated_copy(monkeypatch):
     assert "До 8 устройств" in text
     assert "Безлимитный трафик на всех серверах" in text
     assert "Разные локации для выбора под ваш маршрут" in text
-    assert "🛡️ Поддержка режима белых списков" in text
+    assert "🛡️ Включено 10 ГБ БС на неделю или 50 ГБ на месяц, затем 2 ₽/ГБ" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
     assert "ALTLINK помогает вернуть доступ к привычным сервисам!" in text
 
@@ -1302,8 +1353,8 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     assert "⚡ Один случайный высокоскоростной сервер" in text
     assert "В интерфейсе он отмечен ⚡" in text
     assert "Что такое режим белых списков" in text
-    assert "2 ₽ за 1 ГБ" in text
-    assert "При балансе -50 ₽" not in text
+    assert "1 ГБ БС на неделю или 5 ГБ на месяц, затем 2 ₽/ГБ" in text
+    assert "При балансе -10 ₽" not in text
 
 
 @pytest.mark.asyncio

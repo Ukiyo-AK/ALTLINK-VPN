@@ -45,7 +45,14 @@ from altlink.domain.notifications import (
     trial_ended_message,
     trial_setup_help_message,
 )
-from altlink.domain.plans import START_WHITELIST_BALANCE_FLOOR_RUB, WHITELIST_GB_PRICE_RUB, is_metered_plan_code
+from altlink.domain.plans import (
+    START_WHITELIST_BALANCE_FLOOR_RUB,
+    WHITELIST_BILLING_VERSION,
+    WHITELIST_GB_PRICE_RUB,
+    WHITELIST_TRAFFIC_PACKAGES,
+    is_metered_plan_code,
+    whitelist_included_bytes,
+)
 from altlink.domain.traffic_limits import BYTES_PER_GIB, effective_traffic_limit, parse_traffic_limit_strategy
 from altlink.infrastructure.db.models import (
     OnlineSessionCache,
@@ -59,6 +66,7 @@ from altlink.infrastructure.db.models import (
     TrafficSnapshot,
     TrialPeriod,
     User,
+    WhitelistPackagePurchase,
 )
 from altlink.utils.time import ensure_utc, utc_now
 
@@ -102,6 +110,27 @@ class PaidPlanActivationQuote:
     required_topup_rub: Decimal
 
 
+@dataclass(frozen=True, slots=True)
+class WhitelistTrafficStatus:
+    billing_version: int
+    legacy: bool
+    included_limit_bytes: int
+    included_used_bytes: int
+    included_remaining_bytes: int
+    extra_remaining_bytes: int
+    paid_bytes: int
+    total_used_bytes: int
+    price_per_gb_rub: Decimal
+    balance_rub: Decimal
+    access_allowed: bool
+    period_ends_at: datetime | None
+    period_starts_at: datetime | None = None
+
+    @property
+    def paid_cost_rub(self) -> Decimal:
+        return bytes_to_gb_cost(self.paid_bytes, self.price_per_gb_rub)
+
+
 class BillingService(BaseService):
     source = "billing"
 
@@ -121,6 +150,190 @@ class BillingService(BaseService):
         self.catalog = catalog
         self.notifications = notifications
         self.promos = promos
+
+    async def get_whitelist_traffic_status(self, user_id: str) -> WhitelistTrafficStatus:
+        user = await self.accounts.get_user(user_id)
+        subscription = await self.accounts.get_current_subscription(user_id)
+        if subscription is None or subscription.plan is None:
+            return WhitelistTrafficStatus(
+                1, True, 0, 0, 0, max(int(user.whitelist_extra_traffic_bytes or 0), 0),
+                0, 0, WHITELIST_GB_PRICE_RUB, Decimal(user.balance_rub), False, None,
+            )
+        version = int(subscription.whitelist_billing_version or 1)
+        limit_bytes = (
+            max(int(subscription.whitelist_included_limit_bytes or 0), 0)
+            if version >= WHITELIST_BILLING_VERSION
+            else whitelist_included_bytes(subscription.plan.code)
+        )
+        used_bytes = max(int(subscription.whitelist_traffic_used_bytes or 0), 0)
+        included_used = (
+            min(max(int(subscription.whitelist_included_consumed_bytes or 0), 0), limit_bytes)
+            if version >= WHITELIST_BILLING_VERSION
+            else 0
+        )
+        included_remaining = max(limit_bytes - included_used, 0)
+        extra_remaining = max(int(user.whitelist_extra_traffic_bytes or 0), 0)
+        balance = Decimal(user.balance_rub)
+        access_allowed = version < WHITELIST_BILLING_VERSION or bool(
+            included_remaining or extra_remaining or balance > 0
+        )
+        return WhitelistTrafficStatus(
+            version, version < WHITELIST_BILLING_VERSION, limit_bytes, included_used,
+            included_remaining, extra_remaining, max(int(subscription.whitelist_traffic_billed_bytes or 0), 0),
+            used_bytes, WHITELIST_GB_PRICE_RUB, balance, access_allowed, subscription.ends_at,
+            subscription.started_at,
+        )
+
+    async def purchase_whitelist_package(
+        self,
+        user_id: str,
+        package_code: str,
+        *,
+        request_key: str,
+        admin_id: str | None = None,
+        reason: str | None = None,
+    ) -> WhitelistPackagePurchase:
+        package = WHITELIST_TRAFFIC_PACKAGES.get(str(package_code))
+        if package is None:
+            raise ConflictError("Неизвестный пакет трафика белых списков.")
+        request_key = str(request_key or "").strip()
+        if not request_key or len(request_key) > 64:
+            raise ConflictError("Некорректный ключ операции покупки.")
+        user = await self.session.scalar(select(User).where(User.id == user_id).with_for_update())
+        if user is None:
+            raise NotFoundError("Пользователь не найден.")
+        existing = await self.session.scalar(
+            select(WhitelistPackagePurchase).where(WhitelistPackagePurchase.request_key == request_key)
+        )
+        if existing is not None:
+            if existing.user_id != user_id or existing.package_code != str(package_code):
+                raise ConflictError("Ключ покупки уже использован.")
+            return existing
+        subscription = await self.accounts.get_current_subscription(user_id)
+        if subscription is None or subscription.plan is None or subscription.plan.is_trial:
+            raise ConflictError("Пакеты доступны только при активном платном тарифе.")
+        if int(subscription.whitelist_billing_version or 1) < WHITELIST_BILLING_VERSION:
+            raise ConflictError("Пакеты станут доступны после ближайшего продления тарифа.")
+        price = Decimal(package["price_rub"])
+        if admin_id is None and Decimal(user.balance_rub) < price:
+            missing = quantize_money(price - Decimal(user.balance_rub))
+            raise ConflictError(f"Для покупки не хватает {missing:.2f} ₽.")
+        transaction = None
+        if admin_id is None:
+            transaction = await self.accounts.adjust_balance(
+                user_id=user.id,
+                amount_rub=-price,
+                transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
+                description=f"Пакет БС +{package['gigabytes']} ГБ",
+            )
+        traffic_bytes = int(package["gigabytes"]) * 1024**3
+        user.whitelist_extra_traffic_bytes = max(int(user.whitelist_extra_traffic_bytes or 0), 0) + traffic_bytes
+        purchase = WhitelistPackagePurchase(
+            user_id=user.id,
+            subscription_id=subscription.id,
+            request_key=request_key,
+            package_code=str(package_code),
+            traffic_bytes=traffic_bytes,
+            price_rub=Decimal("0") if admin_id is not None else price,
+            balance_transaction_id=transaction.id if transaction is not None else None,
+            created_by_admin_id=admin_id,
+            reason=reason,
+        )
+        self.session.add(purchase)
+        await self.session.flush()
+        await self.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="whitelist_traffic_package_purchased",
+            message="Пользователю начислен пакет трафика белых списков.",
+            payload={
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "purchase_id": purchase.id,
+                "package_code": str(package_code),
+                "traffic_bytes": traffic_bytes,
+                "price_rub": str(purchase.price_rub),
+            },
+            actor_admin_id=admin_id,
+        )
+        await self.catalog.rebuild_user_access_matrix()
+        return purchase
+
+    async def grant_whitelist_traffic(
+        self,
+        user_id: str,
+        *,
+        gigabytes: Decimal,
+        request_key: str,
+        admin_id: str,
+        reason: str,
+    ) -> WhitelistPackagePurchase:
+        amount_gb = Decimal(str(gigabytes))
+        if not amount_gb.is_finite() or amount_gb <= 0 or amount_gb > Decimal("1000000"):
+            raise ConflictError("Укажите количество трафика от 0 до 1 000 000 ГБ.")
+        clean_reason = str(reason or "").strip()
+        if not clean_reason:
+            raise ConflictError("Укажите причину административного начисления.")
+
+        user = await self.session.scalar(select(User).where(User.id == user_id).with_for_update())
+        if user is None:
+            raise NotFoundError("Пользователь не найден.")
+        existing = await self.session.scalar(
+            select(WhitelistPackagePurchase).where(WhitelistPackagePurchase.request_key == request_key)
+        )
+        if existing is not None:
+            if existing.user_id != user_id:
+                raise ConflictError("Ключ операции уже использован.")
+            return existing
+
+        subscription = await self.accounts.get_current_subscription(user_id)
+        traffic_bytes = int(amount_gb * Decimal(1024**3))
+        user.whitelist_extra_traffic_bytes = max(int(user.whitelist_extra_traffic_bytes or 0), 0) + traffic_bytes
+        purchase = WhitelistPackagePurchase(
+            user_id=user.id,
+            subscription_id=subscription.id if subscription is not None else None,
+            request_key=request_key,
+            package_code="admin",
+            traffic_bytes=traffic_bytes,
+            price_rub=Decimal("0"),
+            created_by_admin_id=admin_id,
+            reason=clean_reason[:2000],
+        )
+        self.session.add(purchase)
+        await self.session.flush()
+        await self.log_event(
+            level=SystemEventLevel.INFO,
+            event_type="whitelist_traffic_admin_granted",
+            message="Администратор начислил дополнительный трафик белых списков.",
+            payload={
+                "user_id": user.id,
+                "telegram_id": user.telegram_id,
+                "traffic_bytes": traffic_bytes,
+                "gigabytes": str(amount_gb),
+                "reason": clean_reason,
+                "purchase_id": purchase.id,
+            },
+            actor_admin_id=admin_id,
+        )
+        await self.catalog.rebuild_user_access_matrix()
+        return purchase
+
+    async def list_whitelist_package_purchases(
+        self,
+        user_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[WhitelistPackagePurchase]:
+        safe_limit = min(max(int(limit), 1), 200)
+        return list(
+            (
+                await self.session.scalars(
+                    select(WhitelistPackagePurchase)
+                    .where(WhitelistPackagePurchase.user_id == user_id)
+                    .order_by(WhitelistPackagePurchase.created_at.desc())
+                    .limit(safe_limit)
+                )
+            ).all()
+        )
 
     async def set_user_traffic_limit(
         self,
@@ -309,6 +522,14 @@ class BillingService(BaseService):
         charge_user: bool = True,
         admin_id: str | None = None,
     ) -> Subscription:
+        locked_user = await self.session.scalar(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if locked_user is None:
+            raise NotFoundError("Пользователь не найден.")
         quote = await self.quote_paid_plan_activation(
             user_id,
             plan_code,
@@ -353,6 +574,15 @@ class BillingService(BaseService):
 
         now = utc_now()
         ends_at = compute_period_end(now, plan.period_days)
+        included_limit_bytes = whitelist_included_bytes(plan.code)
+        carried_included_used_bytes = self._carried_whitelist_included_usage(existing)
+        carried_notification_threshold = (
+            100
+            if included_limit_bytes > 0 and carried_included_used_bytes >= included_limit_bytes
+            else 80
+            if included_limit_bytes > 0 and carried_included_used_bytes * 100 >= included_limit_bytes * 80
+            else 0
+        )
         notes: list[str] = []
         if discount_promo is not None and discount_rub > 0:
             notes.append(f"Промокод {discount_promo.code}: скидка {discount_rub:.2f} ₽.")
@@ -368,8 +598,14 @@ class BillingService(BaseService):
             accrued_debt_rub=Decimal("0"),
             traffic_limit_bytes=plan.traffic_limit_bytes,
             traffic_used_bytes=existing.traffic_used_bytes if existing else 0,
-            whitelist_traffic_used_bytes=existing.whitelist_traffic_used_bytes if existing else 0,
-            whitelist_traffic_billed_bytes=existing.whitelist_traffic_billed_bytes if existing else 0,
+            whitelist_traffic_used_bytes=0,
+            whitelist_traffic_billed_bytes=0,
+            whitelist_billing_version=WHITELIST_BILLING_VERSION,
+            whitelist_included_limit_bytes=included_limit_bytes,
+            whitelist_included_consumed_bytes=carried_included_used_bytes,
+            whitelist_usage_cursor_bytes=-1,
+            whitelist_traffic_accounted_bytes=0,
+            whitelist_notification_threshold=carried_notification_threshold,
             last_traffic_reset_at=existing.last_traffic_reset_at if existing else now,
             auto_renew=True,
             notes=" ".join(notes) or None,
@@ -393,7 +629,7 @@ class BillingService(BaseService):
             enable=True,
             reset_traffic=not preserve_traffic_on_switch,
         )
-        if remote_user is not None and preserve_traffic_on_switch:
+        if remote_user is not None:
             if await self._apply_remote_usage(user, subscription, remote_user):
                 await self.catalog.rebuild_user_access_matrix()
                 await self._sync_user_remote_access(
@@ -421,6 +657,9 @@ class BillingService(BaseService):
                 "upfront_charge": str(upfront_charge),
                 "discount_rub": str(discount_rub),
                 "carryover_credit_rub": str(carryover_credit_rub),
+                "whitelist_billing_version": subscription.whitelist_billing_version,
+                "whitelist_included_limit_bytes": subscription.whitelist_included_limit_bytes,
+                "whitelist_included_usage_carried_bytes": carried_included_used_bytes,
             },
             actor_admin_id=admin_id,
         )
@@ -505,6 +744,12 @@ class BillingService(BaseService):
             raise ConflictError("Для тестового периода используйте отдельный сценарий.")
 
         existing = await self.accounts.get_current_subscription(user_id)
+        if (
+            existing is not None
+            and existing.plan is not None
+            and existing.plan.code == plan.code
+        ):
+            raise ConflictError("Этот тариф уже активен.")
         discount_rub = Decimal("0.00")
         discount_promo = None
         discount_redemption = None
@@ -728,7 +973,12 @@ class BillingService(BaseService):
             return False
 
         whitelist_access_changed = False
-        if is_metered_plan_code(plan.code):
+        if (
+            is_metered_plan_code(plan.code)
+            or int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION
+        ):
+            if int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION:
+                subscription, user = await self._lock_versioned_whitelist_rows(subscription, user)
             await self._refresh_whitelist_usage(user, subscription)
             whitelist_access_changed = await self._apply_instant_whitelist_charges(user, subscription)
 
@@ -788,6 +1038,8 @@ class BillingService(BaseService):
                 enable=True,
                 reset_traffic=True,
             )
+            if remote_user is not None:
+                await self._apply_remote_usage(user, subscription, remote_user)
             self._ensure_remote_expiration_synced(remote_user, subscription.ends_at)
             if discount_redemption is not None and discount_rub > 0:
                 await self.promos.consume_discount(
@@ -811,6 +1063,8 @@ class BillingService(BaseService):
                     "renewed_early": renewed_early,
                     "previous_ends_at": previous_ends_at.isoformat(),
                     "ends_at": subscription.ends_at.isoformat(),
+                    "whitelist_billing_version": subscription.whitelist_billing_version,
+                    "whitelist_included_limit_bytes": subscription.whitelist_included_limit_bytes,
                 },
             )
             return True
@@ -907,7 +1161,10 @@ class BillingService(BaseService):
                     user.remnawave_user_uuid
                     and subscription is not None
                     and subscription.plan is not None
-                    and is_metered_plan_code(subscription.plan.code)
+                    and (
+                        is_metered_plan_code(subscription.plan.code)
+                        or int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION
+                    )
                 )
             }
         )
@@ -1027,6 +1284,12 @@ class BillingService(BaseService):
         subscription.traffic_used_bytes = 0
         subscription.whitelist_traffic_used_bytes = 0
         subscription.whitelist_traffic_billed_bytes = 0
+        subscription.whitelist_billing_version = WHITELIST_BILLING_VERSION
+        subscription.whitelist_included_limit_bytes = whitelist_included_bytes(plan.code)
+        subscription.whitelist_included_consumed_bytes = 0
+        subscription.whitelist_usage_cursor_bytes = -1
+        subscription.whitelist_traffic_accounted_bytes = 0
+        subscription.whitelist_notification_threshold = 0
         subscription.last_traffic_reset_at = utc_now()
 
     async def _refresh_whitelist_usage(
@@ -1039,7 +1302,10 @@ class BillingService(BaseService):
         if self.remnawave is None or not user.remnawave_user_uuid:
             return
         if preloaded_usage_by_remote_uuid is not None and user.remnawave_user_uuid in preloaded_usage_by_remote_uuid:
-            subscription.whitelist_traffic_used_bytes = max(preloaded_usage_by_remote_uuid[user.remnawave_user_uuid], 0)
+            self._record_whitelist_usage_observation(
+                subscription,
+                preloaded_usage_by_remote_uuid[user.remnawave_user_uuid],
+            )
             return
 
         whitelist_node_ids = await self._get_whitelist_node_ids()
@@ -1050,7 +1316,7 @@ class BillingService(BaseService):
             {user.remnawave_user_uuid: ensure_utc(subscription.started_at).date()}
         )
         if user.remnawave_user_uuid in totals_by_user:
-            subscription.whitelist_traffic_used_bytes = max(totals_by_user[user.remnawave_user_uuid], 0)
+            self._record_whitelist_usage_observation(subscription, totals_by_user[user.remnawave_user_uuid])
             return
         usage = await self.remnawave.get_user_usage(
             user.remnawave_user_uuid,
@@ -1058,7 +1324,24 @@ class BillingService(BaseService):
             date.today(),
         )
         total = self._sum_whitelist_usage_from_user_stats(usage, whitelist_node_ids)
-        subscription.whitelist_traffic_used_bytes = max(total, 0)
+        self._record_whitelist_usage_observation(subscription, total)
+
+    @staticmethod
+    def _record_whitelist_usage_observation(subscription: Subscription, observed_bytes: int) -> None:
+        observed = max(int(observed_bytes), 0)
+        if int(subscription.whitelist_billing_version or 1) < WHITELIST_BILLING_VERSION:
+            subscription.whitelist_traffic_used_bytes = observed
+            return
+        cursor = int(subscription.whitelist_usage_cursor_bytes if subscription.whitelist_usage_cursor_bytes is not None else -1)
+        if cursor < 0:
+            subscription.whitelist_usage_cursor_bytes = observed
+            return
+        delta = observed - cursor if observed >= cursor else observed
+        if delta > 0:
+            subscription.whitelist_traffic_used_bytes = max(
+                int(subscription.whitelist_traffic_used_bytes or 0), 0
+            ) + delta
+        subscription.whitelist_usage_cursor_bytes = observed
 
     async def _apply_remote_usage(
         self,
@@ -1068,11 +1351,16 @@ class BillingService(BaseService):
         *,
         whitelist_usage_by_remote_uuid: dict[str, int] | None = None,
     ) -> bool:
+        if int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION:
+            subscription, user = await self._lock_versioned_whitelist_rows(subscription, user)
         user.last_seen_at = remote_user.userTraffic.onlineAt or user.last_seen_at
         subscription.traffic_used_bytes = remote_user.userTraffic.usedTrafficBytes
         if remote_user.lastTrafficResetAt is not None:
             subscription.last_traffic_reset_at = remote_user.lastTrafficResetAt
-        if subscription.plan and is_metered_plan_code(subscription.plan.code):
+        if subscription.plan and (
+            is_metered_plan_code(subscription.plan.code)
+            or int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION
+        ):
             await self._refresh_whitelist_usage(
                 user,
                 subscription,
@@ -1159,7 +1447,10 @@ class BillingService(BaseService):
         plan_discount_rub: Decimal = Decimal("0.00"),
     ) -> Decimal:
         whitelist_charge = Decimal("0.00")
-        if is_metered_plan_code(plan.code):
+        if (
+            is_metered_plan_code(plan.code)
+            and int(subscription.whitelist_billing_version or 1) < WHITELIST_BILLING_VERSION
+        ):
             whitelist_charge = self._compute_unbilled_whitelist_charge(subscription)
         discounted_plan_price = max(
             quantize_money(Decimal(plan.price_rub) - Decimal(plan_discount_rub)),
@@ -1178,7 +1469,11 @@ class BillingService(BaseService):
             raise ConflictError("Remnawave вернула старый срок подписки после автопродления.")
 
     async def _apply_instant_whitelist_charges(self, user: User, subscription: Subscription) -> bool:
-        if subscription.plan is None or not is_metered_plan_code(subscription.plan.code):
+        if subscription.plan is None:
+            return False
+        if int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION:
+            return await self._apply_versioned_whitelist_charges(user, subscription)
+        if not is_metered_plan_code(subscription.plan.code):
             return False
 
         used_bytes = max(int(subscription.whitelist_traffic_used_bytes or 0), 0)
@@ -1227,11 +1522,161 @@ class BillingService(BaseService):
             and Decimal(user.balance_rub) <= START_WHITELIST_BALANCE_FLOOR_RUB
         )
         if whitelist_access_lost:
-            # Долг по whitelist для Start ограничен балансом -50 ₽: перерасход между замерами
+            # Долг по whitelist для Start ограничен заданным порогом: перерасход между замерами
             # не переносим скрытой задолженностью на будущие пополнения.
             subscription.whitelist_traffic_billed_bytes = used_bytes
             await self._queue_start_whitelist_access_blocked_notification(user, subscription, used_bytes)
         return whitelist_access_lost
+
+    async def _apply_versioned_whitelist_charges(self, user: User, subscription: Subscription) -> bool:
+        subscription, user = await self._lock_versioned_whitelist_rows(subscription, user)
+        used_bytes = max(int(subscription.whitelist_traffic_used_bytes or 0), 0)
+        accounted_bytes = min(max(int(subscription.whitelist_traffic_accounted_bytes or 0), 0), used_bytes)
+        outstanding_bytes = used_bytes - accounted_bytes
+        if outstanding_bytes <= 0:
+            await self._queue_whitelist_limit_notifications(user, subscription)
+            return False
+
+        included_limit = max(int(subscription.whitelist_included_limit_bytes or 0), 0)
+        included_already_consumed = max(int(subscription.whitelist_included_consumed_bytes or 0), 0)
+        included_consumed = min(outstanding_bytes, max(included_limit - included_already_consumed, 0))
+        subscription.whitelist_included_consumed_bytes = included_already_consumed + included_consumed
+        accounted_bytes += included_consumed
+        outstanding_bytes -= included_consumed
+
+        extra_available = max(int(user.whitelist_extra_traffic_bytes or 0), 0)
+        extra_consumed = min(outstanding_bytes, extra_available)
+        if extra_consumed:
+            user.whitelist_extra_traffic_bytes = extra_available - extra_consumed
+            accounted_bytes += extra_consumed
+            outstanding_bytes -= extra_consumed
+
+        balance = max(Decimal(user.balance_rub), Decimal("0.00"))
+        deferred_subcent_usage = False
+        if outstanding_bytes > 0 and balance > 0:
+            already_paid_bytes = max(int(subscription.whitelist_traffic_billed_bytes or 0), 0)
+            paid_bytes = self._affordable_whitelist_bytes(
+                outstanding_bytes,
+                balance,
+                already_paid_bytes=already_paid_bytes,
+            )
+            paid_charge = quantize_money(
+                bytes_to_gb_cost(already_paid_bytes + paid_bytes, WHITELIST_GB_PRICE_RUB)
+                - bytes_to_gb_cost(already_paid_bytes, WHITELIST_GB_PRICE_RUB)
+            )
+            full_outstanding_charge = quantize_money(
+                bytes_to_gb_cost(already_paid_bytes + outstanding_bytes, WHITELIST_GB_PRICE_RUB)
+                - bytes_to_gb_cost(already_paid_bytes, WHITELIST_GB_PRICE_RUB)
+            )
+            deferred_subcent_usage = paid_bytes == 0 and full_outstanding_charge == Decimal("0.00")
+            if paid_bytes > 0 and Decimal("0.00") < paid_charge <= balance:
+                await self.accounts.adjust_balance(
+                    user_id=user.id,
+                    amount_rub=-paid_charge,
+                    transaction_type=BalanceTransactionType.SUBSCRIPTION_CHARGE,
+                    description="Трафик белых списков сверх лимита",
+                )
+                subscription.whitelist_traffic_billed_bytes = already_paid_bytes + paid_bytes
+                accounted_bytes += paid_bytes
+                outstanding_bytes -= paid_bytes
+
+        uncovered_usage = outstanding_bytes > 0 and not deferred_subcent_usage
+        if uncovered_usage:
+            # Метрики приходят с задержкой: перерасход не превращаем в долг пользователя.
+            accounted_bytes = used_bytes
+            await self._queue_start_whitelist_access_blocked_notification(user, subscription, used_bytes)
+        subscription.whitelist_traffic_accounted_bytes = accounted_bytes
+        access_lost = not bool(
+            int(subscription.whitelist_included_consumed_bytes or 0) < included_limit
+            or int(user.whitelist_extra_traffic_bytes or 0) > 0
+            or Decimal(user.balance_rub) > 0
+        )
+        await self._queue_whitelist_limit_notifications(user, subscription)
+        return access_lost
+
+    async def _lock_versioned_whitelist_rows(
+        self,
+        subscription: Subscription,
+        user: User,
+    ) -> tuple[Subscription, User]:
+        # Scheduler, bot and portal can refresh the same counters concurrently.
+        # All consumers use the same lock order to prevent double consumption.
+        await self.session.flush()
+        locked_user = await self.session.scalar(
+            select(User)
+            .where(User.id == user.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        locked_subscription = await self.session.scalar(
+            select(Subscription)
+            .options(joinedload(Subscription.plan, innerjoin=True))
+            .where(Subscription.id == subscription.id)
+            .with_for_update(of=Subscription)
+            .execution_options(populate_existing=True)
+        )
+        if locked_subscription is not None:
+            subscription = locked_subscription
+        if locked_user is not None:
+            user = locked_user
+        return subscription, user
+
+    @staticmethod
+    def _affordable_whitelist_bytes(
+        requested_bytes: int,
+        balance_rub: Decimal,
+        *,
+        already_paid_bytes: int = 0,
+    ) -> int:
+        low, high, best = 0, max(int(requested_bytes), 0), 0
+        paid_before = bytes_to_gb_cost(max(int(already_paid_bytes), 0), WHITELIST_GB_PRICE_RUB)
+        while low <= high:
+            mid = (low + high) // 2
+            incremental_cost = quantize_money(
+                bytes_to_gb_cost(max(int(already_paid_bytes), 0) + mid, WHITELIST_GB_PRICE_RUB)
+                - paid_before
+            )
+            if Decimal("0.00") < incremental_cost <= balance_rub:
+                best = mid
+                low = mid + 1
+            else:
+                if incremental_cost <= Decimal("0.00"):
+                    low = mid + 1
+                else:
+                    high = mid - 1
+        return best
+
+    async def _queue_whitelist_limit_notifications(self, user: User, subscription: Subscription) -> None:
+        limit_bytes = max(int(subscription.whitelist_included_limit_bytes or 0), 0)
+        if limit_bytes <= 0:
+            return
+        used_bytes = min(
+            max(int(subscription.whitelist_included_consumed_bytes or 0), 0),
+            limit_bytes,
+        )
+        previous = int(subscription.whitelist_notification_threshold or 0)
+        threshold = 100 if used_bytes >= limit_bytes else 80 if used_bytes * 100 >= limit_bytes * 80 else 0
+        if threshold <= previous:
+            return
+        used_gb = Decimal(min(used_bytes, limit_bytes)) / Decimal(1024**3)
+        limit_gb = Decimal(limit_bytes) / Decimal(1024**3)
+        remaining_gb = max(limit_gb - used_gb, Decimal("0"))
+        if threshold == 80:
+            message = f"Вы использовали {used_gb:.1f} из {limit_gb:g} ГБ трафика белых списков. Осталось {remaining_gb:.1f} ГБ."
+        elif int(user.whitelist_extra_traffic_bytes or 0) > 0:
+            message = "Включённый трафик закончился. Теперь используется ваш дополнительный пакет."
+        elif Decimal(user.balance_rub) > 0:
+            message = f"Включённый трафик закончился. Дальнейшее использование оплачивается по тарифу {WHITELIST_GB_PRICE_RUB:g} ₽/ГБ."
+        else:
+            message = "Трафик белых списков закончился. Для продолжения пополните баланс или купите пакет трафика."
+        await self.notifications.queue(
+            user_id=user.id,
+            notification_type=NotificationType.TRAFFIC_THRESHOLD,
+            message=message,
+            payload={"kind": "whitelist_limit", "threshold": threshold, "cta": "whitelist_packages"},
+            dedupe_key=f"whitelist-limit:{subscription.id}:{threshold}",
+        )
+        subscription.whitelist_notification_threshold = threshold
 
     async def _queue_start_whitelist_access_blocked_notification(
         self,
@@ -1239,17 +1684,35 @@ class BillingService(BaseService):
         subscription: Subscription,
         used_bytes: int,
     ) -> None:
+        message = start_whitelist_access_blocked_message(Decimal(user.balance_rub))
+        if int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION:
+            plan_name = "Start" if subscription.plan is not None and is_metered_plan_code(subscription.plan.code) else "Pro"
+            continuation = (
+                "Основной сервер Start продолжает работать."
+                if plan_name == "Start"
+                else "Остальные серверы Pro продолжают работать."
+            )
+            message = (
+                "⛔ Доступ к серверам белых списков временно закрыт.\n\n"
+                "Включённый и дополнительный трафик закончился, а на балансе недостаточно средств. "
+                f"{continuation}\n"
+                f"Текущий баланс: {Decimal(user.balance_rub):.2f} ₽"
+            )
         await self.notifications.queue(
             user_id=user.id,
             notification_type=NotificationType.BROADCAST,
-            message=start_whitelist_access_blocked_message(Decimal(user.balance_rub)),
+            message=message,
             payload={
                 "kind": "start_whitelist_access_blocked",
                 "cta": "access_blocked",
                 "balance_rub": str(Decimal(user.balance_rub)),
                 "whitelist_traffic_used_bytes": used_bytes,
             },
-            dedupe_key=f"start-whitelist-access-blocked:{subscription.id}:{used_bytes}",
+            dedupe_key=(
+                f"whitelist-access-blocked:{subscription.id}"
+                if int(subscription.whitelist_billing_version or 1) >= WHITELIST_BILLING_VERSION
+                else f"start-whitelist-access-blocked:{subscription.id}:{used_bytes}"
+            ),
         )
 
     def _compute_unbilled_whitelist_charge(self, subscription: Subscription) -> Decimal:
@@ -1824,6 +2287,17 @@ class BillingService(BaseService):
             return Decimal("0.00")
         unused_share = Decimal(str(remaining.total_seconds())) / Decimal(existing.plan.period_days * 86400)
         return max(quantize_money(current_price * unused_share), Decimal("0.00"))
+
+    @staticmethod
+    def _carried_whitelist_included_usage(
+        existing: Subscription | None,
+    ) -> int:
+        if (
+            existing is None
+            or int(existing.whitelist_billing_version or 1) < WHITELIST_BILLING_VERSION
+        ):
+            return 0
+        return max(int(existing.whitelist_included_consumed_bytes or 0), 0)
 
     async def _sync_user_remote_access(
         self,

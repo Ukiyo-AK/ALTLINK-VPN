@@ -6808,3 +6808,30 @@ body.landing-v2 .landing-reveal.is-visible {
     grid-template-columns: 1fr;
   }
 }
+/* Whitelist traffic billing */
+.whitelist-progress {
+  height: 0.75rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+
+.whitelist-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  transition: width 300ms ease;
+}
+
+.whitelist-package-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+  .whitelist-package-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+}

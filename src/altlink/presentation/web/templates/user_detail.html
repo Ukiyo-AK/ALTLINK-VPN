@@ -31,6 +31,14 @@
       </div>
       <div><dt>Whitelist трафик</dt><dd>{{ '%.2f'|format((subscription.whitelist_traffic_used_bytes if subscription else 0) / 1024**3) }} ГБ</dd></div>
       <div><dt>Расчёт whitelist</dt><dd>{{ whitelist_cost_rub|rub }} ₽</dd></div>
+      <div><dt>Биллинг БС</dt><dd>{{ 'Legacy до продления' if whitelist_status.legacy else 'Новая схема' }}</dd></div>
+      <div>
+        <dt>Включённый БС-трафик</dt>
+        <dd>{{ '%.2f'|format(whitelist_status.included_used_bytes / 1024**3) }} / {{ '%.2f'|format(whitelist_status.included_limit_bytes / 1024**3) }} ГБ</dd>
+      </div>
+      <div><dt>Дополнительный БС-трафик</dt><dd>{{ '%.2f'|format(whitelist_status.extra_remaining_bytes / 1024**3) }} ГБ</dd></div>
+      <div><dt>Оплачено по факту</dt><dd>{{ '%.2f'|format(whitelist_status.paid_bytes / 1024**3) }} ГБ · {{ whitelist_status.paid_cost_rub|rub }} ₽</dd></div>
+      <div><dt>Доступ к БС</dt><dd>{{ 'разрешён' if whitelist_status.access_allowed else 'приостановлен' }}</dd></div>
     </dl>
   </article>
 
@@ -59,6 +67,20 @@
         <input type="text" name="description" value="Ручная корректировка баланса">
       </label>
       <button type="submit" class="button">Обновить баланс</button>
+    </form>
+    <form method="post" action="/admin/users/{{ user.id }}/whitelist-traffic" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="request_key" value="{{ whitelist_grant_request_key }}">
+      <label>
+        <span>Начислить дополнительный БС-трафик, ГБ</span>
+        <input type="number" min="0.01" max="1000000" step="0.01" name="gigabytes" required>
+      </label>
+      <label>
+        <span>Причина начисления</span>
+        <input type="text" name="reason" maxlength="2000" required placeholder="Компенсация или промо">
+      </label>
+      <p class="muted">Начисление бесплатно для пользователя и сохраняется в истории с данными администратора.</p>
+      <button type="submit" class="button ghost">Начислить БС-трафик</button>
     </form>
     <form method="post" action="/admin/users/{{ user.id }}/traffic-limit" class="stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -137,6 +159,29 @@
       <button type="submit" class="button ghost">Поставить в очередь</button>
     </form>
   </article>
+</section>
+
+<section class="panel">
+  <div class="split">
+    <h2>История пакетов БС</h2>
+    <span class="badge">{{ whitelist_purchases|length }} операций</span>
+  </div>
+  <table class="table">
+    <thead><tr><th>Дата</th><th>Операция</th><th>Объём</th><th>Стоимость</th><th>Причина</th></tr></thead>
+    <tbody>
+      {% for item in whitelist_purchases %}
+      <tr>
+        <td>{{ item.created_at|msk_datetime }}</td>
+        <td>{{ 'Административное начисление' if item.created_by_admin_id else 'Покупка пакета' }}</td>
+        <td>{{ '%.2f'|format(item.traffic_bytes / 1024**3) }} ГБ</td>
+        <td>{{ item.price_rub|rub }} ₽</td>
+        <td>{{ item.reason or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">Операций пока нет.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </section>
 
 <section class="panel device-panel">

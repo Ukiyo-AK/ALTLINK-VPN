@@ -21,7 +21,11 @@ from altlink.domain.enums import (
     TrafficLimitStrategy,
     UserStatus,
 )
-from altlink.domain.plans import SINGLE_10GBIT_MONTHLY_PRICE_RUB
+from altlink.domain.plans import (
+    SINGLE_10GBIT_MONTHLY_PRICE_RUB,
+    WHITELIST_BILLING_VERSION,
+    whitelist_included_bytes,
+)
 from altlink.infrastructure.db.models import BalanceTransaction, PromoCodeRedemption, Subscription, TrialPeriod
 from altlink.infrastructure.remnawave_schemas import RemoteSeriesPoint, RemoteUsageResponse, RemoteUsageTopNode
 from altlink.utils.time import ensure_utc, utc_now
@@ -837,7 +841,7 @@ async def test_snapshot_traffic_uses_node_usage_for_whitelist_tracking_when_user
 
 
 @pytest.mark.asyncio
-async def test_start_whitelist_traffic_is_charged_immediately_and_caps_balance_at_minus_fifty(test_services):
+async def test_start_whitelist_traffic_is_charged_immediately_and_caps_balance_at_configured_floor(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=13021,
@@ -848,6 +852,8 @@ async def test_start_whitelist_traffic_is_charged_immediately_and_caps_balance_a
         )
         await hub.topups.create_request(user.id, Decimal("150"), auto_complete=True)
         subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        subscription.whitelist_billing_version = 1
+        subscription.whitelist_included_limit_bytes = 0
         whitelist_node = next(node for node in test_services.remnawave.nodes.values() if "Whitelist" in node.name)
 
         test_services.remnawave.set_usage(
@@ -871,7 +877,7 @@ async def test_start_whitelist_traffic_is_charged_immediately_and_caps_balance_a
         pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=20))).all())
 
     assert refreshed_subscription is not None
-    assert Decimal(refreshed_user.balance_rub) == Decimal("-50.00")
+    assert Decimal(refreshed_user.balance_rub) == Decimal("-10.00")
     assert refreshed_subscription.whitelist_traffic_used_bytes == 200 * 1024**3
     assert refreshed_subscription.whitelist_traffic_billed_bytes == refreshed_subscription.whitelist_traffic_used_bytes
     active_server_types = {access.server.server_type for access in active_accesses if access.server}
@@ -914,8 +920,10 @@ async def test_start_whitelist_access_is_restored_after_balance_topup(test_servi
             language_code="ru",
         )
         await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
-        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
-        user.balance_rub = Decimal("-50.00")
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        subscription.whitelist_billing_version = 1
+        subscription.whitelist_included_limit_bytes = 0
+        user.balance_rub = Decimal("-10.00")
         await hub.catalog.rebuild_user_access_matrix()
 
         blocked_accesses = await hub.catalog.get_user_servers(user.id)
@@ -949,10 +957,12 @@ async def test_existing_start_user_at_whitelist_floor_gets_single_blocked_notice
         )
         await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
         subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        subscription.whitelist_billing_version = 1
+        subscription.whitelist_included_limit_bytes = 0
         whitelist_node = next(node for node in test_services.remnawave.nodes.values() if "Whitelist" in node.name)
         used_bytes = 2 * 1024**3
 
-        user.balance_rub = Decimal("-50.00")
+        user.balance_rub = Decimal("-10.00")
         subscription.whitelist_traffic_used_bytes = used_bytes
         subscription.whitelist_traffic_billed_bytes = used_bytes
         test_services.remnawave.set_usage(
@@ -983,6 +993,383 @@ async def test_existing_start_user_at_whitelist_floor_gets_single_blocked_notice
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("plan_code", "included_gb"),
+    [
+        (PlanCode.SINGLE_10GBIT, 5),
+        (PlanCode.SINGLE_10GBIT_WEEKLY, 1),
+        (PlanCode.UNLIMITED, 50),
+        (PlanCode.UNLIMITED_WEEKLY, 10),
+    ],
+)
+async def test_new_paid_subscription_receives_versioned_whitelist_limit(test_services, plan_code, included_gb):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14000 + included_gb,
+            username=f"wl_limit_{plan_code.value}",
+            first_name="Limit",
+            last_name="Test",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("1000"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, plan_code)
+
+    assert subscription.whitelist_billing_version == WHITELIST_BILLING_VERSION
+    assert subscription.whitelist_included_limit_bytes == included_gb * 1024**3
+    assert subscription.whitelist_traffic_accounted_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_whitelist_packages_are_idempotent_and_sum(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14101,
+            username="wl_packages",
+            first_name="Package",
+            last_name="Test",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        balance_before = Decimal(user.balance_rub)
+
+        first = await hub.billing.purchase_whitelist_package(user.id, "25", request_key="package-once")
+        repeated = await hub.billing.purchase_whitelist_package(user.id, "25", request_key="package-once")
+        await hub.billing.purchase_whitelist_package(user.id, "50", request_key="package-twice")
+        refreshed = await hub.accounts.get_user(user.id)
+
+    assert first.id == repeated.id
+    assert refreshed.whitelist_extra_traffic_bytes == 75 * 1024**3
+    assert Decimal(refreshed.balance_rub) == balance_before - Decimal("130")
+
+
+@pytest.mark.asyncio
+async def test_whitelist_package_cannot_be_purchased_during_legacy_period(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14112,
+            username="wl_legacy_package",
+            first_name="Legacy",
+            last_name="Package",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        subscription.whitelist_billing_version = 1
+        balance_before = Decimal(user.balance_rub)
+
+        with pytest.raises(ConflictError, match="ближайшего продления"):
+            await hub.billing.purchase_whitelist_package(user.id, "25", request_key="legacy-package")
+
+    assert Decimal(user.balance_rub) == balance_before
+    assert user.whitelist_extra_traffic_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_versioned_whitelist_uses_included_then_package_then_balance_without_debt(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14102,
+            username="wl_order",
+            first_name="Order",
+            last_name="Test",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        user.whitelist_extra_traffic_bytes = 2 * 1024**3
+        balance_before = Decimal(user.balance_rub)
+
+        subscription.whitelist_traffic_used_bytes = 6 * 1024**3
+        assert await hub.billing._apply_instant_whitelist_charges(user, subscription) is False
+        assert user.whitelist_extra_traffic_bytes == 1 * 1024**3
+        assert Decimal(user.balance_rub) == balance_before
+
+        subscription.whitelist_traffic_used_bytes = 8 * 1024**3
+        assert await hub.billing._apply_instant_whitelist_charges(user, subscription) is False
+        assert user.whitelist_extra_traffic_bytes == 0
+        assert Decimal(user.balance_rub) == balance_before - Decimal("2.00")
+
+        user.balance_rub = Decimal("0.00")
+        subscription.whitelist_traffic_used_bytes = 9 * 1024**3
+        assert await hub.billing._apply_instant_whitelist_charges(user, subscription) is True
+        assert Decimal(user.balance_rub) == Decimal("0.00")
+        assert subscription.whitelist_traffic_accounted_bytes == 9 * 1024**3
+
+
+@pytest.mark.asyncio
+async def test_legacy_pro_keeps_old_whitelist_terms_until_renewal(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14103,
+            username="legacy_pro",
+            first_name="Legacy",
+            last_name="Pro",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        subscription.whitelist_billing_version = 1
+        subscription.whitelist_included_limit_bytes = 0
+        subscription.whitelist_traffic_used_bytes = 120 * 1024**3
+        balance_before = Decimal(user.balance_rub)
+
+        assert await hub.billing._apply_instant_whitelist_charges(user, subscription) is False
+        assert Decimal(user.balance_rub) == balance_before
+
+        user.whitelist_extra_traffic_bytes = 25 * 1024**3
+        await hub.billing._start_next_billing_cycle(subscription, subscription.plan, renewed_at=utc_now())
+
+    assert subscription.whitelist_billing_version == WHITELIST_BILLING_VERSION
+    assert subscription.whitelist_included_limit_bytes == whitelist_included_bytes(PlanCode.UNLIMITED)
+    assert subscription.whitelist_traffic_used_bytes == 0
+    assert user.whitelist_extra_traffic_bytes == 25 * 1024**3
+
+
+@pytest.mark.asyncio
+async def test_versioned_whitelist_blocks_only_whitelist_at_exact_zero_limit(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14104,
+            username="wl_exact_limit",
+            first_name="Exact",
+            last_name="Limit",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        user.balance_rub = Decimal("0.00")
+        subscription.whitelist_traffic_used_bytes = subscription.whitelist_included_limit_bytes
+
+        assert await hub.billing._apply_instant_whitelist_charges(user, subscription) is True
+        await hub.catalog.rebuild_user_access_matrix()
+        accesses = await hub.catalog.get_user_servers(user.id)
+
+    server_types = {item.server.server_type for item in accesses if item.server is not None}
+    assert ServerType.TEN_GBIT in server_types
+    assert ServerType.WHITELIST not in server_types
+    assert Decimal(user.balance_rub) == Decimal("0.00")
+
+
+@pytest.mark.asyncio
+async def test_versioned_whitelist_access_returns_after_balance_topup(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14111,
+            username="wl_versioned_restore",
+            first_name="Versioned",
+            last_name="Restore",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        user.balance_rub = Decimal("0.00")
+        subscription.whitelist_traffic_used_bytes = subscription.whitelist_included_limit_bytes
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+        await hub.catalog.rebuild_user_access_matrix()
+        blocked = await hub.catalog.get_user_servers(user.id)
+
+        await hub.topups.create_request(user.id, Decimal("50"), auto_complete=True)
+        restored = await hub.catalog.get_user_servers(user.id)
+
+    blocked_types = {item.server.server_type for item in blocked if item.server is not None}
+    restored_types = {item.server.server_type for item in restored if item.server is not None}
+    assert ServerType.WHITELIST not in blocked_types
+    assert ServerType.WHITELIST in restored_types
+
+
+@pytest.mark.asyncio
+async def test_versioned_whitelist_fractional_gigabyte_uses_decimal_money(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14105,
+            username="wl_fraction",
+            first_name="Fraction",
+            last_name="Money",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        user.balance_rub = Decimal("10.00")
+        subscription.whitelist_traffic_used_bytes = (
+            subscription.whitelist_included_limit_bytes + 512 * 1024**2
+        )
+
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+
+    assert Decimal(user.balance_rub) == Decimal("9.00")
+    assert subscription.whitelist_traffic_billed_bytes == 512 * 1024**2
+
+
+@pytest.mark.asyncio
+async def test_small_whitelist_increments_accumulate_before_money_rounding(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14110,
+            username="wl_small_increments",
+            first_name="Small",
+            last_name="Increments",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        user.balance_rub = Decimal("1.00")
+        subscription.whitelist_traffic_used_bytes = subscription.whitelist_included_limit_bytes + 1024**2
+
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+        balance_after_first_increment = Decimal(user.balance_rub)
+        subscription.whitelist_traffic_used_bytes = subscription.whitelist_included_limit_bytes + 3 * 1024**2
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+
+    assert balance_after_first_increment == Decimal("1.00")
+    assert Decimal(user.balance_rub) == Decimal("0.99")
+    assert subscription.whitelist_traffic_billed_bytes == 3 * 1024**2
+
+
+@pytest.mark.asyncio
+async def test_versioned_whitelist_never_creates_debt_when_balance_covers_only_part(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14106,
+            username="wl_no_debt",
+            first_name="No",
+            last_name="Debt",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        user.balance_rub = Decimal("0.50")
+        subscription.whitelist_traffic_used_bytes = subscription.whitelist_included_limit_bytes + 1024**3
+
+        assert await hub.billing._apply_instant_whitelist_charges(user, subscription) is True
+
+    assert Decimal(user.balance_rub) >= Decimal("0.00")
+    assert subscription.whitelist_traffic_accounted_bytes == subscription.whitelist_traffic_used_bytes
+    assert subscription.whitelist_traffic_billed_bytes < 1024**3
+
+
+@pytest.mark.asyncio
+async def test_whitelist_limit_notifications_are_sent_once_per_threshold(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14107,
+            username="wl_notifications",
+            first_name="Limit",
+            last_name="Notice",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        subscription.whitelist_traffic_used_bytes = 4 * 1024**3
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+        subscription.whitelist_traffic_used_bytes = 5 * 1024**3
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=100))).all())
+
+    threshold_notifications = [
+        item
+        for item in pending
+        if item.user_id == user.id
+        and item.type == NotificationType.TRAFFIC_THRESHOLD
+        and item.payload
+        and item.payload.get("kind") == "whitelist_limit"
+    ]
+    assert [item.payload["threshold"] for item in threshold_notifications] == [80, 100]
+
+
+@pytest.mark.asyncio
+async def test_versioned_whitelist_blocked_notification_is_not_repeated_for_late_usage(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14113,
+            username="wl_block_notice",
+            first_name="Block",
+            last_name="Notice",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        user.balance_rub = Decimal("0.00")
+        subscription.whitelist_traffic_used_bytes = subscription.whitelist_included_limit_bytes + 1024**3
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+        subscription.whitelist_traffic_used_bytes += 1024**3
+        await hub.billing._apply_instant_whitelist_charges(user, subscription)
+        pending = list((await hub.session.scalars(await hub.notifications.pending_query(limit=100))).all())
+
+    blocked_notifications = [
+        item
+        for item in pending
+        if item.user_id == user.id
+        and item.payload
+        and item.payload.get("kind") == "start_whitelist_access_blocked"
+    ]
+    assert len(blocked_notifications) == 1
+
+
+@pytest.mark.asyncio
+async def test_whitelist_usage_cursor_does_not_charge_pre_period_observation(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14108,
+            username="wl_cursor",
+            first_name="Cursor",
+            last_name="Test",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        subscription.whitelist_usage_cursor_bytes = -1
+        subscription.whitelist_traffic_used_bytes = 0
+
+        hub.billing._record_whitelist_usage_observation(subscription, 100 * 1024**3)
+        hub.billing._record_whitelist_usage_observation(subscription, 101 * 1024**3)
+
+    assert subscription.whitelist_traffic_used_bytes == 1024**3
+    assert subscription.whitelist_usage_cursor_bytes == 101 * 1024**3
+
+
+@pytest.mark.asyncio
+async def test_admin_whitelist_grant_is_logged_and_idempotent(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=14109,
+            username="wl_admin_grant",
+            first_name="Admin",
+            last_name="Grant",
+            language_code="ru",
+        )
+        admin = await hub.accounts.create_admin(
+            username="grant_admin",
+            password="password",
+            full_name="Grant Admin",
+            telegram_id=9914109,
+        )
+        first = await hub.billing.grant_whitelist_traffic(
+            user.id,
+            gigabytes=Decimal("12.5"),
+            request_key="admin-grant-once",
+            admin_id=admin.id,
+            reason="Компенсация",
+        )
+        repeated = await hub.billing.grant_whitelist_traffic(
+            user.id,
+            gigabytes=Decimal("12.5"),
+            request_key="admin-grant-once",
+            admin_id=admin.id,
+            reason="Компенсация",
+        )
+        history = await hub.billing.list_whitelist_package_purchases(user.id)
+
+    assert first.id == repeated.id
+    assert user.whitelist_extra_traffic_bytes == int(Decimal("12.5") * Decimal(1024**3))
+    assert len(history) == 1
+    assert history[0].created_by_admin_id == admin.id
+    assert history[0].reason == "Компенсация"
+
+
+@pytest.mark.asyncio
 async def test_start_renewal_charge_does_not_repeat_whitelist_usage_that_was_already_charged(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
@@ -994,6 +1381,8 @@ async def test_start_renewal_charge_does_not_repeat_whitelist_usage_that_was_alr
         )
         await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
         subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=True)
+        subscription.whitelist_billing_version = 1
+        subscription.whitelist_included_limit_bytes = 0
         whitelist_node = next(node for node in test_services.remnawave.nodes.values() if "Whitelist" in node.name)
 
         test_services.remnawave.set_usage(
@@ -1349,6 +1738,161 @@ async def test_failed_plan_switch_does_not_credit_balance_or_cancel_current_subs
     assert refreshed_current.id == current.id
     assert refreshed_current.status == SubscriptionStatus.ACTIVE
     assert refunds == []
+
+
+@pytest.mark.asyncio
+async def test_plan_switch_carries_included_whitelist_usage_and_extra_package(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13024,
+            username="switch_whitelist_usage",
+            first_name="Switch",
+            last_name="Whitelist",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("1000"), auto_complete=True)
+        previous = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        previous.whitelist_traffic_used_bytes = 4 * 1024**3
+        await hub.billing._apply_instant_whitelist_charges(user, previous)
+        user.whitelist_extra_traffic_bytes = 25 * 1024**3
+
+        switched = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        status = await hub.billing.get_whitelist_traffic_status(user.id)
+
+    assert previous.status == SubscriptionStatus.CANCELED
+    assert switched.whitelist_included_limit_bytes == 50 * 1024**3
+    assert switched.whitelist_included_consumed_bytes == 4 * 1024**3
+    assert switched.whitelist_traffic_used_bytes == 0
+    assert switched.whitelist_traffic_accounted_bytes == 0
+    assert status.included_remaining_bytes == 46 * 1024**3
+    assert user.whitelist_extra_traffic_bytes == 25 * 1024**3
+
+
+@pytest.mark.asyncio
+async def test_plan_downgrade_and_upgrade_cannot_restore_consumed_whitelist_limit(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13026,
+            username="switch_whitelist_chain",
+            first_name="Switch",
+            last_name="Chain",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("1000"), auto_complete=True)
+        pro = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        pro.whitelist_traffic_used_bytes = 50 * 1024**3
+        await hub.billing._apply_instant_whitelist_charges(user, pro)
+
+        start = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        start_status = await hub.billing.get_whitelist_traffic_status(user.id)
+        pro_again = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        pro_status = await hub.billing.get_whitelist_traffic_status(user.id)
+
+    assert start.whitelist_included_consumed_bytes == 50 * 1024**3
+    assert start_status.included_remaining_bytes == 0
+    assert pro_again.whitelist_included_consumed_bytes == 50 * 1024**3
+    assert pro_status.included_remaining_bytes == 0
+
+
+@pytest.mark.asyncio
+async def test_paid_whitelist_usage_is_not_mistaken_for_included_usage_after_upgrade(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13027,
+            username="switch_paid_whitelist",
+            first_name="Paid",
+            last_name="Whitelist",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("1000"), auto_complete=True)
+        start = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        balance_before_usage = Decimal(user.balance_rub)
+        start.whitelist_traffic_used_bytes = 7 * 1024**3
+        await hub.billing._apply_instant_whitelist_charges(user, start)
+        balance_after_usage = Decimal(user.balance_rub)
+
+        pro = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        status = await hub.billing.get_whitelist_traffic_status(user.id)
+
+    assert balance_after_usage == balance_before_usage - Decimal("4.00")
+    assert pro.whitelist_included_consumed_bytes == 5 * 1024**3
+    assert status.included_remaining_bytes == 45 * 1024**3
+
+
+@pytest.mark.asyncio
+async def test_partially_used_package_survives_switch_and_renewal(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13028,
+            username="switch_package_renewal",
+            first_name="Package",
+            last_name="Renewal",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("1000"), auto_complete=True)
+        start = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        await hub.billing.purchase_whitelist_package(user.id, "25", request_key="switch-package")
+        start.whitelist_traffic_used_bytes = 10 * 1024**3
+        await hub.billing._apply_instant_whitelist_charges(user, start)
+
+        pro = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        status_after_switch = await hub.billing.get_whitelist_traffic_status(user.id)
+        await hub.billing._start_next_billing_cycle(pro, pro.plan, renewed_at=utc_now())
+        status_after_renewal = await hub.billing.get_whitelist_traffic_status(user.id)
+
+    assert status_after_switch.included_remaining_bytes == 45 * 1024**3
+    assert status_after_switch.extra_remaining_bytes == 20 * 1024**3
+    assert status_after_renewal.included_remaining_bytes == 50 * 1024**3
+    assert status_after_renewal.extra_remaining_bytes == 20 * 1024**3
+
+
+@pytest.mark.asyncio
+async def test_switching_from_legacy_period_starts_new_billing_without_old_usage(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13029,
+            username="legacy_plan_switch",
+            first_name="Legacy",
+            last_name="Switch",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("1000"), auto_complete=True)
+        legacy = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED)
+        legacy.whitelist_billing_version = 1
+        legacy.whitelist_traffic_used_bytes = 120 * 1024**3
+
+        switched = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT_WEEKLY)
+        status = await hub.billing.get_whitelist_traffic_status(user.id)
+
+    assert switched.whitelist_billing_version == WHITELIST_BILLING_VERSION
+    assert switched.whitelist_included_consumed_bytes == 0
+    assert status.included_limit_bytes == 1024**3
+    assert status.included_remaining_bytes == 1024**3
+
+
+@pytest.mark.asyncio
+async def test_reactivating_current_plan_is_rejected_without_charging(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=13025,
+            username="same_plan_switch",
+            first_name="Same",
+            last_name="Plan",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        current = await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        balance_before = Decimal(user.balance_rub)
+
+        with pytest.raises(ConflictError, match="уже активен"):
+            await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+
+        refreshed = await hub.accounts.get_current_subscription(user.id)
+
+    assert refreshed is not None
+    assert refreshed.id == current.id
+    assert refreshed.status == SubscriptionStatus.ACTIVE
+    assert Decimal(user.balance_rub) == balance_before
 
 
 @pytest.mark.asyncio

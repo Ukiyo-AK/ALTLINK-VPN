@@ -185,12 +185,15 @@ def subscription_actions(
     show_traffic: bool,
     can_cancel: bool,
     auto_renew_disabled: bool,
+    show_whitelist_packages: bool = False,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Выбрать тариф", callback_data="client:plan_menu", style="primary")
     if show_link:
         builder.button(text="Моя ссылка", callback_data="client:subscription_link", style="primary")
         builder.button(text="Мои устройства", callback_data="client:devices:0", style="primary")
+        if show_whitelist_packages:
+            builder.button(text="Купить трафик БС", callback_data="client:whitelist_packages", style="success")
     if show_traffic:
         builder.button(text="Трафик и списания", callback_data="client:traffic")
     if show_link:
@@ -199,11 +202,38 @@ def subscription_actions(
     rows = [1]
     if show_link:
         rows.append(2)
+        if show_whitelist_packages:
+            rows.append(1)
     second_row = int(show_traffic) + int(show_link)
     if second_row:
         rows.append(second_row)
     rows.append(1)
     builder.adjust(*rows)
+    return builder
+
+
+def whitelist_package_actions() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    for code, gb, price in (("25", 25, 45), ("50", 50, 85), ("100", 100, 159), ("250", 250, 375)):
+        builder.button(
+            text=f"+{gb} ГБ — {price} ₽",
+            callback_data=f"client:whitelist_package_select:{code}",
+            style="success" if code == "100" else "primary",
+        )
+    builder.button(text="Назад", callback_data="client:subscription")
+    builder.adjust(1, 1, 1, 1, 1)
+    return builder
+
+
+def whitelist_package_confirm_actions(package_code: str, request_key: str) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="Подтвердить покупку",
+        callback_data=f"client:whitelist_package_buy:{package_code}:{request_key}",
+        style="success",
+    )
+    builder.button(text="Отмена", callback_data="client:whitelist_packages")
+    builder.adjust(1, 1)
     return builder
 
 
@@ -417,9 +447,11 @@ def topup_provider_actions(
     providers: list[tuple[str, str]],
     *,
     selected_plan_token: str | None = None,
+    flow_token: str | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    plan_suffix = f":{selected_plan_token}" if selected_plan_token else ""
+    callback_token = selected_plan_token or flow_token
+    plan_suffix = f":{callback_token}" if callback_token else ""
     for provider_code, provider_label in providers:
         builder.button(
             text=provider_label,
@@ -445,9 +477,11 @@ def topup_checkout_actions(
     plan_action_text: str | None = None,
     selected_plan_code: str | None = None,
     selected_plan_token: str | None = None,
+    whitelist_topup: bool = False,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    plan_suffix = f":{selected_plan_token}" if selected_plan_token else ""
+    callback_token = selected_plan_token or ("wl" if whitelist_topup else None)
+    plan_suffix = f":{callback_token}" if callback_token else ""
     rows: list[int] = []
     action_count = 0
     if payment_url:
@@ -470,11 +504,19 @@ def topup_checkout_actions(
             ),
             style="primary",
         )
+    if whitelist_topup:
+        builder.button(
+            text="🛡 Вернуться к покупке пакета",
+            callback_data="client:whitelist_packages",
+            style="primary",
+        )
     builder.button(text="🧾 История платежей", callback_data="client:my_topups", style="primary")
     builder.button(text="💳 Баланс", callback_data="client:balance")
     if action_count:
         rows.append(action_count)
     if plan_action_text:
+        rows.append(1)
+    if whitelist_topup:
         rows.append(1)
     rows.extend([1, 1])
     builder.adjust(*rows)

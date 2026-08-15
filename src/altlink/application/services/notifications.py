@@ -271,6 +271,17 @@ class NotificationService(BaseService):
                     [InlineKeyboardButton(text="🧾 Подписка", callback_data="client:subscription")],
                 ]
             )
+        if cta == "whitelist_packages":
+            return InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="🛡 Купить дополнительный трафик",
+                            callback_data="client:whitelist_packages",
+                        )
+                    ],
+                ]
+            )
         if cta in {"inactive_promo", "trial_followup"}:
             promo_code = payload.get("promo_code")
             if not isinstance(promo_code, str) or not promo_code or len(promo_code) > 40:

@@ -97,13 +97,15 @@ def _ensure_runtime_schema_sync(connection) -> None:
         "hwid_devices_checked_at": DateTime(timezone=True),
         "traffic_limit_bytes_override": BigInteger(),
         "traffic_limit_strategy_override": String(16),
+        "whitelist_extra_traffic_bytes": BigInteger(),
     }
 
     for column_name, column_type in expected_columns.items():
         if column_name in existing_columns:
             continue
         compiled_type = column_type.compile(dialect=connection.dialect)
-        connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {compiled_type}"))
+        suffix = " NOT NULL DEFAULT 0" if column_name == "whitelist_extra_traffic_bytes" else ""
+        connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {compiled_type}{suffix}"))
         logger.warning("Added missing column %s to users table during runtime schema preparation.", column_name)
         if column_name == "promo_onboarding_completed_at":
             connection.execute(
@@ -143,6 +145,54 @@ def _ensure_runtime_schema_sync(connection) -> None:
                 "Expanded plans.code length from %s to %s during runtime schema preparation.",
                 current_plan_code_length,
                 required_plan_code_length,
+            )
+
+    if "subscriptions" in table_names:
+        subscription_columns = {column["name"] for column in inspector.get_columns("subscriptions")}
+        expected_subscription_columns = {
+            "whitelist_billing_version": Integer(),
+            "whitelist_included_limit_bytes": BigInteger(),
+            "whitelist_included_consumed_bytes": BigInteger(),
+            "whitelist_usage_cursor_bytes": BigInteger(),
+            "whitelist_traffic_accounted_bytes": BigInteger(),
+            "whitelist_notification_threshold": Integer(),
+        }
+        added_included_consumed = False
+        for column_name, column_type in expected_subscription_columns.items():
+            if column_name in subscription_columns:
+                continue
+            compiled_type = column_type.compile(dialect=connection.dialect)
+            default_value = -1 if column_name == "whitelist_usage_cursor_bytes" else 0
+            connection.execute(
+                text(
+                    f"ALTER TABLE subscriptions ADD COLUMN {column_name} "
+                    f"{compiled_type} NOT NULL DEFAULT {default_value}"
+                )
+            )
+            if column_name == "whitelist_billing_version":
+                connection.execute(text("UPDATE subscriptions SET whitelist_billing_version = 1"))
+            if column_name == "whitelist_included_consumed_bytes":
+                added_included_consumed = True
+            subscription_columns.add(column_name)
+            logger.warning("Added missing column %s to subscriptions table.", column_name)
+        if added_included_consumed and {
+            "whitelist_traffic_used_bytes",
+            "whitelist_included_limit_bytes",
+            "whitelist_billing_version",
+        }.issubset(subscription_columns):
+            connection.execute(
+                text(
+                    """
+                    UPDATE subscriptions
+                    SET whitelist_included_consumed_bytes = CASE
+                        WHEN whitelist_traffic_used_bytes < whitelist_included_limit_bytes
+                            THEN whitelist_traffic_used_bytes
+                        ELSE whitelist_included_limit_bytes
+                    END
+                    WHERE whitelist_billing_version >= 2
+                      AND whitelist_traffic_used_bytes > 0
+                    """
+                )
             )
 
     if "topup_requests" in table_names:

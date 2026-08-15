@@ -5,6 +5,7 @@ import logging
 import base64
 import json
 import re
+import secrets
 from datetime import UTC, datetime, time
 from decimal import Decimal, InvalidOperation
 from html import escape
@@ -43,7 +44,12 @@ from altlink.domain.notifications import (
     promo_template_kind,
     render_promo_campaign_message,
 )
-from altlink.domain.plans import WHITELIST_GB_PRICE_RUB, is_metered_plan_code, parse_paid_plan_code
+from altlink.domain.plans import (
+    WHITELIST_GB_PRICE_RUB,
+    WHITELIST_TRAFFIC_PACKAGES,
+    is_metered_plan_code,
+    parse_paid_plan_code,
+)
 from altlink.domain.traffic_limits import BYTES_PER_GIB, TRAFFIC_LIMIT_STRATEGY_LABELS
 from altlink.infrastructure.db.models import (
     BalanceTransaction,
@@ -92,7 +98,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260730-support-chat"
+ASSET_VERSION = "20260815-whitelist-billing"
 COUNTRY_NAMES_RU = {
     "AM": "Армения",
     "AT": "Австрия",
@@ -1141,6 +1147,22 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         {"amount": amount, "url": bot_deep_link(settings, f"pay_{amount}")}
         for amount in topup_amounts
     ]
+    billing_service = getattr(hub, "billing", None)
+    whitelist_status = (
+        await billing_service.get_whitelist_traffic_status(user.id)
+        if billing_service is not None
+        else None
+    )
+    whitelist_packages = [
+        {
+            "code": code,
+            "gigabytes": int(item["gigabytes"]),
+            "price_rub": Decimal(item["price_rub"]),
+            "regular_price_rub": Decimal(item["gigabytes"]) * WHITELIST_GB_PRICE_RUB,
+            "request_key": secrets.token_hex(12),
+        }
+        for code, item in WHITELIST_TRAFFIC_PACKAGES.items()
+    ]
 
     qr_data_uri = None
     info = bundle.get("subscription_info")
@@ -1181,6 +1203,8 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_referral_earned_total": referral["earned_total"],
         "portal_referral_link": referral_link,
         "portal_topup_links": topup_links,
+        "portal_whitelist_status": whitelist_status,
+        "portal_whitelist_packages": whitelist_packages,
         "portal_url": f"{settings.backend_public_url.rstrip('/')}/portal",
         "client_bot_url": client_bot_url,
         "support_url": "https://t.me/altlink_support",
@@ -1550,6 +1574,8 @@ async def user_detail(request: Request, user_id: str):
             select(SystemSetting).where(SystemSetting.key == PROMO_CAMPAIGN_SETTINGS_KEY)
         )
         promo_settings = normalize_promo_campaign_settings(promo_setting.value if promo_setting is not None else None)
+        whitelist_status = await hub.billing.get_whitelist_traffic_status(user_id)
+        whitelist_purchases = await hub.billing.list_whitelist_package_purchases(user_id, limit=20)
         return render(
             request,
             "user_detail.html",
@@ -1586,6 +1612,9 @@ async def user_detail(request: Request, user_id: str):
                 card["subscription"].whitelist_traffic_used_bytes if card["subscription"] else 0,
                 WHITELIST_GB_PRICE_RUB,
             ),
+            whitelist_status=whitelist_status,
+            whitelist_purchases=whitelist_purchases,
+            whitelist_grant_request_key=secrets.token_hex(16),
             active_nav="users",
         )
 
@@ -1768,6 +1797,39 @@ async def user_balance(request: Request, user_id: str):
         )
         await hub.catalog.rebuild_user_access_matrix()
         return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
+
+
+@router.post("/admin/users/{user_id}/whitelist-traffic")
+async def user_whitelist_traffic_grant(request: Request, user_id: str):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    try:
+        gigabytes = Decimal(str(form.get("gigabytes") or "0").replace(",", "."))
+    except Exception:
+        set_flash(request, "Укажите корректное количество гигабайт.", "danger")
+        return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
+    reason = str(form.get("reason") or "").strip()
+    request_key = str(form.get("request_key") or "")[:64] or secrets.token_hex(16)
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        try:
+            purchase = await hub.billing.grant_whitelist_traffic(
+                user_id,
+                gigabytes=gigabytes,
+                request_key=request_key,
+                admin_id=admin.id,
+                reason=reason,
+            )
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+        else:
+            set_flash(
+                request,
+                f"Начислено {purchase.traffic_bytes / 1024**3:g} ГБ дополнительного БС-трафика.",
+            )
+    return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
 @router.post("/admin/users/{user_id}/trial")
@@ -2810,6 +2872,140 @@ async def portal_plan(request: Request):
         except (ConflictError, NotFoundError, ServiceError) as exc:
             set_flash(request, str(exc), "danger")
     return RedirectResponse("/portal", status_code=303)
+
+
+@router.post("/portal/whitelist-package")
+async def portal_whitelist_package(request: Request):
+    form = dict(await request.form())
+    validate_csrf(request, form)
+    package_code = str(form.get("package_code") or "")
+    request_key = str(form.get("request_key") or "") or secrets.token_hex(16)
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return portal_login_redirect()
+        try:
+            purchase = await hub.billing.purchase_whitelist_package(
+                user.id,
+                package_code,
+                request_key=request_key,
+            )
+            set_flash(request, f"Пакет +{purchase.traffic_bytes // 1024**3} ГБ успешно куплен.")
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            set_flash(request, str(exc), "danger")
+    return RedirectResponse("/portal#portal-subscription", status_code=303)
+
+
+def whitelist_status_payload(status_value) -> dict[str, object]:
+    return {
+        "billing_version": status_value.billing_version,
+        "legacy": status_value.legacy,
+        "included_limit_bytes": status_value.included_limit_bytes,
+        "included_used_bytes": status_value.included_used_bytes,
+        "included_remaining_bytes": status_value.included_remaining_bytes,
+        "extra_remaining_bytes": status_value.extra_remaining_bytes,
+        "paid_bytes": status_value.paid_bytes,
+        "paid_cost_rub": str(status_value.paid_cost_rub),
+        "total_used_bytes": status_value.total_used_bytes,
+        "price_per_gb_rub": str(status_value.price_per_gb_rub),
+        "balance_rub": str(status_value.balance_rub),
+        "access_allowed": status_value.access_allowed,
+        "period_starts_at": (
+            status_value.period_starts_at.isoformat() if status_value.period_starts_at is not None else None
+        ),
+        "period_ends_at": status_value.period_ends_at.isoformat() if status_value.period_ends_at is not None else None,
+    }
+
+
+@router.get("/api/whitelist/traffic")
+async def portal_whitelist_traffic_api(request: Request) -> JSONResponse:
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return JSONResponse({"success": False, "message": "Нужно войти в кабинет."}, status_code=401)
+        status_value = await hub.billing.get_whitelist_traffic_status(user.id)
+    return JSONResponse({"success": True, "traffic": whitelist_status_payload(status_value)})
+
+
+@router.get("/api/whitelist/packages")
+async def portal_whitelist_packages_api(request: Request) -> JSONResponse:
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return JSONResponse({"success": False, "message": "Нужно войти в кабинет."}, status_code=401)
+    packages = [
+        {
+            "code": code,
+            "gigabytes": int(item["gigabytes"]),
+            "traffic_bytes": int(item["gigabytes"]) * 1024**3,
+            "price_rub": str(item["price_rub"]),
+            "regular_price_rub": str(Decimal(item["gigabytes"]) * WHITELIST_GB_PRICE_RUB),
+        }
+        for code, item in WHITELIST_TRAFFIC_PACKAGES.items()
+    ]
+    return JSONResponse({"success": True, "packages": packages, "price_per_gb_rub": str(WHITELIST_GB_PRICE_RUB)})
+
+
+@router.get("/api/whitelist/purchases")
+async def portal_whitelist_purchases_api(request: Request) -> JSONResponse:
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return JSONResponse({"success": False, "message": "Нужно войти в кабинет."}, status_code=401)
+        rows = await hub.billing.list_whitelist_package_purchases(user.id, limit=100)
+    return JSONResponse(
+        {
+            "success": True,
+            "purchases": [
+                {
+                    "id": item.id,
+                    "package_code": item.package_code,
+                    "traffic_bytes": item.traffic_bytes,
+                    "price_rub": str(item.price_rub),
+                    "status": item.status,
+                    "created_at": item.created_at.isoformat(),
+                    "kind": "admin_grant" if item.created_by_admin_id else "purchase",
+                }
+                for item in rows
+            ],
+        }
+    )
+
+
+@router.post("/api/whitelist/purchases")
+async def portal_whitelist_purchase_api(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    provided_csrf = str(body.get("csrf_token") or "")
+    session_csrf = str(request.session.get("csrf_token") or "")
+    if not provided_csrf or not session_csrf or not secrets.compare_digest(provided_csrf, session_csrf):
+        return JSONResponse({"success": False, "message": "Некорректный CSRF токен."}, status_code=400)
+    package_code = str(body.get("package_code") or "")
+    request_key = str(body.get("request_key") or "") or secrets.token_hex(16)
+    if len(request_key) > 64:
+        return JSONResponse({"success": False, "message": "Некорректный ключ операции."}, status_code=400)
+    async with request.app.state.container.hub() as hub:
+        user = await resolve_portal_user(request, hub)
+        if user is None:
+            return JSONResponse({"success": False, "message": "Нужно войти в кабинет."}, status_code=401)
+        try:
+            purchase = await hub.billing.purchase_whitelist_package(
+                user.id,
+                package_code,
+                request_key=request_key,
+            )
+        except (ConflictError, NotFoundError, ServiceError) as exc:
+            return JSONResponse({"success": False, "message": str(exc)}, status_code=409)
+        status_value = await hub.billing.get_whitelist_traffic_status(user.id)
+    return JSONResponse(
+        {
+            "success": True,
+            "purchase_id": purchase.id,
+            "traffic": whitelist_status_payload(status_value),
+        }
+    )
 
 
 @router.post("/portal/link/revoke")

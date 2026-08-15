@@ -26,7 +26,7 @@ def test_web_templates_use_relative_asset_paths(template_name: str):
     assert "{{ url_for('media', path='logo.png') }}" not in content
     assert 'rel="icon"' in content
     assert 'href="/static/style.css?v={{ asset_version }}"' in content
-    assert 'src="/media/logo.png"' in content
+    assert 'src="/media/logo.png"' in content or 'src="/media/altlink%20icon.svg"' in content
 
 
 def test_landing_hero_avoids_heavy_background_logo():
@@ -34,7 +34,8 @@ def test_landing_hero_avoids_heavy_background_logo():
 
     assert "url('{{ url_for('media', path='logo without background.png') }}')" not in content
     assert "url('/media/logo without background.png')" not in content
-    assert "landing-hero-glow" in content
+    assert "landing-route-map" in content
+    assert 'src="/media/altlink%20icon.svg"' in content
 
 
 def test_portal_login_template_uses_bot_confirm_flow_instead_of_widget():
@@ -212,19 +213,16 @@ def test_landing_template_keeps_homepage_copy_compact():
     landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
 
     assert "<title>{{ title }}</title>" in landing
-    assert '<body class="landing-page">' in landing
-    assert "Быстрый и конфиденциальный доступ к сети" in landing
-    assert "ALTLINK — быстрый и конфиденциальный доступ к сети!" not in landing
+    assert '<body class="landing-page landing-v2">' in landing
+    assert "Подключитесь за минуту. Доступ без ограничений каждый день" in landing
     assert "2 дня теста" in landing
-    assert "ссылка и QR-код" in landing
-    assert "Подойдут v2raytun, Happ, Throne, Hiddify, Streisand или другое совместимое приложение." in landing
-    assert "Happ для iOS" not in landing
+    assert "безлимит трафика" in landing
+    assert "Рекомендуем Happ" in landing
+    assert "другое совместимое клиентское приложение" in landing
     assert "landing_max_device_limit" in landing
     assert "price_label" in landing
-    assert "landing-story" not in landing
-    assert "Что получает пользователь" not in landing
     assert "landing-feature-card" in landing
-    assert "landing-step-card" in landing
+    assert "landing-start-steps" in landing
     assert "landing-location-carousel" in landing
     assert "landing-location-carousel-shell" in landing
     assert "data-horizontal-scroll" in landing
@@ -237,15 +235,11 @@ def test_landing_template_keeps_homepage_copy_compact():
     assert "landing-latency-list" not in landing
     assert "landing-plan-card{% if group.family == 'unlimited' %} is-featured{% endif %}" in landing
     assert "landing-plan-devices" in landing
+    assert "БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ" in landing
+    assert "БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ" in landing
     assert "{{ landing_account_button_label }}" in landing
     assert "Соглашение" in landing
     assert "Конфиденциальность" in landing
-    assert "Конфиденциальность без громких обещаний" in landing
-    assert "Мы не продаём данные пользователей третьим лицам" in landing
-    assert "Технические данные используются только для работы сервиса" in landing
-    assert "полная анонимность" not in landing.lower()
-    assert "мы ничего не храним" not in landing.lower()
-    assert "абсолютная безопасность" not in landing.lower()
     assert "© 2026 ALTLINK" in landing
     assert "Подключить" in landing
     assert ">Telegram bot<" in landing

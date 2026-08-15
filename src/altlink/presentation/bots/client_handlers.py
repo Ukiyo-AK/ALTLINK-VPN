@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import logging
+import secrets
 from decimal import Decimal, InvalidOperation
 import re
 from urllib.parse import quote_plus, unquote, urlparse
@@ -20,11 +21,14 @@ from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.domain.billing import bytes_to_gb_cost, quantize_money
 from altlink.domain.enums import PlanCode, PromoRewardKind, SubscriptionStatus, SupportRequestStatus, SystemEventLevel
 from altlink.domain.plans import (
+    START_WHITELIST_BALANCE_FLOOR_RUB,
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
     UNLIMITED_MONTHLY_PRICE_RUB,
     UNLIMITED_WEEKLY_PRICE_RUB,
+    WHITELIST_BILLING_VERSION,
     WHITELIST_GB_PRICE_RUB,
+    WHITELIST_TRAFFIC_PACKAGES,
     is_metered_plan_code,
     parse_paid_plan_code,
 )
@@ -43,6 +47,7 @@ from altlink.presentation.bots.client_keyboards import (
     device_detail_actions,
     device_list_actions,
     expired_subscription_actions,
+    insufficient_balance_actions,
     main_menu,
     menu_actions,
     plan_actions,
@@ -62,6 +67,8 @@ from altlink.presentation.bots.client_keyboards import (
     topup_checkout_actions,
     topup_actions,
     topup_provider_actions,
+    whitelist_package_actions,
+    whitelist_package_confirm_actions,
 )
 from altlink.utils.devices import hwid_device_fingerprint, hwid_device_view
 from altlink.utils.media import media_path
@@ -371,6 +378,7 @@ async def answer_or_edit_topup_checkout(
     can_check: bool = False,
     plan_action_text: str | None = None,
     selected_plan_code: PlanCode | None = None,
+    whitelist_topup: bool = False,
 ) -> None:
     payment_url = normalize_action_url(payment_url)
     reply_markup = topup_checkout_actions(
@@ -381,6 +389,7 @@ async def answer_or_edit_topup_checkout(
         plan_action_text=plan_action_text,
         selected_plan_code=selected_plan_code.value if selected_plan_code else None,
         selected_plan_token=plan_topup_token(selected_plan_code),
+        whitelist_topup=whitelist_topup,
     ).as_markup()
     if isinstance(target, CallbackQuery):
         rendered = False
@@ -415,8 +424,9 @@ async def handle_topup_checkout(
     admin_telegram_ids: list[int] | None = None,
     subscription=None,
     selected_plan_code: PlanCode | None = None,
+    whitelist_topup: bool = False,
 ) -> None:
-    selected_plan_action_text = (
+    selected_plan_action_text = None if whitelist_topup else (
         "🧾 Активировать выбранный тариф"
         if selected_plan_code is not None
         else topup_plan_action_text(subscription)
@@ -445,6 +455,7 @@ async def handle_topup_checkout(
             can_check=False,
             plan_action_text=selected_plan_action_text,
             selected_plan_code=selected_plan_code,
+            whitelist_topup=whitelist_topup,
         )
         return
 
@@ -463,6 +474,7 @@ async def handle_topup_checkout(
             can_check=True,
             plan_action_text=selected_plan_action_text,
             selected_plan_code=selected_plan_code,
+            whitelist_topup=whitelist_topup,
         )
         return
 
@@ -476,6 +488,7 @@ async def handle_topup_checkout(
         ),
         plan_action_text=selected_plan_action_text,
         selected_plan_code=selected_plan_code,
+        whitelist_topup=whitelist_topup,
     )
 
 
@@ -494,6 +507,7 @@ async def show_topup_provider_menu(
     providers: list[str],
     *,
     selected_plan_code: PlanCode | None = None,
+    allow_below_minimum: bool = False,
 ) -> None:
     amount_token = format_topup_amount_token(amount)
     provider_items = [(provider, topup_provider_label(provider)) for provider in providers]
@@ -504,6 +518,7 @@ async def show_topup_provider_menu(
             amount_token,
             provider_items,
             selected_plan_token=plan_topup_token(selected_plan_code),
+            flow_token="wl" if allow_below_minimum and selected_plan_code is None else None,
         ).as_markup(),
     )
 
@@ -515,6 +530,7 @@ async def continue_topup_flow(
     user,
     amount: Decimal,
     selected_plan_code: PlanCode | None = None,
+    allow_below_minimum: bool = False,
 ) -> None:
     checkout = None
     admin_telegram_ids: list[int] = []
@@ -554,7 +570,7 @@ async def continue_topup_flow(
                     user.id,
                     amount,
                     provider_code=providers[0],
-                    allow_below_minimum=selected_plan_code is not None,
+                    allow_below_minimum=selected_plan_code is not None or allow_below_minimum,
                 )
             except ConflictError as exc:
                 await answer_or_edit(target, str(exc), reply_markup=balance_actions().as_markup())
@@ -573,15 +589,25 @@ async def continue_topup_flow(
             admin_telegram_ids=admin_telegram_ids,
             subscription=subscription,
             selected_plan_code=selected_plan_code,
+            whitelist_topup=allow_below_minimum and selected_plan_code is None,
         )
         return
 
-    await show_topup_provider_menu(
-        target,
-        amount,
-        providers,
-        selected_plan_code=selected_plan_code,
-    )
+    if allow_below_minimum:
+        await show_topup_provider_menu(
+            target,
+            amount,
+            providers,
+            selected_plan_code=selected_plan_code,
+            allow_below_minimum=True,
+        )
+    else:
+        await show_topup_provider_menu(
+            target,
+            amount,
+            providers,
+            selected_plan_code=selected_plan_code,
+        )
 
 
 def agreement_url(settings) -> str | None:
@@ -758,6 +784,12 @@ def subscription_markup(subscription, *, latest_subscription=None):
         show_traffic=show_metered_usage(subscription),
         can_cancel=can_manage_auto_renew(subscription),
         auto_renew_disabled=bool(subscription and not subscription.auto_renew),
+        show_whitelist_packages=bool(
+            subscription
+            and subscription.plan is not None
+            and not subscription.plan.is_trial
+            and int(getattr(subscription, "whitelist_billing_version", 1) or 1) >= WHITELIST_BILLING_VERSION
+        ),
     ).as_markup()
 
 
@@ -1238,7 +1270,8 @@ def start_whitelist_notice_lines(subscription) -> list[str]:
     )
     return [
         f"⚠️ Start: белые списки тарифицируются отдельно — {whitelist_gb_price_text()}.",
-        "При балансе -50 ₽ доступ к белым спискам временно закрывается.",
+        f"При балансе {format_rub_compact(START_WHITELIST_BALANCE_FLOOR_RUB)} "
+        "доступ к белым спискам временно закрывается.",
         f"БС: {whitelist_used_gb:.2f} ГБ • учтено {whitelist_charged_rub:.2f} ₽",
     ]
 
@@ -1440,7 +1473,7 @@ def plan_menu_text() -> str:
                 "📱 До 2 устройств",
                 "∞ Безлимитный трафик на основном сервере",
                 "⚡ Один случайный высокоскоростной сервер",
-                f"🛡️ Белые списки отдельно: {whitelist_gb_price_sentence()}",
+                "🛡️ БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ",
                 marker="• ",
             ),
             sep="\n",
@@ -1452,7 +1485,7 @@ def plan_menu_text() -> str:
                 "📱 До 8 устройств",
                 "∞ Безлимитный трафик на всех серверах",
                 "🌐 Разные локации и серверы со скоростью до 10 Гбит/с",
-                "🛡️ Поддержка режима белых списков",
+                "🛡️ БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ",
                 marker="• ",
             ),
             sep="\n",
@@ -1477,7 +1510,6 @@ def plan_family_text(family: str) -> str:
                 "📱 До 2 устройств",
                 "∞ Безлимитный трафик на основном сервере",
                 "⚡ Один случайный высокоскоростной сервер",
-                "🏷️ В интерфейсе он отмечен ⚡",
                 marker="• ",
             ),
             as_list(
@@ -1485,7 +1517,7 @@ def plan_family_text(family: str) -> str:
                 "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а часть сайтов и приложений не открывается. ALTLINK помогает вернуть доступ к привычным сервисам!",
                 sep="\n",
             ),
-            f"🛡️ Для Start трафик через белые списки считается отдельно: {whitelist_gb_price_sentence()}.",
+            "🛡️ Включено 1 ГБ БС на неделю или 5 ГБ на месяц, затем 2 ₽/ГБ.",
             as_list(
                 Bold("Стоимость"),
                 f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
@@ -1503,7 +1535,7 @@ def plan_family_text(family: str) -> str:
             "∞ Безлимитный трафик на всех серверах",
             "🌐 Разные локации для выбора под ваш маршрут",
             "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с",
-            "🛡️ Поддержка режима белых списков",
+            "🛡️ Включено 10 ГБ БС на неделю или 50 ГБ на месяц, затем 2 ₽/ГБ",
             marker="• ",
         ),
         as_list(
@@ -1608,7 +1640,7 @@ def plan_menu_text() -> str:
                 "⚡ Один случайный высокоскоростной сервер",
                 "📱 До 2 устройств",
                 "∞ Безлимитный трафик на основном сервере",
-                f"🛡️ Белые списки отдельно: {whitelist_gb_price_sentence()}",
+                "🛡️ БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ",
                 marker="• ",
             ),
             sep="\n",
@@ -1621,7 +1653,7 @@ def plan_menu_text() -> str:
                 "📱 До 8 устройств",
                 "∞ Безлимитный трафик на всех серверах",
                 "🌐 Разные локации и серверы со скоростью до 10 Гбит/с",
-                "🛡️ Поддержка режима белых списков",
+                "🛡️ БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ",
                 marker="• ",
             ),
             sep="\n",
@@ -1671,7 +1703,7 @@ def plan_family_text(family: str, *, discount_preview: dict[str, object] | None 
                 "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а часть сайтов и приложений не открывается. ALTLINK помогает вернуть доступ к привычным сервисам!",
                 sep="\n",
             ),
-            f"🛡️ Для Start трафик через белые списки считается отдельно: {whitelist_gb_price_sentence()}.",
+            "🛡️ Включено 1 ГБ БС на неделю или 5 ГБ на месяц, затем 2 ₽/ГБ.",
             as_list(
                 Bold("Стоимость"),
                 *(price_lines or [
@@ -1693,7 +1725,7 @@ def plan_family_text(family: str, *, discount_preview: dict[str, object] | None 
             "∞ Безлимитный трафик на всех серверах",
             "🌐 Разные локации для выбора под ваш маршрут",
             "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с",
-            "🛡️ Поддержка режима белых списков",
+            "🛡️ Включено 10 ГБ БС на неделю или 50 ГБ на месяц, затем 2 ₽/ГБ",
             marker="• ",
         ),
         as_list(
@@ -1904,17 +1936,136 @@ async def show_subscription(target: Message | CallbackQuery, container: AppConta
     else:
         subscription = bundle.get("subscription")
     latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
+    body = subscription_text(
+        bundle,
+        [],
+        container.settings,
+        latest_subscription=latest_subscription,
+    )
+    if subscription is not None and subscription.plan is not None and not subscription.plan.is_trial:
+        status = await hub.billing.get_whitelist_traffic_status(user.id)
+        if status.legacy:
+            next_limit = Decimal(status.included_limit_bytes) / Decimal(1024**3)
+            body += (
+                "\n\nℹ️ Новые условия БС начнут действовать со следующего продления — "
+                f"{format_msk_datetime(status.period_ends_at)}. "
+                f"Будет включено {next_limit:g} ГБ, далее {status.price_per_gb_rub:g} ₽/ГБ."
+            )
+        else:
+            included_used = Decimal(status.included_used_bytes) / Decimal(1024**3)
+            included_limit = Decimal(status.included_limit_bytes) / Decimal(1024**3)
+            extra = Decimal(status.extra_remaining_bytes) / Decimal(1024**3)
+            body += (
+                "\n\n🛡️ Трафик белых списков\n"
+                f"Включено в тариф: {included_used:.1f} / {included_limit:g} ГБ\n"
+                f"Дополнительный трафик: {extra:.1f} ГБ\n"
+                f"После исчерпания: {status.price_per_gb_rub:g} ₽/ГБ\n"
+                f"Баланс: {status.balance_rub:.2f} ₽"
+            )
     await send_card_with_optional_media(
         target,
-        subscription_text(
-            bundle,
-            [],
-            container.settings,
-            latest_subscription=latest_subscription,
-        ),
+        body,
         primary_markup=subscription_markup(subscription, latest_subscription=latest_subscription),
         media_section="subscription",
         force_new_message=not isinstance(target, CallbackQuery),
+    )
+
+
+@router.callback_query(F.data == "client:whitelist_packages")
+async def whitelist_packages(callback: CallbackQuery, container: AppContainer):
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        status = await hub.billing.get_whitelist_traffic_status(user.id)
+        if status.legacy:
+            await callback.answer("Пакеты станут доступны после ближайшего продления.", show_alert=True)
+            return
+    extra = Decimal(status.extra_remaining_bytes) / Decimal(1024**3)
+    await answer_or_edit(
+        callback,
+        "🛡️ Дополнительный трафик белых списков\n\n"
+        f"Текущий остаток: {extra:.1f} ГБ\n"
+        "25 ГБ — 45 ₽ (1.80 ₽/ГБ)\n"
+        "50 ГБ — 85 ₽ (1.70 ₽/ГБ)\n"
+        "100 ГБ — 159 ₽ (1.59 ₽/ГБ, выгодно)\n"
+        "250 ГБ — 375 ₽ (1.50 ₽/ГБ)\n\n"
+        "Без пакета дальнейший трафик оплачивается по 2 ₽/ГБ.",
+        reply_markup=whitelist_package_actions().as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("client:whitelist_package_select:"))
+async def whitelist_package_select(callback: CallbackQuery, container: AppContainer):
+    code = (callback.data or "").rsplit(":", 1)[-1]
+    package = WHITELIST_TRAFFIC_PACKAGES.get(code)
+    if package is None:
+        await callback.answer("Пакет не найден.", show_alert=True)
+        return
+    request_key = secrets.token_hex(12)
+    regular_price = Decimal(package["gigabytes"]) * WHITELIST_GB_PRICE_RUB
+    saving = regular_price - Decimal(package["price_rub"])
+    await answer_or_edit(
+        callback,
+        f"Купить +{package['gigabytes']} ГБ за {package['price_rub']} ₽?\n"
+        f"Без пакета этот объём стоил бы {regular_price:g} ₽. Экономия {saving:g} ₽.",
+        reply_markup=whitelist_package_confirm_actions(code, request_key).as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("client:whitelist_package_buy:"))
+async def whitelist_package_buy(callback: CallbackQuery, container: AppContainer):
+    parts = (callback.data or "").split(":")
+    if len(parts) != 4:
+        await callback.answer("Кнопка устарела.", show_alert=True)
+        return
+    code, request_key = parts[2], parts[3]
+    package = WHITELIST_TRAFFIC_PACKAGES.get(code)
+    if package is None:
+        await callback.answer("Пакет не найден.", show_alert=True)
+        return
+    async with container.hub() as hub:
+        user = await ensure_client_access(callback, container, hub)
+        if user is None:
+            return
+        status = await hub.billing.get_whitelist_traffic_status(user.id)
+        package_price = Decimal(package["price_rub"])
+        purchase = None
+        if status.balance_rub < package_price:
+            missing = quantize_money(package_price - status.balance_rub)
+        else:
+            missing = Decimal("0")
+        try:
+            if missing == 0:
+                purchase = await hub.billing.purchase_whitelist_package(
+                    user.id, code, request_key=request_key
+                )
+        except ConflictError as exc:
+            await answer_or_edit(callback, str(exc), reply_markup=insufficient_balance_actions().as_markup())
+            return
+        if purchase is not None:
+            status = await hub.billing.get_whitelist_traffic_status(user.id)
+    if purchase is None:
+        await continue_topup_flow(
+            callback,
+            container,
+            user=user,
+            amount=missing,
+            allow_below_minimum=True,
+        )
+        return
+    extra = Decimal(status.extra_remaining_bytes) / Decimal(1024**3)
+    await answer_or_edit(
+        callback,
+        f"✅ Пакет +{purchase.traffic_bytes // 1024**3} ГБ куплен.\n"
+        f"Доступный дополнительный трафик: {extra:.1f} ГБ.",
+        reply_markup=subscription_actions(
+            show_link=True,
+            show_traffic=True,
+            can_cancel=True,
+            auto_renew_disabled=False,
+            show_whitelist_packages=True,
+        ).as_markup(),
     )
 
 
@@ -2738,12 +2889,13 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
         return
     _, _, provider_code, amount_token, *plan_tokens = parts
     amount = parse_topup_amount_token(amount_token)
+    whitelist_topup = bool(plan_tokens and plan_tokens[0] == "wl")
     selected_plan_code = (
         plan_code_from_topup_token(plan_tokens[0])
-        if plan_tokens
+        if plan_tokens and not whitelist_topup
         else None
     )
-    if plan_tokens and selected_plan_code is None:
+    if plan_tokens and selected_plan_code is None and not whitelist_topup:
         await callback.answer("Выбранный тариф больше недоступен.", show_alert=True)
         return
     async with container.hub() as hub:
@@ -2785,7 +2937,7 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
                 user.id,
                 amount,
                 provider_code=provider_code,
-                allow_below_minimum=selected_plan_code is not None,
+                allow_below_minimum=selected_plan_code is not None or whitelist_topup,
             )
         except ConflictError as exc:
             await answer_or_edit(callback, str(exc), reply_markup=balance_actions().as_markup())
@@ -2805,6 +2957,7 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
         admin_telegram_ids=admin_telegram_ids,
         subscription=subscription,
         selected_plan_code=selected_plan_code,
+        whitelist_topup=whitelist_topup,
     )
 
 
@@ -2815,12 +2968,13 @@ async def topup_check(callback: CallbackQuery, container: AppContainer):
         await callback.answer("Некорректные параметры платежа.", show_alert=True)
         return
     request_id = parts[2]
+    whitelist_topup = len(parts) == 4 and parts[3] == "wl"
     selected_plan_code = (
         plan_code_from_topup_token(parts[3])
-        if len(parts) == 4
+        if len(parts) == 4 and not whitelist_topup
         else None
     )
-    if len(parts) == 4 and selected_plan_code is None:
+    if len(parts) == 4 and selected_plan_code is None and not whitelist_topup:
         await callback.answer("Выбранный тариф больше недоступен.", show_alert=True)
         return
     async with container.hub() as hub:
@@ -2839,14 +2993,15 @@ async def topup_check(callback: CallbackQuery, container: AppContainer):
             f"Номер заявки: {snapshot.request.id}\n"
             "Баланс обновлён автоматически."
         )
-        markup = (
-            topup_checkout_actions(
+        if selected_plan_code is not None:
+            markup = topup_checkout_actions(
                 plan_action_text="🧾 Активировать выбранный тариф",
                 selected_plan_code=selected_plan_code.value,
             ).as_markup()
-            if selected_plan_code is not None
-            else balance_actions().as_markup()
-        )
+        elif whitelist_topup:
+            markup = whitelist_package_actions().as_markup()
+        else:
+            markup = balance_actions().as_markup()
     elif snapshot.provider == "yookassa":
         text = (
             "Статус оплаты\n\n"
@@ -2866,6 +3021,7 @@ async def topup_check(callback: CallbackQuery, container: AppContainer):
             ),
             selected_plan_code=selected_plan_code.value if selected_plan_code else None,
             selected_plan_token=plan_topup_token(selected_plan_code),
+            whitelist_topup=whitelist_topup,
         ).as_markup()
     else:
         text = (
