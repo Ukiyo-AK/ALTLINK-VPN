@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,7 @@ import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, Update
 
+from altlink.domain.enums import PlanCode
 from altlink.presentation.bots import admin_handlers
 from altlink.presentation.bots.admin_keyboards import user_message_prompt_actions
 
@@ -494,6 +496,34 @@ async def test_show_user_card_formats_without_missing_attributes_exception():
 
     assert answers
     assert "Telegram ID: 123456" in answers[0]
+
+
+@pytest.mark.asyncio
+async def test_show_user_card_does_not_lazy_load_assigned_server_after_session_closes(test_services):
+    answers: list[str] = []
+
+    class DummyTarget:
+        async def answer(self, text: str, reply_markup=None, **kwargs):
+            answers.append(text)
+            return SimpleNamespace(chat=SimpleNamespace(id=1), message_id=1)
+
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=123457,
+            username="assigned_server_card",
+            first_name="Assigned",
+            last_name="Server",
+            language_code="ru",
+        )
+        await hub.topups.create_request(user.id, Decimal("500"), auto_complete=True)
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
+        user_id = user.id
+
+    await admin_handlers.show_user_card(DummyTarget(), user_id, test_services)
+
+    assert answers
+    assert "Telegram ID: 123457" in answers[0]
+    assert "Назначенный сервер:" in answers[0]
 
 
 @pytest.mark.asyncio

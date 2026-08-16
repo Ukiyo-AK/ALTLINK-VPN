@@ -33,7 +33,7 @@ from altlink.domain.enums import (
 )
 from altlink.domain.plans import is_metered_plan_code, parse_paid_plan_code
 from altlink.domain.traffic_limits import BYTES_PER_GIB, traffic_limit_strategy_label
-from altlink.infrastructure.db.models import PromoCode, TrafficSnapshot
+from altlink.infrastructure.db.models import PromoCode, Server, TrafficSnapshot
 from altlink.presentation.bots.admin_keyboards import (
     DATABASE_BACKUP_CANCEL_IMPORT,
     DATABASE_BACKUP_CONFIRM_IMPORT,
@@ -979,11 +979,20 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         registered = hub.accounts.is_registered(user)
         topups = card.get("topups", [])
         transactions = card.get("transactions", [])
+        assigned_server_name = "не назначен"
+        assigned_server_id = getattr(user, "assigned_server_id", None)
+        if assigned_server_id and getattr(hub, "session", None) is not None:
+            assigned_server_name = (
+                await hub.session.scalar(select(Server.name).where(Server.id == assigned_server_id))
+                or assigned_server_name
+            )
+        else:
+            loaded_assigned_server = vars(user).get("assigned_server")
+            if loaded_assigned_server is not None:
+                assigned_server_name = loaded_assigned_server.name
 
     if not hasattr(user, "id"):
         user.id = user_id
-    if not hasattr(user, "assigned_server"):
-        user.assigned_server = None
     if not hasattr(user, "remnawave_user_uuid"):
         user.remnawave_user_uuid = None
     if not hasattr(user, "remnawave_short_uuid"):
@@ -994,7 +1003,7 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
     plan = subscription.plan if subscription else getattr(latest_subscription, "plan", None)
     plan_name = plan.name if plan else "не выбран"
     next_billing = format_msk_datetime(subscription.next_billing_at) if subscription else "—"
-    assigned_server = user.assigned_server.name if user.assigned_server else "не назначен"
+    assigned_server = assigned_server_name
     if getattr(user, "traffic_limit_bytes_override", None) is None:
         traffic_limit = "по тарифу"
         traffic_strategy = "по тарифу"
