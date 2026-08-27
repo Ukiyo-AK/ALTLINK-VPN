@@ -949,19 +949,28 @@ async def maintenance_screen(
 
 
 async def show_user_card(target: Message | CallbackQuery, user_id: str, container: AppContainer):
+    # Keep the optional Remnawave refresh isolated: a failed flush must not poison
+    # the session used to build the card itself.
+    try:
+        async with container.hub() as refresh_hub:
+            get_user = getattr(refresh_hub.accounts, "get_user", None)
+            billing = getattr(refresh_hub, "billing", None)
+            if get_user is not None and billing is not None:
+                refresh_user = await get_user(user_id)
+                if getattr(refresh_user, "remnawave_user_uuid", None):
+                    await billing.refresh_subscription_traffic(refresh_user.id)
+    except Exception:
+        logger.warning(
+            "Failed to refresh subscription traffic for user_id=%s before rendering admin card.",
+            user_id,
+            exc_info=True,
+        )
+
     async with container.hub() as hub:
         card = await hub.accounts.user_card(user_id)
         user = card["user"]
         subscription = card["subscription"]
         latest_snapshot = None
-        if subscription is not None and getattr(user, "remnawave_user_uuid", None) and getattr(hub, "billing", None):
-            try:
-                refreshed_subscription = await hub.billing.refresh_subscription_traffic(user.id)
-            except Exception:
-                logger.warning("Failed to refresh subscription traffic for user_id=%s before rendering admin card.", user.id)
-            else:
-                if refreshed_subscription is not None:
-                    subscription = refreshed_subscription
         if getattr(hub, "session", None) is not None:
             latest_snapshot = await hub.session.scalar(
                 select(TrafficSnapshot)
@@ -984,10 +993,11 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         assigned_server_available = False
         assigned_server_id = getattr(user, "assigned_server_id", None)
         if assigned_server_id and getattr(hub, "session", None) is not None:
-            assigned_server_row = await hub.session.get(
-                Server,
-                assigned_server_id,
-                options=[selectinload(Server.inbounds)],
+            assigned_server_row = await hub.session.scalar(
+                select(Server)
+                .where(Server.id == assigned_server_id)
+                .options(selectinload(Server.inbounds))
+                .execution_options(populate_existing=True)
             )
             if assigned_server_row is not None:
                 assigned_server_name = assigned_server_row.name

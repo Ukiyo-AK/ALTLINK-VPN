@@ -21,7 +21,7 @@ from altlink.utils.time import utc_now
 
 
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
-MIN_TOPUP_AMOUNT_RUB = Decimal("50")
+MIN_TOPUP_AMOUNT_RUB = Decimal("40")
 
 
 @dataclass(slots=True)

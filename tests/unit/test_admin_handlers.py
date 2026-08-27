@@ -568,6 +568,60 @@ async def test_show_user_card_does_not_lazy_load_assigned_server_after_session_c
     assert "????" not in answers[0]
 
 
+@pytest.mark.asyncio
+async def test_show_user_card_still_opens_when_remote_traffic_refresh_fails():
+    answers: list[str] = []
+    refresh_traffic = AsyncMock(side_effect=RuntimeError("remote unavailable"))
+    hub_calls = 0
+
+    class DummyTarget:
+        async def answer(self, text: str, reply_markup=None, **kwargs):
+            answers.append(text)
+
+    async def get_refresh_user(user_id: str):
+        return SimpleNamespace(id=user_id, remnawave_user_uuid="remote-user")
+
+    async def fake_user_card(user_id: str):
+        return {
+            "user": SimpleNamespace(
+                id=user_id,
+                telegram_id=123458,
+                username="refresh_failure",
+                assigned_server_id=None,
+                balance_rub=0,
+                status="active",
+                registration_completed_at=None,
+                consent_accepted_at=None,
+                remnawave_user_uuid="remote-user",
+                remnawave_short_uuid="short-user",
+                referral_code="REFRESH1",
+            ),
+            "subscription": None,
+            "topups": [],
+            "transactions": [],
+        }
+
+    @asynccontextmanager
+    async def fake_hub():
+        nonlocal hub_calls
+        hub_calls += 1
+        if hub_calls == 1:
+            yield SimpleNamespace(
+                accounts=SimpleNamespace(get_user=get_refresh_user),
+                billing=SimpleNamespace(refresh_subscription_traffic=refresh_traffic),
+            )
+            return
+        yield SimpleNamespace(
+            accounts=SimpleNamespace(user_card=fake_user_card, is_registered=lambda user: False),
+        )
+
+    await admin_handlers.show_user_card(DummyTarget(), "user-1", SimpleNamespace(hub=fake_hub))
+
+    refresh_traffic.assert_awaited_once_with("user-1")
+    assert answers
+    assert "Telegram ID: 123458" in answers[0]
+
+
 def test_admin_handlers_do_not_contain_corrupted_user_messages():
     content = Path("src/altlink/presentation/bots/admin_handlers.py").read_text(encoding="utf-8")
 

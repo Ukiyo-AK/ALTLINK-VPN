@@ -336,7 +336,7 @@ def test_home_text_keeps_menu_compact_and_mentions_cabinet_button():
     assert "БС:" not in text
 
 
-def test_home_text_for_start_shows_whitelist_tariff_warning_and_totals():
+def test_home_text_for_start_does_not_show_legacy_whitelist_debt_copy():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("42.50"), status="active")
     subscription = SimpleNamespace(
@@ -348,9 +348,9 @@ def test_home_text_for_start_shows_whitelist_tariff_warning_and_totals():
 
     text = client_handlers.home_text(user, subscription, settings)
 
-    assert "⚠️ Start: белые списки тарифицируются отдельно — 2 ₽/ГБ." in text
-    assert "При балансе -10 ₽ доступ к белым спискам временно закрывается." in text
-    assert "БС: 2.00 ГБ • учтено 4.00 ₽" in text
+    assert "белые списки тарифицируются отдельно" not in text
+    assert "При балансе -10 ₽" not in text
+    assert "БС: 2.00 ГБ" not in text
 
 
 def test_profile_text_keeps_only_key_details_and_links():
@@ -386,7 +386,7 @@ def test_profile_text_keeps_only_key_details_and_links():
     assert "Белые списки:" not in text
 
 
-def test_profile_text_for_start_shows_whitelist_tariff_warning_and_totals():
+def test_profile_text_for_start_does_not_show_legacy_whitelist_debt_copy():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("42.50"))
     subscription = SimpleNamespace(
@@ -399,9 +399,9 @@ def test_profile_text_for_start_shows_whitelist_tariff_warning_and_totals():
 
     text = client_handlers.profile_text(user, subscription, settings)
 
-    assert "⚠️ Start: белые списки тарифицируются отдельно — 2 ₽/ГБ." in text
-    assert "При балансе -10 ₽ доступ к белым спискам временно закрывается." in text
-    assert "БС: 2.00 ГБ • учтено 4.00 ₽" in text
+    assert "белые списки тарифицируются отдельно" not in text
+    assert "При балансе -10 ₽" not in text
+    assert "БС: 2.00 ГБ" not in text
 
 
 def test_home_text_without_subscription_points_user_to_subscription_button():
@@ -695,6 +695,7 @@ def test_topup_menu_text_lists_tariff_prices():
     text = client_handlers.topup_menu_text()
 
     assert "Выберите сумму пополнения." in text
+    assert "Минимальная сумма — 40 ₽." in text
     assert "Ориентир по тарифам:" in text
     assert "Start: 30 ₽ в неделю или 69 ₽ в месяц" in text
     assert "Pro: 65 ₽ в неделю или 199 ₽ в месяц" in text
@@ -975,7 +976,7 @@ async def test_continue_topup_flow_raises_shortage_to_minimum_payment(
         whitelist_topup=whitelist_topup,
     )
 
-    assert captured["amount"] == Decimal("50")
+    assert captured["amount"] == Decimal("40")
     assert captured["providers"] == ["yookassa", "manual"]
     assert captured["selected_plan_code"] == selected_plan_code
     assert captured["whitelist_topup"] is whitelist_topup

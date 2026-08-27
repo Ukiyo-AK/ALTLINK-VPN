@@ -71,6 +71,17 @@ def test_portal_dashboard_template_supports_one_tap_copy_for_subscription_link()
     assert "subscription-link-preview" in content
 
 
+def test_portal_topup_form_shows_and_enforces_forty_ruble_minimum():
+    content = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
+    routes = Path("src/altlink/presentation/web/routes.py").read_text(encoding="utf-8")
+
+    assert "Своя сумма (минимум {{ portal_min_topup_amount_rub|rub }} ₽)" in content
+    assert 'min="{{ portal_min_topup_amount_rub|rub }}"' in content
+    assert "portal_min_topup_amount_rub" in routes
+    assert "MIN_TOPUP_AMOUNT_RUB" in routes
+    assert 'min="50"' not in content
+
+
 def test_public_templates_keep_personal_account_action_only_where_needed():
     landing = (TEMPLATE_ROOT / "landing.html").read_text(encoding="utf-8")
     portal_login = (TEMPLATE_ROOT / "portal_login.html").read_text(encoding="utf-8")

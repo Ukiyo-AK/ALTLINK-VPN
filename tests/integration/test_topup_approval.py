@@ -454,8 +454,8 @@ async def test_topup_checkout_rejects_amounts_below_minimum(test_services):
             last_name="Small",
             language_code="ru",
         )
-        with pytest.raises(ConflictError, match="Минимальная сумма пополнения — 50 ₽"):
-            await hub.topups.create_checkout(user.id, Decimal("49"))
+        with pytest.raises(ConflictError, match="Минимальная сумма пополнения — 40 ₽"):
+            await hub.topups.create_checkout(user.id, Decimal("39"))
 
 
 @pytest.mark.asyncio

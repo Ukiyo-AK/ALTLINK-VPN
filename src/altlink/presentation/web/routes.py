@@ -65,6 +65,7 @@ from altlink.infrastructure.db.models import (
 from altlink.application.services.billing import DEFAULT_PROMO_CAMPAIGN_SETTINGS, PROMO_CAMPAIGN_SETTINGS_KEY
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.monitoring import MonitoringService
+from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.presentation.bots.admin_keyboards import support_request_actions
 from altlink.utils.latency import (
     LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY,
@@ -1204,6 +1205,7 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_referral_earned_total": referral["earned_total"],
         "portal_referral_link": referral_link,
         "portal_topup_links": topup_links,
+        "portal_min_topup_amount_rub": MIN_TOPUP_AMOUNT_RUB,
         "portal_whitelist_status": whitelist_status,
         "portal_whitelist_packages": whitelist_packages,
         "portal_url": f"{settings.backend_public_url.rstrip('/')}/portal",

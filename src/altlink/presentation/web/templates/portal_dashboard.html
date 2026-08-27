@@ -775,8 +775,8 @@
         {% endfor %}
       </div>
       <label class="portal-topup-field">
-        <span>Своя сумма</span>
-        <input type="number" min="50" step="1" inputmode="numeric" data-topup-amount-input value="{{ portal_topup_links[0].amount if portal_topup_links else 100 }}">
+        <span>Своя сумма (минимум {{ portal_min_topup_amount_rub|rub }} ₽)</span>
+        <input type="number" min="{{ portal_min_topup_amount_rub|rub }}" step="1" inputmode="numeric" data-topup-amount-input value="{{ portal_topup_links[0].amount if portal_topup_links else 100 }}">
       </label>
       <div class="portal-topup-promo">
         <label>
@@ -1309,7 +1309,7 @@
       };
 
       const selectedAmount = () => Number(amountInput?.value || amountButtons[0]?.dataset.topupAmount || 0);
-      const minimumAmount = Number(amountInput?.min || 50);
+      const minimumAmount = Number(amountInput?.min || 0);
 
       amountButtons.forEach((button) => {
         button.addEventListener("click", () => {

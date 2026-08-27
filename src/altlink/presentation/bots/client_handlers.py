@@ -21,7 +21,6 @@ from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.domain.billing import bytes_to_gb_cost, quantize_money
 from altlink.domain.enums import PlanCode, PromoRewardKind, SubscriptionStatus, SupportRequestStatus, SystemEventLevel
 from altlink.domain.plans import (
-    START_WHITELIST_BALANCE_FLOOR_RUB,
     SINGLE_10GBIT_MONTHLY_PRICE_RUB,
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
     UNLIMITED_MONTHLY_PRICE_RUB,
@@ -224,7 +223,11 @@ def topup_tariff_prices_text() -> str:
 
 
 def topup_menu_text() -> str:
-    return f"Выберите сумму пополнения.\n\n{topup_tariff_prices_text()}"
+    return (
+        "Выберите сумму пополнения.\n"
+        f"Минимальная сумма — {MIN_TOPUP_AMOUNT_RUB:.0f} ₽.\n\n"
+        f"{topup_tariff_prices_text()}"
+    )
 
 
 def topup_plan_action_text(subscription) -> str:
@@ -1323,23 +1326,6 @@ async def create_portal_autologin_url(hub, settings, user_id: str) -> str | None
     return portal_login_resume_url(settings, attempt.token)
 
 
-def start_whitelist_notice_lines(subscription) -> list[str]:
-    plan_code = getattr(subscription.plan, "code", None) if subscription and subscription.plan else None
-    if not (plan_code and is_metered_plan_code(plan_code)):
-        return []
-    whitelist_used_gb = max(int(getattr(subscription, "whitelist_traffic_used_bytes", 0) or 0), 0) / 1024**3
-    whitelist_charged_rub = bytes_to_gb_cost(
-        max(int(getattr(subscription, "whitelist_traffic_billed_bytes", 0) or 0), 0),
-        WHITELIST_GB_PRICE_RUB,
-    )
-    return [
-        f"⚠️ Start: белые списки тарифицируются отдельно — {whitelist_gb_price_text()}.",
-        f"При балансе {format_rub_compact(START_WHITELIST_BALANCE_FLOOR_RUB)} "
-        "доступ к белым спискам временно закрывается.",
-        f"БС: {whitelist_used_gb:.2f} ГБ • учтено {whitelist_charged_rub:.2f} ₽",
-    ]
-
-
 def home_text(user, subscription, settings, latest_subscription=None) -> str:
     if subscription:
         lines = [
@@ -1348,7 +1334,6 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
             f"Текущий тариф: {subscription.plan.name}",
             f"Формат списания: {billing_cycle_label(subscription.plan)}",
             f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
-            *start_whitelist_notice_lines(subscription),
             "✨ Всё управление VPN доступно кнопками ниже.",
         ]
         if subscription.notes:
@@ -1403,7 +1388,6 @@ def profile_text(user, subscription, settings, *, total_traffic_bytes: int = 0) 
         f"Тариф: {plan_name}",
     ]
     if subscription:
-        lines.extend(start_whitelist_notice_lines(subscription))
         if subscription.plan and not subscription.plan.is_trial:
             auto_renew = "включено" if subscription.auto_renew else "отключено"
             lines.append(f"Автопродление: {auto_renew}")
