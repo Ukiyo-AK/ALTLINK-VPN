@@ -23,6 +23,7 @@ from altlink.presentation.bots.client_keyboards import (
     portal_login_complete_actions,
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
+    referral_actions,
     subscription_link_actions,
     subscription_actions,
     subscription_details_actions,
@@ -102,6 +103,18 @@ def test_menu_actions_can_show_quick_plan_for_new_or_trial_users():
     plan_button = next(button for button in buttons if button["text"] == "🧾 Выбрать тариф")
     assert plan_button["callback_data"] == "client:plan_menu"
     assert plan_button["style"] == "success"
+
+
+def test_referral_actions_offer_share_and_clear_navigation():
+    share_url = "https://t.me/share/url?url=https%3A%2F%2Ft.me%2FAltlinkbot%3Fstart%3Dref_TEST"
+    markup = referral_actions(share_url=share_url).as_markup()
+    rows = inline_rows(markup)
+    buttons = inline_buttons(markup)
+
+    assert rows == [["📤 Поделиться ссылкой"], ["💳 Баланс", "🏠 Меню"]]
+    share_button = next(button for button in buttons if button["text"] == "📤 Поделиться ссылкой")
+    assert share_button["url"] == share_url
+    assert share_button["style"] == "success"
 
 
 def test_balance_actions_make_history_primary():

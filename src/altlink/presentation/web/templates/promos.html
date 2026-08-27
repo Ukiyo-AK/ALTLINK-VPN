@@ -168,7 +168,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
-  const promoCharts = {{ promo_charts_json | safe }};
+  const promoCharts = {{ promo_stats.charts | tojson }};
 
   new Chart(document.getElementById("promoKindChart"), {
     type: "bar",

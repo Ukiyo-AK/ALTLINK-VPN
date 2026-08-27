@@ -143,9 +143,19 @@ def balance_actions() -> InlineKeyboardBuilder:
     builder.button(text="➕ Пополнить баланс", callback_data="client:topup_menu", style="success")
     builder.button(text="🧾 История платежей", callback_data="client:my_topups", style="primary")
     builder.button(text="🎟 Промокод", callback_data="client:promo_prompt", style="primary")
-    builder.button(text="👥 Рефералка", callback_data="client:referral", style="success")
+    builder.button(text="👥 Пригласить друга", callback_data="client:referral", style="success")
     builder.button(text="🏠 Меню", callback_data="client:home")
     builder.adjust(2, 2, 1)
+    return builder
+
+
+def referral_actions(*, share_url: str | None = None) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    if share_url:
+        builder.button(text="📤 Поделиться ссылкой", url=share_url, style="success")
+    builder.button(text="💳 Баланс", callback_data="client:balance", style="primary")
+    builder.button(text="🏠 Меню", callback_data="client:home")
+    builder.adjust(*([1, 2] if share_url else [2]))
     return builder
 
 

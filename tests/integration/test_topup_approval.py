@@ -17,7 +17,7 @@ from altlink.utils.time import utc_now
 
 
 @pytest.mark.asyncio
-async def test_topup_below_minimum_requires_verified_plan_shortage(test_services):
+async def test_topup_below_minimum_is_always_rejected(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=3000,
@@ -33,15 +33,20 @@ async def test_topup_below_minimum_requires_verified_plan_shortage(test_services
                 auto_complete=False,
             )
 
-        request = await hub.topups.create_request(
-            user.id,
-            Decimal("37.50"),
-            auto_complete=False,
-            allow_below_minimum=True,
-        )
 
-        assert Decimal(request.amount_rub) == Decimal("37.50")
-        assert str(request.status) == "new"
+@pytest.mark.asyncio
+@pytest.mark.parametrize("amount", [Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")])
+async def test_topup_rejects_non_finite_amounts(test_services, amount):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=3017,
+            username="invalid_amount",
+            first_name="Invalid",
+            last_name="Amount",
+            language_code="ru",
+        )
+        with pytest.raises(ConflictError, match="корректную сумму"):
+            await hub.topups.create_request(user.id, amount, auto_complete=False)
 
 
 @pytest.mark.asyncio

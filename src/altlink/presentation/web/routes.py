@@ -98,7 +98,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260815-whitelist-billing"
+ASSET_VERSION = "20260827-admin-analytics"
 COUNTRY_NAMES_RU = {
     "AM": "Армения",
     "AT": "Австрия",
@@ -1415,23 +1415,44 @@ async def dashboard(request: Request, period: str = "2w", refresh: bool = False)
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-    if refresh:
-        async with container.hub() as sync_hub:
-            await sync_server_catalog_if_possible(sync_hub)
-        await sync_dashboard_traffic_if_possible(container)
-    async with container.hub() as hub:
-        overview = await hub.dashboard.overview(period=period)
+        summary = await hub.dashboard.summary()
         return render(
             request,
             "dashboard.html",
             title="Dashboard",
             admin=admin,
-            overview=overview,
-            charts=overview["charts"],
-            charts_json=json.dumps(overview["charts"], ensure_ascii=False),
-            selected_period=overview["period"],
-            refresh_requested=refresh,
+            summary=summary,
             active_nav="dashboard",
+        )
+
+
+@router.get("/admin/analytics")
+async def analytics(request: Request, period: str = "2w"):
+    selected_server_ids = request.query_params.getlist("server_id")
+    async with request.app.state.container.hub() as hub:
+        admin = await resolve_admin(request, hub)
+        if admin is None:
+            return login_redirect()
+        overview = await hub.dashboard.overview(period=period)
+        server_analytics = await hub.dashboard.server_analytics(
+            period=period,
+            selected_server_ids=selected_server_ids,
+        )
+        charts = {
+            "business": overview["charts"],
+            "servers": server_analytics["charts"],
+        }
+        return render(
+            request,
+            "analytics.html",
+            title="Аналитика",
+            admin=admin,
+            overview=overview,
+            server_analytics=server_analytics,
+            charts=charts,
+            charts_json=json.dumps(charts, ensure_ascii=False),
+            selected_period=overview["period"],
+            active_nav="analytics",
         )
 
 
@@ -1585,6 +1606,7 @@ async def user_detail(request: Request, user_id: str):
             bundle=bundle,
             user_servers=user_servers,
             available_start_servers=available_start_servers,
+            assigned_start_server_usable=hub.catalog.is_server_usable(card["user"].assigned_server),
             is_start_subscription=bool(
                 card["subscription"]
                 and card["subscription"].plan
@@ -3072,6 +3094,8 @@ async def portal_payment_create(request: Request) -> JSONResponse:
     try:
         amount = Decimal(str(body.get("amount") or "0"))
     except Exception:
+        return JSONResponse({"success": False, "message": "Введите корректную сумму."}, status_code=400)
+    if not amount.is_finite():
         return JSONResponse({"success": False, "message": "Введите корректную сумму."}, status_code=400)
     if amount <= 0:
         return JSONResponse({"success": False, "message": "Введите сумму пополнения."}, status_code=400)

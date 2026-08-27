@@ -12,6 +12,38 @@ from altlink.scheduler import jobs as scheduler_jobs
 
 
 @pytest.mark.asyncio
+async def test_server_health_job_refreshes_without_failover_and_captures_metrics():
+    refresh_health = AsyncMock(return_value={"changed_servers": [], "start_failovers": []})
+    list_servers = AsyncMock(return_value=[])
+    capture_metrics = AsyncMock(return_value=0)
+    record_state = AsyncMock(return_value=[])
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            catalog=SimpleNamespace(
+                refresh_server_health=refresh_health,
+                list_servers=list_servers,
+            ),
+            dashboard=SimpleNamespace(capture_server_metrics=capture_metrics),
+            monitoring=SimpleNamespace(record_server_operational_state=record_state),
+            accounts=SimpleNamespace(list_admin_telegram_ids=AsyncMock(return_value=[])),
+        )
+
+    container = SimpleNamespace(
+        hub=fake_hub,
+        settings=SimpleNamespace(admin_bot_token="admin-token"),
+    )
+
+    await scheduler_jobs.server_health_job(container)
+
+    refresh_health.assert_awaited_once_with()
+    list_servers.assert_awaited_once_with()
+    capture_metrics.assert_awaited_once_with()
+    record_state.assert_awaited_once_with([])
+
+
+@pytest.mark.asyncio
 async def test_user_abuse_monitor_job_ignores_many_active_ip_alerts(monkeypatch):
     sent_messages: list[dict] = []
     alert = MonitoringAlert(

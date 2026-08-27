@@ -126,8 +126,9 @@ def user_start_server_actions(
     for server in visible_servers:
         marker = "✓ " if server.id == current_server_id else ""
         country = f" [{server.country_code.upper()}]" if server.country_code else ""
+        load = f" · {int(getattr(server, 'current_clients', 0) or 0)}/{int(getattr(server, 'users_online', 0) or 0)}"
         builder.button(
-            text=f"{marker}{server.name}{country}"[:60],
+            text=f"{marker}{server.name}{country}{load}"[:60],
             callback_data=(
                 f"{USER_START_SERVER_ASSIGN_PREFIX}:{page}:"
                 f"{compact_callback_uuid(server.id)}:{compact_callback_uuid(user_id)}"

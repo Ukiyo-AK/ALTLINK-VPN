@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="dashboard-section-nav" aria-label="Разделы аналитики">
+  <a href="#analytics-users">Пользователи</a>
+  <a href="#analytics-finance">Финансы</a>
+  <a href="#analytics-plans">Тарифы</a>
+  <a href="#analytics-infrastructure">Инфраструктура</a>
+  <a href="#analytics-lists">Срезы</a>
+</nav>
+
+<section class="panel dashboard-toolbar-panel analytics-toolbar">
+  <div>
+    <span class="badge highlight">Отчёты</span>
+    <h1>Аналитика ALTLINK</h1>
+    <p class="muted">Пользователи, выручка и инфраструктура собраны отдельно от быстрого оперативного дашборда.</p>
+  </div>
+  <form method="get" action="/admin/analytics" class="dashboard-filter-form analytics-filter-form">
+    <label>
+      <span class="muted">Период</span>
+      <select name="period" aria-label="Период аналитики">
+        {% for item in overview.period_options %}
+        <option value="{{ item.value }}" {% if item.value == selected_period %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <details class="analytics-server-filter">
+      <summary>Серверы · {{ server_analytics.selected_server_ids|length }}</summary>
+      <div class="analytics-server-options">
+        <p class="muted">Для сравнения можно выбрать до {{ server_analytics.selection_limit }} серверов.</p>
+        {% for server in server_analytics.server_options %}
+        <label>
+          <input
+            type="checkbox"
+            name="server_id"
+            value="{{ server.id }}"
+            {% if server.id in server_analytics.selected_server_ids %}checked{% endif %}
+          >
+          <span>{{ server.name }}{% if server.country_code %} · {{ server.country_code|upper }}{% endif %}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </details>
+    <button type="submit" class="button">Применить</button>
+  </form>
+</section>
+
+<section class="cards analytics-kpis">
+  <article class="card"><div class="muted">Активные</div><strong>{{ overview.active_users }}</strong></article>
+  <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>
+  <article class="card"><div class="muted">Новые за {{ overview.period_label }}</div><strong>{{ overview.new_users_in_period }}</strong></article>
+  <article class="card"><div class="muted">Новые платные</div><strong>{{ overview.new_paid_users_in_period }}</strong></article>
+  <article class="card"><div class="muted">Пополнения</div><strong>{{ overview.payments_total_rub|rub }} ₽</strong></article>
+  <article class="card"><div class="muted">Трафик всего</div><strong>{{ '%.2f'|format(overview.total_traffic_bytes / 1024**3) }} ГБ</strong></article>
+</section>
+
+<section class="dashboard-section" id="analytics-users" data-section-title="Пользователи">
+  <div class="analytics-section-head">
+    <div><span>01</span><h2>Пользователи</h2></div>
+    <p class="muted">Динамика базы и путь от регистрации до платной подписки.</p>
+  </div>
+  <div class="grid-two">
+    <article class="panel chart-box chart-box-tall">
+      <div class="split chart-head">
+        <div><h2>Динамика пользователей</h2><p class="muted">Активные, тестовые и новые регистрации.</p></div>
+        <span class="badge">{{ overview.period_label }}</span>
+      </div>
+      <canvas id="usersChart"></canvas>
+    </article>
+    <article class="panel chart-box chart-box-tall conversion-chart-box">
+      <div class="split chart-head">
+        <div><h2>Конверсия новых пользователей</h2><p class="muted">Последовательная воронка выбранного периода.</p></div>
+        <span class="badge">{{ overview.period_label }}</span>
+      </div>
+      <div class="conversion-stages">
+        {% for stage in charts.business.conversion_funnel.stages %}
+        <div class="conversion-stage">
+          <strong>{{ stage.count }}</strong><span>{{ stage.label }}</span>
+          <small>{{ stage.percent_of_new }}% от новых{% if not loop.first %} · {{ stage.percent_from_previous }}% от прошлого шага{% endif %}</small>
+        </div>
+        {% endfor %}
+      </div>
+      <canvas id="conversionFunnelChart"></canvas>
+    </article>
+  </div>
+</section>
+
+<section class="dashboard-section" id="analytics-finance" data-section-title="Финансы">
+  <div class="analytics-section-head">
+    <div><span>02</span><h2>Финансы и трафик</h2></div>
+    <p class="muted">Поступления и изменение объёма трафика по сохранённым данным.</p>
+  </div>
+  <div class="grid-two">
+    <article class="panel chart-box"><div class="split"><h2>Выручка</h2><span class="badge highlight">{{ overview.period_label }}</span></div><canvas id="paymentsChart"></canvas></article>
+    <article class="panel chart-box"><div class="split"><h2>Трафик</h2><span class="badge">Снимки</span></div><canvas id="trafficChart"></canvas></article>
+  </div>
+</section>
+
+<section class="dashboard-section" id="analytics-plans" data-section-title="Тарифы">
+  <div class="analytics-section-head">
+    <div><span>03</span><h2>Тарифы</h2></div>
+    <p class="muted">Новые активации и текущая структура платной аудитории.</p>
+  </div>
+  <div class="grid-two">
+    <article class="panel chart-box chart-box-tall"><div class="split"><h2>Новые подписки</h2><span class="badge">{{ overview.period_label }}</span></div><canvas id="planSignupsChart"></canvas></article>
+    <article class="panel chart-box"><div class="split"><h2>Статусы пользователей</h2><span class="badge">Текущий срез</span></div><canvas id="statusChart"></canvas></article>
+    <article class="panel chart-box"><div class="split"><h2>Start / Pro</h2><span class="badge">Активные платные</span></div><canvas id="planMixChart"></canvas></article>
+    <article class="panel analytics-plan-summary">
+      <h2>Срез по тарифам</h2>
+      <div><span>Start</span><strong>{{ charts["business"]["plan_mix"]["values"][0] }}</strong></div>
+      <div><span>Pro</span><strong>{{ charts["business"]["plan_mix"]["values"][1] }}</strong></div>
+    </article>
+  </div>
+</section>
+
+<section class="dashboard-section" id="analytics-infrastructure" data-section-title="Инфраструктура">
+  <div class="analytics-section-head">
+    <div><span>04</span><h2>Инфраструктура</h2></div>
+    <p class="muted">
+      Доступность и пользователи на серверах. История обновляется автоматически каждые 5 минут.
+      {% if server_analytics.last_captured_at %}Последний снимок: {{ server_analytics.last_captured_at|msk_datetime }}.{% endif %}
+    </p>
+  </div>
+
+  <div class="analytics-uptime-grid">
+    {% for item in server_analytics.uptime_cards %}
+    <article class="panel analytics-uptime-card">
+      <div class="split">
+        <div><strong>{{ item.server.name }}</strong><small class="muted">{{ item.server.country_code|upper if item.server.country_code else '—' }} · {{ item.server.server_type.value }}</small></div>
+        <span class="badge {{ 'highlight' if item.operational else 'warning' }}">{{ 'В работе' if item.operational else 'Недоступен' }}</span>
+      </div>
+      <div class="analytics-uptime-value">
+        <strong>{{ item.uptime_percent ~ '%' if item.uptime_percent is not none else '—' }}</strong>
+        <span class="muted">доступность за {{ server_analytics.period_label }}</span>
+      </div>
+      <dl>
+        <div><dt>Xray uptime</dt><dd>{{ item.xray_uptime or '—' }}</dd></div>
+        <div><dt>Назначено</dt><dd>{{ item.server.current_clients }}</dd></div>
+        <div><dt>Онлайн</dt><dd>{{ item.server.users_online }}</dd></div>
+        <div><dt>Снимков</dt><dd>{{ item.sample_count }}</dd></div>
+      </dl>
+    </article>
+    {% else %}
+    <article class="panel"><p class="muted">Серверы ещё не синхронизированы.</p></article>
+    {% endfor %}
+  </div>
+
+  <div class="grid-two analytics-server-charts">
+    <article class="panel chart-box chart-box-tall"><div class="split"><h2>Назначенные пользователи</h2><span class="badge">{{ server_analytics.period_label }}</span></div><canvas id="serverUsersChart"></canvas></article>
+    <article class="panel chart-box chart-box-tall"><div class="split"><h2>Пользователи онлайн</h2><span class="badge">{{ server_analytics.period_label }}</span></div><canvas id="serverOnlineChart"></canvas></article>
+    <article class="panel chart-box chart-box-tall analytics-wide-chart"><div class="split"><h2>Доступность серверов</h2><span class="badge">%</span></div><canvas id="serverUptimeChart"></canvas></article>
+  </div>
+</section>
+
+<section class="dashboard-section" id="analytics-lists" data-section-title="Срезы">
+  <div class="analytics-section-head">
+    <div><span>05</span><h2>Срезы</h2></div>
+    <p class="muted">Пользователи с наибольшим трафиком и последние операции пополнения.</p>
+  </div>
+  <div class="grid-two">
+    <article class="panel">
+      <h2>Топ по трафику</h2>
+      <table class="table"><thead><tr><th>Пользователь</th><th>Тариф</th><th>Трафик</th></tr></thead><tbody>
+        {% for item in overview.top_users %}<tr><td>{{ item.user.username or item.user.telegram_id }}</td><td>{{ item.plan.name if item.plan else '—' }}</td><td>{{ '%.2f'|format(item.traffic_used_bytes / 1024**3) }} ГБ</td></tr>{% else %}<tr><td colspan="3" class="muted">Пока пусто.</td></tr>{% endfor %}
+      </tbody></table>
+    </article>
+    <article class="panel">
+      <h2>Последние платежи</h2>
+      <table class="table"><thead><tr><th>Пользователь</th><th>Сумма</th><th>Дата</th></tr></thead><tbody>
+        {% for item in overview.recent_topups %}<tr><td>{{ item.user.username or item.user.telegram_id }}</td><td>{{ item.amount_rub|rub }} ₽</td><td>{{ item.created_at|msk_datetime }}</td></tr>{% else %}<tr><td colspan="3" class="muted">Пока пусто.</td></tr>{% endfor %}
+      </tbody></table>
+    </article>
+  </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+  const charts = {{ charts | tojson }};
+  const business = charts.business;
+  const servers = charts.servers;
+  const palette = ["#07947f", "#35b89f", "#0f766e", "#2e7a95", "#7acdb8", "#a93677", "#5c7771", "#28a78f"];
+  const alpha = (hex, value) => {
+    const clean = hex.replace("#", "");
+    return `rgba(${parseInt(clean.slice(0, 2), 16)}, ${parseInt(clean.slice(2, 4), 16)}, ${parseInt(clean.slice(4, 6), 16)}, ${value})`;
+  };
+  const commonOptions = (extra = {}) => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: { legend: { position: "bottom", labels: { boxWidth: 12, usePointStyle: true } } },
+    ...extra
+  });
+  const lineDatasets = (items, fill = false) => (items || []).map((item, index) => ({
+    label: item.label,
+    data: item.values,
+    borderColor: palette[index % palette.length],
+    backgroundColor: alpha(palette[index % palette.length], 0.1),
+    fill,
+    tension: 0.32,
+    spanGaps: true,
+    pointRadius: 2
+  }));
+
+  const userSeries = business.users.series || [];
+  new Chart(document.getElementById("usersChart"), { type: "line", data: { labels: business.users.labels, datasets: userSeries.map((item, index) => ({ type: item.chart_type || "line", label: item.label, data: item.values, borderColor: palette[index], backgroundColor: alpha(palette[index], item.chart_type === "bar" ? 0.55 : 0.1), fill: item.chart_type !== "bar", tension: 0.32, borderRadius: 7 })) }, options: commonOptions({ scales: { y: { beginAtZero: true } } }) });
+  const funnel = business.conversion_funnel.stages || [];
+  new Chart(document.getElementById("conversionFunnelChart"), { type: "bar", data: { labels: funnel.map((item) => item.label), datasets: [{ label: "% от новых", data: funnel.map((item) => item.percent_of_new), backgroundColor: funnel.map((_, index) => alpha(palette[index], 0.72)), borderRadius: 9 }] }, options: commonOptions({ indexAxis: "y", scales: { x: { beginAtZero: true, max: 100 } } }) });
+  new Chart(document.getElementById("paymentsChart"), { type: "line", data: { labels: business.payments.labels, datasets: [{ label: "Пополнения, ₽", data: business.payments.values, borderColor: palette[0], backgroundColor: alpha(palette[0], 0.12), fill: true, tension: 0.35 }] }, options: commonOptions() });
+  new Chart(document.getElementById("trafficChart"), { type: "line", data: { labels: business.traffic.labels, datasets: [{ label: "Трафик, ГБ", data: business.traffic.datasets.total_gb, borderColor: palette[0], tension: 0.35 }, { label: "Белые списки, ГБ", data: business.traffic.datasets.whitelist_gb, borderColor: palette[3], tension: 0.35 }] }, options: commonOptions() });
+  new Chart(document.getElementById("planSignupsChart"), { type: "bar", data: { labels: business.plan_signups.labels, datasets: (business.plan_signups.datasets || []).map((item, index) => ({ label: item.label, data: item.values, backgroundColor: alpha(palette[index], 0.72), borderRadius: 8 })) }, options: commonOptions({ scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } }) });
+  new Chart(document.getElementById("statusChart"), { type: "doughnut", data: { labels: business.user_statuses.labels, datasets: [{ data: business.user_statuses.values, backgroundColor: palette.slice(0, 5) }] }, options: commonOptions() });
+  new Chart(document.getElementById("planMixChart"), { type: "doughnut", data: { labels: business.plan_mix.labels, datasets: [{ data: business.plan_mix.values, backgroundColor: palette.slice(0, 2) }] }, options: commonOptions() });
+  new Chart(document.getElementById("serverUsersChart"), { type: "line", data: { labels: servers.labels, datasets: lineDatasets(servers.assigned_users) }, options: commonOptions({ scales: { y: { beginAtZero: true } } }) });
+  new Chart(document.getElementById("serverOnlineChart"), { type: "line", data: { labels: servers.labels, datasets: lineDatasets(servers.online_users) }, options: commonOptions({ scales: { y: { beginAtZero: true } } }) });
+  new Chart(document.getElementById("serverUptimeChart"), { type: "line", data: { labels: servers.labels, datasets: lineDatasets(servers.uptime) }, options: commonOptions({ scales: { y: { beginAtZero: true, max: 100, ticks: { callback: (value) => `${value}%` } } } }) });
+
+  const serverCheckboxes = Array.from(document.querySelectorAll('input[name="server_id"]'));
+  serverCheckboxes.forEach((checkbox) => checkbox.addEventListener("change", () => {
+    const checked = serverCheckboxes.filter((item) => item.checked);
+    if (checked.length > {{ server_analytics.selection_limit }}) {
+      checkbox.checked = false;
+      window.alert("Можно сравнить не более {{ server_analytics.selection_limit }} серверов.");
+    }
+  }));
+</script>
+{% endblock %}

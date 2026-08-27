@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock
@@ -270,6 +270,9 @@ def test_share_vpn_url_skips_invalid_targets():
 def test_referral_share_vpn_url_contains_only_link():
     settings = Settings(_env_file=None, client_bot_name="@Altlinkbot")
 
+    assert client_handlers.referral_vpn_url(settings, "272B39BC") == (
+        "https://t.me/Altlinkbot?start=ref_272B39BC"
+    )
     url = client_handlers.referral_share_vpn_url(settings, "272B39BC")
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
@@ -278,6 +281,35 @@ def test_referral_share_vpn_url_contains_only_link():
     assert parsed.netloc == "t.me"
     assert parsed.path == "/share/url"
     assert query == {"url": ["https://t.me/Altlinkbot?start=ref_272B39BC"]}
+
+
+def test_referral_links_are_hidden_without_personal_code():
+    settings = Settings(
+        _env_file=None,
+        client_bot_name="@Altlinkbot",
+        backend_public_url="https://altlink.online",
+    )
+
+    assert client_handlers.referral_vpn_url(settings, None) is None
+    assert client_handlers.referral_share_vpn_url(settings, None) is None
+
+
+def test_referral_info_shows_copyable_link_and_statistics_instead_of_internal_code():
+    text = client_handlers.referral_info_text(
+        "https://t.me/Altlinkbot?start=ref_272B39BC&source=bot",
+        SimpleNamespace(
+            invited_count=3,
+            rewarded_count=2,
+            earned_total_rub=Decimal("200"),
+        ),
+    )
+
+    assert "Ваш код" not in text
+    assert "Реферальный код" not in text
+    assert "<code>https://t.me/Altlinkbot?start=ref_272B39BC&amp;source=bot</code>" in text
+    assert "Приглашено: <b>3</b>" in text
+    assert "Оплатили тариф: <b>2</b>" in text
+    assert "Начислено: <b>200 ₽</b>" in text
 
 
 def test_portal_login_resume_url_points_back_to_login_page_with_token():
@@ -425,6 +457,8 @@ def test_subscription_text_hides_billing_cycle_line():
     )
 
     assert "Тариф: Pro" in text
+    assert "Статус: Активен" in text
+    assert "Статус: active" not in text
     assert "Формат списания" not in text
 
 
@@ -482,8 +516,9 @@ def test_subscription_details_text_contains_servers_and_auto_renew_status():
 
     assert "Подробнее о подписке" in text
     assert "Автопродление: включено" in text
-    assert "Whitelist EU • Белые списки • active" in text
-    assert "Regular PL • Обычный • active" in text
+    assert "Whitelist EU • Белые списки • доступен" in text
+    assert "Regular PL • Обычный • доступен" in text
+    assert " • active" not in text
 
 
 def test_vless_keys_file_content_contains_each_key_on_separate_line():
@@ -648,6 +683,12 @@ def test_topup_amount_confirmation_text_prompts_next_step():
     assert "Сумма: 350.00 ₽" in text
     assert "Оплатить" in text
     assert "способ оплаты" in text
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_parse_topup_amount_token_rejects_non_finite_values(token):
+    with pytest.raises(InvalidOperation):
+        client_handlers.parse_topup_amount_token(token)
 
 
 def test_topup_menu_text_lists_tariff_prices():
@@ -878,6 +919,66 @@ async def test_continue_topup_flow_does_not_create_checkout_before_provider_sele
     assert captured["amount"] == Decimal("350")
     assert captured["providers"] == ["yookassa", "manual"]
     assert captured["selected_plan_code"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("selected_plan_code", "whitelist_topup"),
+    [
+        (PlanCode.UNLIMITED, False),
+        (None, True),
+    ],
+)
+async def test_continue_topup_flow_raises_shortage_to_minimum_payment(
+    monkeypatch,
+    selected_plan_code,
+    whitelist_topup,
+):
+    captured: dict[str, object] = {}
+
+    async def fake_show_topup_provider_menu(
+        target,
+        amount,
+        providers,
+        *,
+        selected_plan_code=None,
+        whitelist_topup=False,
+    ):
+        captured["amount"] = amount
+        captured["providers"] = providers
+        captured["selected_plan_code"] = selected_plan_code
+        captured["whitelist_topup"] = whitelist_topup
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            topups=SimpleNamespace(
+                configured_provider=lambda: "yookassa",
+                resolved_provider=lambda: "yookassa",
+            ),
+            billing=SimpleNamespace(
+                quote_paid_plan_activation=AsyncMock(
+                    return_value=SimpleNamespace(required_topup_rub=Decimal("37.50")),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(client_handlers, "show_topup_provider_menu", fake_show_topup_provider_menu)
+    container = SimpleNamespace(hub=fake_hub)
+
+    await client_handlers.continue_topup_flow(
+        DummyMessage(text="Пополнить", user_id=21011),
+        container,
+        user=SimpleNamespace(id="user-1"),
+        amount=Decimal("37.50"),
+        selected_plan_code=selected_plan_code,
+        whitelist_topup=whitelist_topup,
+    )
+
+    assert captured["amount"] == Decimal("50")
+    assert captured["providers"] == ["yookassa", "manual"]
+    assert captured["selected_plan_code"] == selected_plan_code
+    assert captured["whitelist_topup"] is whitelist_topup
 
 
 def test_topup_provider_status_text_explains_missing_yookassa_settings():

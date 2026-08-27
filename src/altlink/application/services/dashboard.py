@@ -1,21 +1,30 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import Text, cast, func, or_, select, text
-from sqlalchemy.orm import joinedload
+from sqlalchemy import Text, case, cast, delete, func, or_, select, text
+from sqlalchemy.orm import joinedload, selectinload
 
 from altlink.application.services.base import BaseService
-from altlink.domain.enums import BalanceTransactionType, ServerType, SubscriptionStatus, TopupStatus, UserStatus
+from altlink.domain.enums import (
+    BalanceTransactionType,
+    ServerType,
+    SubscriptionStatus,
+    SystemEventLevel,
+    TopupStatus,
+    UserStatus,
+)
 from altlink.domain.plans import is_metered_plan_code, is_unlimited_plan_code
 from altlink.infrastructure.db.models import (
     BalanceTransaction,
     OnlineSessionCache,
     Plan,
     Server,
+    ServerMetricSnapshot,
     Subscription,
     SystemEvent,
     SystemSetting,
@@ -59,10 +68,109 @@ DASHBOARD_PERIODS: dict[str, tuple[str, timedelta, int]] = {
     "1m": ("1 месяц", timedelta(days=30), 30),
 }
 DEFAULT_DASHBOARD_PERIOD = "2w"
+SERVER_METRIC_SAMPLE_INTERVAL = timedelta(minutes=5)
+SERVER_METRIC_RETENTION = timedelta(days=90)
+MAX_ANALYTICS_SERVERS = 8
 
 
 class DashboardService(BaseService):
     source = "dashboard"
+
+    async def summary(self) -> dict:
+        now = utc_now()
+        status_counts = await self._user_status_counts()
+        servers = list(
+            (
+                await self.session.scalars(
+                    select(Server)
+                    .options(selectinload(Server.inbounds))
+                    .order_by(Server.is_connected.asc(), Server.name.asc())
+                )
+            ).all()
+        )
+        operational_servers = [server for server in servers if self._server_is_operational(server)]
+        unavailable_start_ids = {
+            server.id
+            for server in servers
+            if server.server_type == ServerType.TEN_GBIT and not self._server_is_operational(server)
+        }
+        affected_users: list[dict] = []
+        if unavailable_start_ids:
+            candidates = list(
+                (
+                    await self.session.scalars(
+                        select(User)
+                        .where(
+                            User.assigned_server_id.in_(unavailable_start_ids),
+                            User.status.in_([UserStatus.ACTIVE, UserStatus.GRACE]),
+                        )
+                        .options(
+                            joinedload(User.assigned_server),
+                            selectinload(User.subscriptions).joinedload(Subscription.plan),
+                        )
+                        .order_by(User.last_seen_at.desc().nullslast())
+                    )
+                ).all()
+            )
+            for user in candidates:
+                subscription = self._resolve_current_subscription(user.subscriptions)
+                if subscription and subscription.plan and is_metered_plan_code(subscription.plan.code):
+                    affected_users.append({"user": user, "server": user.assigned_server})
+
+        payments_count, payments_total = (
+            await self.session.execute(
+                select(func.count(TopupRequest.id), func.coalesce(func.sum(TopupRequest.amount_rub), 0)).where(
+                    TopupRequest.status == TopupStatus.APPROVED,
+                    TopupRequest.created_at >= now - timedelta(days=30),
+                )
+            )
+        ).one()
+        recent_topups = list(
+            (
+                await self.session.scalars(
+                    select(TopupRequest)
+                    .options(joinedload(TopupRequest.user))
+                    .order_by(TopupRequest.created_at.desc())
+                    .limit(8)
+                )
+            ).all()
+        )
+        recent_alerts = list(
+            (
+                await self.session.scalars(
+                    select(SystemEvent)
+                    .where(SystemEvent.level.in_([SystemEventLevel.WARNING, SystemEventLevel.ERROR]))
+                    .order_by(SystemEvent.created_at.desc())
+                    .limit(8)
+                )
+            ).all()
+        )
+        new_users_24h = int(
+            (
+                await self.session.scalar(
+                    select(func.count(User.id)).where(User.created_at >= now - timedelta(hours=24))
+                )
+            )
+            or 0
+        )
+        return {
+            "active_users": status_counts.get(UserStatus.ACTIVE.value, 0),
+            "trial_users": status_counts.get(UserStatus.TRIAL.value, 0),
+            "blocked_users": status_counts.get(UserStatus.BLOCKED.value, 0),
+            "new_users_24h": new_users_24h,
+            "payments_count_30d": int(payments_count or 0),
+            "payments_total_30d": Decimal(str(payments_total or 0)).quantize(Decimal("0.01")),
+            "servers_total": len(servers),
+            "servers_operational": len(operational_servers),
+            "servers_unavailable": len(servers) - len(operational_servers),
+            "unavailable_servers": [
+                server for server in servers if not self._server_is_operational(server)
+            ][:12],
+            "affected_start_users": affected_users[:12],
+            "affected_start_users_count": len(affected_users),
+            "recent_topups": recent_topups,
+            "recent_alerts": recent_alerts,
+        }
 
     async def overview(self, period: str = DEFAULT_DASHBOARD_PERIOD) -> dict:
         window = self._dashboard_window(period)
@@ -87,6 +195,7 @@ class DashboardService(BaseService):
                     select(TopupRequest)
                     .options(joinedload(TopupRequest.user))
                     .order_by(TopupRequest.created_at.desc())
+                    .limit(12)
                 )
             ).all()
         )
@@ -128,7 +237,7 @@ class DashboardService(BaseService):
             "whitelist_traffic_bytes": whitelist_traffic,
             "servers": servers[:12],
             "top_users": top_users[:10],
-            "recent_topups": topups[:12],
+            "recent_topups": topups,
             "charts": {
                 "user_statuses": {
                     "labels": ["Активные", "Без продления", "Заблокированные", "Тестовые", "Новые"],
@@ -167,6 +276,180 @@ class DashboardService(BaseService):
     @classmethod
     def period_options(cls) -> list[dict[str, str]]:
         return [{"value": key, "label": value[0]} for key, value in DASHBOARD_PERIODS.items()]
+
+    async def capture_server_metrics(self, *, force: bool = False) -> int:
+        now = utc_now()
+        latest_capture = await self.session.scalar(select(func.max(ServerMetricSnapshot.captured_at)))
+        if (
+            not force
+            and latest_capture is not None
+            and now - ensure_utc(latest_capture) < SERVER_METRIC_SAMPLE_INTERVAL
+        ):
+            return 0
+
+        servers = list(
+            (
+                await self.session.scalars(
+                    select(Server).options(selectinload(Server.inbounds)).order_by(Server.name.asc())
+                )
+            ).all()
+        )
+        for server in servers:
+            raw_uptime = (server.raw_payload or {}).get("xrayUptime")
+            self.session.add(
+                ServerMetricSnapshot(
+                    server_id=server.id,
+                    remnawave_node_uuid=server.remnawave_node_uuid,
+                    server_name=server.name,
+                    country_code=(server.country_code or "").upper() or None,
+                    server_type=server.server_type.value,
+                    is_operational=self._server_is_operational(server),
+                    is_connected=bool(server.is_connected),
+                    is_available=bool(server.is_available),
+                    assigned_users=max(int(server.current_clients or 0), 0),
+                    online_users=max(int(server.users_online or 0), 0),
+                    xray_uptime=str(raw_uptime)[:64] if raw_uptime is not None else None,
+                    captured_at=now,
+                )
+            )
+        await self.session.execute(
+            delete(ServerMetricSnapshot).where(
+                ServerMetricSnapshot.captured_at < now - SERVER_METRIC_RETENTION
+            )
+        )
+        await self.session.flush()
+        return len(servers)
+
+    async def server_analytics(
+        self,
+        period: str = DEFAULT_DASHBOARD_PERIOD,
+        selected_server_ids: Sequence[str] | None = None,
+    ) -> dict:
+        window = self._dashboard_window(period)
+        servers = list(
+            (
+                await self.session.scalars(
+                    select(Server).options(selectinload(Server.inbounds)).order_by(Server.name.asc())
+                )
+            ).all()
+        )
+        server_by_id = {server.id: server for server in servers}
+        requested_ids = list(dict.fromkeys(selected_server_ids or []))
+        selected_ids = [server_id for server_id in requested_ids if server_id in server_by_id][
+            :MAX_ANALYTICS_SERVERS
+        ]
+        if not selected_ids:
+            selected_ids = [server.id for server in servers[:4]]
+
+        uptime_rows = (
+            await self.session.execute(
+                select(
+                    ServerMetricSnapshot.server_id,
+                    func.count(ServerMetricSnapshot.id),
+                    func.sum(case((ServerMetricSnapshot.is_operational.is_(True), 1), else_=0)),
+                )
+                .where(
+                    ServerMetricSnapshot.captured_at >= window.start,
+                    ServerMetricSnapshot.captured_at <= window.end,
+                )
+                .group_by(ServerMetricSnapshot.server_id)
+            )
+        ).all()
+        uptime_by_server = {
+            server_id: {
+                "samples": int(samples or 0),
+                "operational": int(operational or 0),
+            }
+            for server_id, samples, operational in uptime_rows
+        }
+
+        snapshots: list[ServerMetricSnapshot] = []
+        if selected_ids:
+            snapshots = list(
+                (
+                    await self.session.scalars(
+                        select(ServerMetricSnapshot)
+                        .where(
+                            ServerMetricSnapshot.server_id.in_(selected_ids),
+                            ServerMetricSnapshot.captured_at >= window.start,
+                            ServerMetricSnapshot.captured_at <= window.end,
+                        )
+                        .order_by(ServerMetricSnapshot.captured_at.asc())
+                    )
+                ).all()
+            )
+
+        series_values = {
+            server_id: {
+                "assigned": [[] for _ in window.labels],
+                "online": [[] for _ in window.labels],
+                "uptime": [[] for _ in window.labels],
+            }
+            for server_id in selected_ids
+        }
+        for snapshot in snapshots:
+            bucket_index = self._bucket_index(window, snapshot.captured_at)
+            if bucket_index is None or snapshot.server_id not in series_values:
+                continue
+            bucket = series_values[snapshot.server_id]
+            bucket["assigned"][bucket_index].append(int(snapshot.assigned_users or 0))
+            bucket["online"][bucket_index].append(int(snapshot.online_users or 0))
+            bucket["uptime"][bucket_index].append(100 if snapshot.is_operational else 0)
+
+        def averaged(values: list[list[int]], *, digits: int = 1) -> list[float | None]:
+            return [round(sum(bucket) / len(bucket), digits) if bucket else None for bucket in values]
+
+        def server_label(server: Server) -> str:
+            country = f" [{server.country_code.upper()}]" if server.country_code else ""
+            return f"{server.name}{country}"
+
+        assigned_datasets = []
+        online_datasets = []
+        uptime_datasets = []
+        for server_id in selected_ids:
+            server = server_by_id[server_id]
+            values = series_values[server_id]
+            assigned_datasets.append(
+                {"server_id": server_id, "label": server_label(server), "values": averaged(values["assigned"])}
+            )
+            online_datasets.append(
+                {"server_id": server_id, "label": server_label(server), "values": averaged(values["online"])}
+            )
+            uptime_datasets.append(
+                {"server_id": server_id, "label": server_label(server), "values": averaged(values["uptime"])}
+            )
+
+        uptime_cards = []
+        for server in servers:
+            totals = uptime_by_server.get(server.id, {"samples": 0, "operational": 0})
+            samples = totals["samples"]
+            uptime_cards.append(
+                {
+                    "server": server,
+                    "operational": self._server_is_operational(server),
+                    "uptime_percent": round(totals["operational"] * 100 / samples, 2) if samples else None,
+                    "sample_count": samples,
+                    "xray_uptime": self._format_xray_uptime((server.raw_payload or {}).get("xrayUptime")),
+                }
+            )
+
+        last_captured_at = await self.session.scalar(select(func.max(ServerMetricSnapshot.captured_at)))
+        return {
+            "period": window.key,
+            "period_label": window.label,
+            "period_options": self.period_options(),
+            "server_options": servers,
+            "selected_server_ids": selected_ids,
+            "selection_limit": MAX_ANALYTICS_SERVERS,
+            "uptime_cards": uptime_cards,
+            "last_captured_at": last_captured_at,
+            "charts": {
+                "labels": window.labels,
+                "assigned_users": assigned_datasets,
+                "online_users": online_datasets,
+                "uptime": uptime_datasets,
+            },
+        }
 
     async def top_users(self, metric: str, limit: int = 10) -> list[UserMetricRow]:
         subscriptions = list(
@@ -336,6 +619,40 @@ class DashboardService(BaseService):
             bucket_seconds=bucket_seconds,
             labels=labels,
         )
+
+    @staticmethod
+    def _resolve_current_subscription(subscriptions: Sequence[Subscription]) -> Subscription | None:
+        active_states = {SubscriptionStatus.ACTIVE, SubscriptionStatus.TRIAL, SubscriptionStatus.GRACE}
+        candidates = [item for item in subscriptions if item.status in active_states and item.plan is not None]
+        candidates.sort(key=lambda item: item.created_at, reverse=True)
+        return candidates[0] if candidates else None
+
+    @staticmethod
+    def _server_is_operational(server: Server) -> bool:
+        has_active_inbounds = any(
+            inbound.is_active and inbound.remnawave_inbound_uuid for inbound in server.inbounds
+        )
+        return bool(server.is_available and server.is_connected and has_active_inbounds)
+
+    @staticmethod
+    def _format_xray_uptime(value: object) -> str | None:
+        if value is None:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        try:
+            seconds = max(int(raw), 0)
+        except ValueError:
+            return raw
+        days, remainder = divmod(seconds, 86400)
+        hours, remainder = divmod(remainder, 3600)
+        minutes = remainder // 60
+        if days:
+            return f"{days} д {hours} ч"
+        if hours:
+            return f"{hours} ч {minutes} мин"
+        return f"{minutes} мин"
 
     def _bucket_index(self, window: DashboardWindow, value: datetime | None) -> int | None:
         if value is None:
@@ -611,22 +928,71 @@ class DashboardService(BaseService):
     async def _traffic_chart(self, window: DashboardWindow) -> dict:
         total = [0.0 for _ in window.labels]
         whitelist = [0.0 for _ in window.labels]
-        rows = (
-            await self.session.execute(
-                select(TrafficSnapshot.created_at, TrafficSnapshot.used_bytes, Server.server_type)
-                .outerjoin(Server, TrafficSnapshot.server_id == Server.id)
-                .where(TrafficSnapshot.created_at >= window.start, TrafficSnapshot.created_at <= window.end)
-                .order_by(TrafficSnapshot.created_at.asc())
+        baseline_ranked = (
+            select(
+                TrafficSnapshot.id.label("snapshot_id"),
+                func.row_number()
+                .over(
+                    partition_by=TrafficSnapshot.user_id,
+                    order_by=TrafficSnapshot.created_at.desc(),
+                )
+                .label("row_number"),
             )
-        ).all()
-        for created_at, used_bytes, server_type in rows:
-            index = self._bucket_index(window, created_at)
+            .where(
+                TrafficSnapshot.server_id.is_(None),
+                TrafficSnapshot.created_at < window.start,
+            )
+            .subquery()
+        )
+        baseline_rows = list(
+            (
+                await self.session.scalars(
+                    select(TrafficSnapshot)
+                    .join(baseline_ranked, TrafficSnapshot.id == baseline_ranked.c.snapshot_id)
+                    .where(baseline_ranked.c.row_number == 1)
+                )
+            ).all()
+        )
+        rows = list(
+            (
+                await self.session.scalars(
+                    select(TrafficSnapshot)
+                    .where(
+                        TrafficSnapshot.server_id.is_(None),
+                        TrafficSnapshot.created_at >= window.start,
+                        TrafficSnapshot.created_at <= window.end,
+                    )
+                    .order_by(TrafficSnapshot.user_id.asc(), TrafficSnapshot.created_at.asc())
+                )
+            ).all()
+        )
+        new_user_ids = set(
+            (
+                await self.session.scalars(
+                    select(User.id).where(User.created_at >= window.start, User.created_at <= window.end)
+                )
+            ).all()
+        )
+        previous_by_user = {
+            snapshot.user_id: max(int(snapshot.lifetime_used_bytes or 0), 0)
+            for snapshot in baseline_rows
+        }
+        for snapshot in rows:
+            current = max(int(snapshot.lifetime_used_bytes or 0), 0)
+            previous = previous_by_user.get(snapshot.user_id)
+            if previous is None:
+                previous_by_user[snapshot.user_id] = current
+                if snapshot.user_id not in new_user_ids:
+                    continue
+                previous = 0
+            delta = current - previous if current >= previous else current
+            previous_by_user[snapshot.user_id] = current
+            if delta <= 0:
+                continue
+            index = self._bucket_index(window, snapshot.created_at)
             if index is None:
                 continue
-            gb = round(int(used_bytes or 0) / 1024**3, 4)
-            total[index] += gb
-            if server_type == ServerType.WHITELIST:
-                whitelist[index] += gb
+            total[index] += round(delta / 1024**3, 4)
         return {
             "labels": list(window.labels),
             "datasets": {

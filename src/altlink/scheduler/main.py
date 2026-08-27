@@ -14,7 +14,7 @@ from altlink.scheduler.jobs import (
     notifications_job,
     online_job,
     remnawave_health_job,
-    server_failover_job,
+    server_health_job,
     server_latency_job,
     sync_servers_job,
     topups_job,
@@ -46,7 +46,7 @@ async def run_scheduler() -> None:
     )
     scheduler.add_job(sync_servers_job, "interval", minutes=settings.sync_servers_interval_minutes, args=[container])
     scheduler.add_job(
-        server_failover_job,
+        server_health_job,
         "interval",
         minutes=settings.server_failover_interval_minutes,
         args=[container],
@@ -92,6 +92,7 @@ async def run_scheduler() -> None:
     try:
         await run_startup_job(remnawave_health_job, container, "remnawave_health")
         await run_startup_job(sync_servers_job, container, "sync_servers")
+        await run_startup_job(server_health_job, container, "server_health")
         await run_startup_job(server_latency_job, container, "server_latency")
         await run_startup_job(billing_job, container, "billing")
         await run_startup_job(traffic_job, container, "traffic")

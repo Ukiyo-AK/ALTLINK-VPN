@@ -262,7 +262,7 @@ async def test_sync_survives_missing_ten_gbit_server_for_existing_start_user(tes
 
 
 @pytest.mark.asyncio
-async def test_start_user_fails_over_to_another_available_start_server(test_services):
+async def test_start_user_keeps_pinned_server_until_admin_reassigns_it(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=3008,
@@ -301,19 +301,25 @@ async def test_start_user_fails_over_to_another_available_start_server(test_serv
         remote_user = test_services.remnawave.users[user.remnawave_user_uuid]
         remote_squad_ids = {squad.uuid for squad in remote_user.activeInternalSquads}
 
-        assert refreshed_user.assigned_server_id == backup_server.id
+        assert refreshed_user.assigned_server_id == previous_server.id
         assert previous_server.id not in {access.server_id for access in active_accesses}
-        assert backup_server.id in {access.server_id for access in active_accesses}
-        assert backup_server.remnawave_internal_squad_uuid in remote_squad_ids
+        assert backup_server.id not in {access.server_id for access in active_accesses}
+        assert backup_server.remnawave_internal_squad_uuid not in remote_squad_ids
         assert previous_server.remnawave_internal_squad_uuid not in remote_squad_ids
-        assert summary["start_failovers"] == [
+        assert summary["start_failovers"] == []
+        assert summary["affected_start_users"] == [
             {
                 "user_id": user.id,
                 "telegram_id": user.telegram_id,
-                "from_server_id": previous_server.id,
-                "to_server_id": backup_server.id,
+                "server_id": previous_server.id,
             }
         ]
+        preferred_while_unavailable = await hub.catalog.assign_preferred_server(
+            user.id,
+            PlanCode.SINGLE_10GBIT,
+        )
+        assert preferred_while_unavailable.id == previous_server.id
+        assert refreshed_user.assigned_server_id == previous_server.id
 
         test_services.remnawave.nodes[previous_server.remnawave_node_uuid] = (
             test_services.remnawave.nodes[previous_server.remnawave_node_uuid].model_copy(
@@ -322,8 +328,14 @@ async def test_start_user_fails_over_to_another_available_start_server(test_serv
         )
         await hub.catalog.refresh_server_health_and_failover()
         refreshed_user = await hub.accounts.get_user(user.id)
+        active_accesses = await hub.catalog.get_user_servers(user.id)
+        remote_user = test_services.remnawave.users[user.remnawave_user_uuid]
 
-        assert refreshed_user.assigned_server_id == backup_server.id
+        assert refreshed_user.assigned_server_id == previous_server.id
+        assert previous_server.id in {access.server_id for access in active_accesses}
+        assert previous_server.remnawave_internal_squad_uuid in {
+            squad.uuid for squad in remote_user.activeInternalSquads
+        }
 
 
 @pytest.mark.asyncio
@@ -380,6 +392,12 @@ async def test_admin_can_manually_reassign_start_user_and_invalid_targets_are_re
             and event.payload["to_server_id"] == backup_server.id
             for event in events
         )
+        preferred = await hub.catalog.assign_preferred_server(
+            start_user.id,
+            PlanCode.SINGLE_10GBIT_WEEKLY,
+        )
+        assert preferred.id == backup_server.id
+        assert start_user.assigned_server_id == backup_server.id
 
         original_update_user = test_services.remnawave.update_user
 

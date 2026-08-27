@@ -9,8 +9,49 @@ import pytest
 
 from altlink.application.services.accounts import UserListFilters
 from altlink.application.services.base import ConflictError
-from altlink.domain.enums import PlanCode
+from altlink.domain.enums import BalanceTransactionType, PlanCode
 from altlink.infrastructure.db.models import TrafficSnapshot
+
+
+@pytest.mark.asyncio
+async def test_referral_stats_include_invites_rewards_and_earned_total(test_services):
+    async with test_services.hub() as hub:
+        referrer = await hub.accounts.get_or_create_user(
+            telegram_id=11050,
+            username="referrer",
+            first_name="Referrer",
+            last_name=None,
+            language_code="ru",
+        )
+        invited = await hub.accounts.get_or_create_user(
+            telegram_id=11051,
+            username="invited",
+            first_name="Invited",
+            last_name=None,
+            language_code="ru",
+        )
+        pending = await hub.accounts.get_or_create_user(
+            telegram_id=11052,
+            username="pending_referral",
+            first_name="Pending",
+            last_name=None,
+            language_code="ru",
+        )
+        await hub.accounts.bind_referrer(invited.id, referrer.referral_code)
+        await hub.accounts.bind_referrer(pending.id, referrer.referral_code)
+        assert await hub.accounts.grant_referral_bonus_if_eligible(invited.id) is True
+        await hub.accounts.adjust_balance(
+            user_id=referrer.id,
+            amount_rub=Decimal("25"),
+            transaction_type=BalanceTransactionType.MANUAL_ADJUSTMENT,
+            description="Не относится к реферальной статистике",
+        )
+
+        stats = await hub.accounts.get_referral_stats(referrer.id)
+
+    assert stats.invited_count == 2
+    assert stats.rewarded_count == 1
+    assert stats.earned_total_rub == Decimal("100")
 
 
 @pytest.mark.asyncio

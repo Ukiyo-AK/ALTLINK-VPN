@@ -1,392 +1,101 @@
 {% extends "base.html" %}
 {% block content %}
-<nav class="dashboard-section-nav" aria-label="Разделы админской панели">
-  <a href="#dashboard-overview">Обзор</a>
-  <a href="#dashboard-users">Пользователи</a>
-  <a href="#dashboard-finance">Финансы</a>
-  <a href="#dashboard-plans">Тарифы и срез</a>
-  <a href="#dashboard-lists">Списки</a>
-</nav>
-
-<section class="panel dashboard-toolbar-panel">
+<section class="panel dashboard-toolbar-panel dashboard-summary-head">
   <div>
-    <span class="badge highlight">Аналитика</span>
-    <h1>Дашборд ALTLINK</h1>
-    <p class="muted">
-      Графики строятся за выбранный период по данным пользователей, подписок, платежей и трафика.
-    </p>
+    <span class="badge highlight">Оперативный обзор</span>
+    <h1>Состояние ALTLINK</h1>
+    <p class="muted">Только актуальные показатели и ситуации, требующие внимания. Графики вынесены в отдельный раздел.</p>
   </div>
-  <form method="get" action="/admin/dashboard" class="dashboard-filter-form">
-    <label>
-      <span class="muted">Период</span>
-      <select name="period" aria-label="Период графиков">
-        {% for item in overview.period_options %}
-        <option value="{{ item.value }}" {% if item.value == selected_period %}selected{% endif %}>{{ item.label }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <button type="submit" class="button ghost" name="refresh" value="0">Показать</button>
-    <button type="submit" class="button" name="refresh" value="1">Обновить данные</button>
-  </form>
+  <div class="toolbar">
+    <a class="button" href="/admin/analytics">Открыть аналитику</a>
+    <a class="button ghost" href="/admin/servers">Управление серверами</a>
+  </div>
 </section>
 
-<section class="cards dashboard-section" id="dashboard-overview" data-section-title="Обзор">
-  <article class="card"><div class="muted">Активные</div><strong>{{ overview.active_users }}</strong></article>
-  <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>
-  <article class="card"><div class="muted">Новые за {{ overview.period_label }}</div><strong>{{ overview.new_users_in_period }}</strong></article>
-  <article class="card"><div class="muted">Новые платные</div><strong>{{ overview.new_paid_users_in_period }}</strong></article>
-  <article class="card"><div class="muted">Пополнения за период</div><strong>{{ overview.payments_total_rub|rub }} ₽</strong></article>
-  <article class="card"><div class="muted">Трафик всего</div><strong>{{ '%.2f'|format(overview.total_traffic_bytes / 1024**3) }} ГБ</strong></article>
-</section>
-
-<section class="grid-two dashboard-section" id="dashboard-users" data-section-title="Пользователи">
-  <article class="panel chart-box chart-box-tall">
-    <div class="split chart-head">
-      <div>
-        <h2>Динамика пользователей по дням</h2>
-        <p class="muted">Активные платные и тестовые — срез на конец дня, новые — регистрации за день.</p>
-      </div>
-      <span class="badge">{{ overview.period_label }}</span>
-    </div>
-    <canvas id="usersChart"></canvas>
+<section class="cards dashboard-section" id="dashboard-overview">
+  <article class="card"><div class="muted">Активные</div><strong>{{ summary.active_users }}</strong></article>
+  <article class="card"><div class="muted">Тестовые</div><strong>{{ summary.trial_users }}</strong></article>
+  <article class="card"><div class="muted">Новые за 24 часа</div><strong>{{ summary.new_users_24h }}</strong></article>
+  <article class="card"><div class="muted">Заблокированные</div><strong>{{ summary.blocked_users }}</strong></article>
+  <article class="card">
+    <div class="muted">Серверы в работе</div>
+    <strong>{{ summary.servers_operational }} / {{ summary.servers_total }}</strong>
   </article>
+  <article class="card"><div class="muted">Пополнения за 30 дней</div><strong>{{ summary.payments_total_30d|rub }} ₽</strong></article>
+</section>
 
-  <article class="panel chart-box chart-box-tall conversion-chart-box">
-    <div class="split chart-head">
-      <div>
-        <h2>Конверсия новых пользователей</h2>
-        <p class="muted">Последовательная воронка для зарегистрировавшихся за выбранный период.</p>
-      </div>
-      <span class="badge">{{ overview.period_label }}</span>
+{% if summary.unavailable_servers or summary.affected_start_users_count %}
+<section class="panel dashboard-attention-panel">
+  <div class="split">
+    <div>
+      <span class="badge warning">Требует внимания</span>
+      <h2>Недоступные серверы и закреплённые пользователи</h2>
+      <p class="muted">Автоматическая смена Start-сервера отключена. Выберите резерв вручную только тем, кому это действительно нужно.</p>
     </div>
-    <div class="conversion-stages" aria-label="Этапы конверсии">
-      {% for stage in charts["conversion_funnel"]["stages"] %}
-      <div class="conversion-stage">
-        <strong>{{ stage.count }}</strong>
-        <span>{{ stage.label }}</span>
-        <small>
-          {{ stage.percent_of_new }}% от новых
-          {% if not loop.first %}· {{ stage.percent_from_previous }}% от прошлого шага{% endif %}
-        </small>
+    <a class="button ghost" href="/admin/servers">Открыть серверы</a>
+  </div>
+  {% if summary.unavailable_servers %}
+  <div class="dashboard-issue-list">
+    {% for server in summary.unavailable_servers %}
+    <div class="dashboard-issue-row">
+      <div>
+        <strong>{{ server.name }}</strong>
+        <span class="muted">{{ server.country_code|upper if server.country_code else '—' }} · {{ server.address }}</span>
       </div>
+      <span class="badge warning">Недоступен</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if summary.affected_start_users_count %}
+  <h3>Start-пользователи без рабочего закреплённого сервера: {{ summary.affected_start_users_count }}</h3>
+  <div class="dashboard-user-chips">
+    {% for item in summary.affected_start_users %}
+    <a href="/admin/users/{{ item.user.id }}">
+      {{ item.user.username or item.user.telegram_id }}
+      <span>{{ item.server.name if item.server else 'сервер удалён' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="grid-two dashboard-section dashboard-operational-grid">
+  <article class="panel">
+    <div class="split">
+      <h2>Последние платежи</h2>
+      <a href="/admin/topups">Все платежи</a>
+    </div>
+    <div class="dashboard-compact-list">
+      {% for item in summary.recent_topups %}
+      <div>
+        <span>{{ item.user.username or item.user.telegram_id }}</span>
+        <strong>{{ item.amount_rub|rub }} ₽</strong>
+        <small class="muted">{{ item.created_at|msk_datetime }}</small>
+      </div>
+      {% else %}
+      <p class="muted">Платежей пока нет.</p>
       {% endfor %}
     </div>
-    <canvas id="conversionFunnelChart"></canvas>
   </article>
-</section>
 
-<section class="grid-two dashboard-section" id="dashboard-finance" data-section-title="Финансы и трафик">
-  <article class="panel chart-box">
+  <article class="panel">
     <div class="split">
-      <h2>Выручка по времени</h2>
-      <span class="badge highlight">{{ overview.period_label }}</span>
+      <h2>Последние предупреждения</h2>
+      <a href="/admin/events">Все события</a>
     </div>
-    <canvas id="paymentsChart"></canvas>
-  </article>
-
-  <article class="panel chart-box">
-    <div class="split">
-      <h2>Трафик по снапшотам</h2>
-      <span class="badge">После обновлений</span>
-    </div>
-    <canvas id="trafficChart"></canvas>
-  </article>
-</section>
-
-<section class="grid-two dashboard-section" id="dashboard-plans" data-section-title="Тарифы и текущий срез">
-  <article class="panel chart-box chart-box-tall">
-    <div class="split chart-head">
+    <div class="dashboard-compact-list dashboard-alert-list">
+      {% for item in summary.recent_alerts %}
       <div>
-        <h2>Новые подписки по тарифам</h2>
-        <p class="muted">Сравнение активаций разных тарифов за выбранный период.</p>
+        <span class="badge {{ 'warning' if item.level.value == 'warning' else 'danger' }}">{{ item.level.value }}</span>
+        <strong>{{ item.message }}</strong>
+        <small class="muted">{{ item.created_at|msk_datetime }}</small>
       </div>
-      <span class="badge">{{ overview.period_label }}</span>
+      {% else %}
+      <p class="muted">Новых предупреждений нет.</p>
+      {% endfor %}
     </div>
-    <canvas id="planSignupsChart"></canvas>
-  </article>
-
-  <article class="panel chart-box">
-    <div class="split">
-      <h2>Статусы пользователей</h2>
-      <span class="badge">Живой срез</span>
-    </div>
-    <canvas id="statusChart"></canvas>
-  </article>
-
-  <article class="panel chart-box">
-    <div class="split">
-      <h2>Соотношение Start / Pro</h2>
-      <span class="badge">Активные платные подписки</span>
-    </div>
-    <canvas id="planMixChart"></canvas>
-  </article>
-
-  <article class="panel chart-box">
-    <div class="split">
-      <h2>Типы серверов</h2>
-      <span class="badge">Каталог</span>
-    </div>
-    <canvas id="serverTypesChart"></canvas>
-  </article>
-
-  <article class="panel">
-    <h2>Срез по тарифам</h2>
-    <table class="table">
-      <thead><tr><th>Тариф</th><th>Клиентов</th></tr></thead>
-      <tbody>
-        <tr>
-          <td>Start</td>
-          <td>{{ charts["plan_mix"]["values"][0] }}</td>
-        </tr>
-        <tr>
-          <td>Pro</td>
-          <td>{{ charts["plan_mix"]["values"][1] }}</td>
-        </tr>
-      </tbody>
-    </table>
   </article>
 </section>
-
-<section class="grid-two dashboard-section" id="dashboard-lists" data-section-title="Списки">
-  <article class="panel">
-    <h2>Топ по трафику</h2>
-    <table class="table">
-      <thead><tr><th>Пользователь</th><th>Тариф</th><th>Трафик</th><th>Автопродление</th></tr></thead>
-      <tbody>
-        {% for item in overview.top_users %}
-        <tr>
-          <td>{{ item.user.username or item.user.telegram_id }}</td>
-          <td>{{ item.plan.name if item.plan else '—' }}</td>
-          <td>{{ '%.2f'|format(item.traffic_used_bytes / 1024**3) }} ГБ</td>
-          <td>{{ 'вкл' if item.auto_renew else 'выкл' }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="4" class="muted">Пока пусто.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </article>
-
-  <article class="panel">
-    <h2>Последние платежи</h2>
-    <table class="table">
-      <thead><tr><th>Пользователь</th><th>Сумма</th><th>Статус</th><th>Дата</th></tr></thead>
-      <tbody>
-        {% for item in overview.recent_topups %}
-        <tr>
-          <td>{{ item.user.username or item.user.telegram_id }}</td>
-          <td>{{ item.amount_rub|rub }} ₽</td>
-          <td>{{ item.status }}</td>
-          <td>{{ item.created_at|msk_datetime }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="4" class="muted">Платежей пока нет.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </article>
-</section>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<script>
-  const charts = {{ charts_json | safe }};
-  const green = "#07947f";
-  const mint = "#35b89f";
-  const teal = "#0f766e";
-  const blue = "#2e7a95";
-  const rose = "#a93677";
-  const muted = "#7acdb8";
-  const palette = [green, mint, teal, blue, muted, rose, "#5c7771", "#28a78f"];
-
-  function alpha(hex, value) {
-    const clean = hex.replace("#", "");
-    const r = parseInt(clean.slice(0, 2), 16);
-    const g = parseInt(clean.slice(2, 4), 16);
-    const b = parseInt(clean.slice(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, ${value})`;
-  }
-
-  function chartColor(index) {
-    return palette[index % palette.length];
-  }
-
-  function commonOptions(extra = {}) {
-    return {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: "index", intersect: false },
-      plugins: {
-        legend: {
-          position: "bottom",
-          labels: { boxWidth: 12, usePointStyle: true }
-        }
-      },
-      ...extra
-    };
-  }
-
-  const usersSeries = charts.users.series || [];
-  new Chart(document.getElementById("usersChart"), {
-    type: "line",
-    data: {
-      labels: charts.users.labels,
-      datasets: usersSeries.map((item, index) => {
-        const color = chartColor(index);
-        const isBar = item.chart_type === "bar";
-        return {
-          type: item.chart_type || "line",
-          label: item.label,
-          data: item.values,
-          borderColor: color,
-          backgroundColor: alpha(color, isBar ? 0.58 : 0.12),
-          fill: !isBar,
-          tension: 0.34,
-          pointRadius: isBar ? 0 : 3,
-          borderRadius: isBar ? 7 : 0,
-          order: isBar ? 2 : 1
-        };
-      })
-    },
-    options: commonOptions({ scales: { y: { beginAtZero: true } } })
-  });
-
-  const conversionStages = charts.conversion_funnel.stages || [];
-  new Chart(document.getElementById("conversionFunnelChart"), {
-    type: "bar",
-    data: {
-      labels: conversionStages.map((stage) => `${stage.label} · ${stage.count}`),
-      datasets: [{
-        label: "% от новых пользователей",
-        data: conversionStages.map((stage) => stage.percent_of_new),
-        backgroundColor: conversionStages.map((_, index) => alpha(chartColor(index), 0.72)),
-        borderColor: conversionStages.map((_, index) => chartColor(index)),
-        borderWidth: 1,
-        borderRadius: 10
-      }]
-    },
-    options: commonOptions({
-      indexAxis: "y",
-      scales: {
-        x: {
-          beginAtZero: true,
-          max: 100,
-          ticks: { callback: (value) => `${value}%` }
-        }
-      },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label(context) {
-              const stage = conversionStages[context.dataIndex];
-              return `${stage.count} пользователей · ${stage.percent_of_new}% от новых`;
-            },
-            afterLabel(context) {
-              const stage = conversionStages[context.dataIndex];
-              return context.dataIndex > 0 ? `${stage.percent_from_previous}% от прошлого шага` : "Базовый этап";
-            }
-          }
-        }
-      }
-    })
-  });
-
-  new Chart(document.getElementById("planSignupsChart"), {
-    type: "bar",
-    data: {
-      labels: charts.plan_signups.labels,
-      datasets: (charts.plan_signups.datasets || []).map((item, index) => ({
-        label: item.label,
-        data: item.values,
-        backgroundColor: alpha(chartColor(index), 0.72),
-        borderColor: chartColor(index),
-        borderWidth: 1,
-        borderRadius: 8
-      }))
-    },
-    options: commonOptions({
-      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } }
-    })
-  });
-
-  new Chart(document.getElementById("paymentsChart"), {
-    type: "line",
-    data: {
-      labels: charts.payments.labels,
-      datasets: [{
-        label: "Пополнения, ₽",
-        data: charts.payments.values,
-        borderColor: green,
-        backgroundColor: alpha(green, 0.14),
-        fill: true,
-        tension: 0.35
-      }]
-    },
-    options: commonOptions()
-  });
-
-  new Chart(document.getElementById("trafficChart"), {
-    type: "line",
-    data: {
-      labels: charts.traffic.labels,
-      datasets: [
-        {
-          label: "Трафик, ГБ",
-          data: charts.traffic.datasets.total_gb,
-          borderColor: green,
-          backgroundColor: alpha(green, 0.12),
-          fill: true,
-          tension: 0.35
-        },
-        {
-          label: "Белые списки, ГБ",
-          data: charts.traffic.datasets.whitelist_gb,
-          borderColor: blue,
-          backgroundColor: alpha(blue, 0.08),
-          fill: true,
-          tension: 0.35
-        }
-      ]
-    },
-    options: commonOptions()
-  });
-
-  new Chart(document.getElementById("statusChart"), {
-    type: "doughnut",
-    data: {
-      labels: charts.user_statuses.labels,
-      datasets: [{
-        data: charts.user_statuses.values,
-        backgroundColor: [green, mint, rose, muted, "#5c7771"]
-      }]
-    },
-    options: commonOptions()
-  });
-
-  new Chart(document.getElementById("serverTypesChart"), {
-    type: "polarArea",
-    data: {
-      labels: charts.server_types.labels,
-      datasets: [{
-        data: charts.server_types.values,
-        backgroundColor: [alpha(green, 0.84), alpha(mint, 0.76), alpha(blue, 0.58)]
-      }]
-    },
-    options: commonOptions()
-  });
-
-  new Chart(document.getElementById("planMixChart"), {
-    type: "doughnut",
-    data: {
-      labels: charts.plan_mix.labels,
-      datasets: [{
-        data: charts.plan_mix.values,
-        backgroundColor: [alpha(green, 0.84), alpha(mint, 0.74)],
-        borderColor: [green, mint],
-        borderWidth: 1
-      }]
-    },
-    options: commonOptions()
-  });
-</script>
 {% endblock %}

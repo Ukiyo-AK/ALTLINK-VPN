@@ -14,6 +14,7 @@ from altlink.infrastructure.db.models import Base
 from altlink.utils.time import utc_now
 
 BACKUP_FORMAT = "altlink-db-backup-v1"
+BACKUP_EXCLUDED_TABLES = frozenset({"server_metric_snapshots"})
 
 
 class BackupFormatError(ServiceError):
@@ -46,6 +47,10 @@ class BackupService(BaseService):
         models = self._models_in_dependency_order()
         tables_payload = snapshot.get("tables", {})
 
+        # Derived history is intentionally omitted from backups and must not survive
+        # a restore from an unrelated database state.
+        for model in self._excluded_models():
+            await self.session.execute(delete(model))
         for model in reversed(models):
             await self.session.execute(delete(model))
         await self.session.flush()
@@ -143,10 +148,20 @@ class BackupService(BaseService):
         }
         models: list[type[Base]] = []
         for table in Base.metadata.sorted_tables:
+            if table.name in BACKUP_EXCLUDED_TABLES:
+                continue
             model = table_to_model.get(table.name)
             if model is not None and model not in models:
                 models.append(model)
         return models
+
+    def _excluded_models(self) -> list[type[Base]]:
+        return [
+            mapper.class_
+            for mapper in Base.registry.mappers
+            if getattr(mapper, "local_table", None) is not None
+            and mapper.local_table.name in BACKUP_EXCLUDED_TABLES
+        ]
 
     def _serialize_row(self, model: type[Base], row: Base) -> dict[str, Any]:
         payload: dict[str, Any] = {}

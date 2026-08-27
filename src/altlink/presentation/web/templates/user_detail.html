@@ -100,6 +100,15 @@
       <button type="submit" class="button ghost">Сохранить лимит</button>
     </form>
     {% if is_start_subscription %}
+    <div class="server-assignment-current {{ 'is-available' if assigned_start_server_usable else 'is-unavailable' }}">
+      <div>
+        <span class="muted">Текущий Start-сервер</span>
+        <strong>{{ card.user.assigned_server.name if card.user.assigned_server else 'Не назначен' }}</strong>
+      </div>
+      <span class="badge {{ 'highlight' if assigned_start_server_usable else 'warning' }}">
+        {{ 'Доступен' if assigned_start_server_usable else 'Требуется ручной выбор' }}
+      </span>
+    </div>
     <form
       method="post"
       action="/admin/users/{{ user.id }}/start-server"
@@ -112,14 +121,14 @@
         <select name="server_id" required {% if not available_start_servers %}disabled{% endif %}>
           {% for server in available_start_servers %}
           <option value="{{ server.id }}" {% if user.assigned_server_id == server.id %}selected{% endif %}>
-            {{ server.name }}{% if server.country_code %} · {{ server.country_code|upper }}{% endif %} · {{ server.current_clients }} клиентов
+            {{ server.name }}{% if server.country_code %} · {{ server.country_code|upper }}{% endif %} · назначено {{ server.current_clients }} · онлайн {{ server.users_online }}
           </option>
           {% endfor %}
         </select>
       </label>
       {% if available_start_servers %}
-      <p class="muted">Показываются только подключённые и разрешённые серверы Start с активными inbound.</p>
-      <button type="submit" class="button ghost">Переназначить сервер</button>
+      <p class="muted">В списке только рабочие Start-серверы. Смена применяется в Remnawave сразу.</p>
+      <button type="submit" class="button ghost">Назначить выбранный сервер</button>
       {% else %}
       <p class="muted">Сейчас нет доступных серверов Start.</p>
       {% endif %}

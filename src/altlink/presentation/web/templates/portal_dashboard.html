@@ -1309,6 +1309,7 @@
       };
 
       const selectedAmount = () => Number(amountInput?.value || amountButtons[0]?.dataset.topupAmount || 0);
+      const minimumAmount = Number(amountInput?.min || 50);
 
       amountButtons.forEach((button) => {
         button.addEventListener("click", () => {
@@ -1357,6 +1358,10 @@
         const amount = selectedAmount();
         if (!Number.isFinite(amount) || amount <= 0) {
           setMessage("Введите сумму пополнения.", "error");
+          return;
+        }
+        if (amount < minimumAmount) {
+          setMessage(`Минимальная сумма пополнения — ${minimumAmount} ₽.`, "error");
           return;
         }
         setLoading(true);

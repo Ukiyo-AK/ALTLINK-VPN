@@ -57,6 +57,7 @@ from altlink.presentation.bots.client_keyboards import (
     profile_actions,
     promo_onboarding_actions,
     promo_onboarding_skip_actions,
+    referral_actions,
     site_actions,
     subscription_details_actions,
     subscription_link_actions,
@@ -206,7 +207,10 @@ def format_topup_amount_token(amount: Decimal) -> str:
 
 
 def parse_topup_amount_token(token: str) -> Decimal:
-    return Decimal(token)
+    amount = Decimal(token)
+    if not amount.is_finite():
+        raise InvalidOperation("Non-finite top-up amount")
+    return amount
 
 
 def topup_tariff_prices_text() -> str:
@@ -294,7 +298,30 @@ def topup_status_label(raw_status: str) -> str:
         "stub": "тестовый режим",
         "manual": "ручная проверка",
     }
-    return labels.get(str(raw_status), str(raw_status))
+    return labels.get(str(raw_status), "неизвестный статус")
+
+
+def account_status_label(raw_status) -> str:
+    normalized = str(getattr(raw_status, "value", raw_status) or "").strip().lower()
+    return {
+        "new": "Новый аккаунт",
+        "pending": "Ожидает активации",
+        "trial": "Тестовый период",
+        "active": "Активен",
+        "grace": "Ожидает продления",
+        "blocked": "Доступ приостановлен",
+        "canceled": "Подписка завершена",
+        "expired": "Срок действия истёк",
+    }.get(normalized, "Статус неизвестен")
+
+
+def server_access_status_label(raw_status) -> str:
+    normalized = str(getattr(raw_status, "value", raw_status) or "").strip().lower()
+    return {
+        "active": "доступен",
+        "grace": "временно доступен",
+        "blocked": "недоступен",
+    }.get(normalized, "статус неизвестен")
 
 
 def technical_maintenance_text(settings) -> str:
@@ -507,7 +534,7 @@ async def show_topup_provider_menu(
     providers: list[str],
     *,
     selected_plan_code: PlanCode | None = None,
-    allow_below_minimum: bool = False,
+    whitelist_topup: bool = False,
 ) -> None:
     amount_token = format_topup_amount_token(amount)
     provider_items = [(provider, topup_provider_label(provider)) for provider in providers]
@@ -518,7 +545,7 @@ async def show_topup_provider_menu(
             amount_token,
             provider_items,
             selected_plan_token=plan_topup_token(selected_plan_code),
-            flow_token="wl" if allow_below_minimum and selected_plan_code is None else None,
+            flow_token="wl" if whitelist_topup and selected_plan_code is None else None,
         ).as_markup(),
     )
 
@@ -530,7 +557,7 @@ async def continue_topup_flow(
     user,
     amount: Decimal,
     selected_plan_code: PlanCode | None = None,
-    allow_below_minimum: bool = False,
+    whitelist_topup: bool = False,
 ) -> None:
     checkout = None
     admin_telegram_ids: list[int] = []
@@ -560,6 +587,15 @@ async def continue_topup_flow(
                     ).as_markup(),
                 )
                 return
+        if selected_plan_code is not None or whitelist_topup:
+            amount = max(Decimal(amount), MIN_TOPUP_AMOUNT_RUB)
+        elif Decimal(amount) < MIN_TOPUP_AMOUNT_RUB:
+            await answer_or_edit(
+                target,
+                f"Минимальная сумма пополнения — {MIN_TOPUP_AMOUNT_RUB:.0f} ₽.",
+                reply_markup=balance_actions().as_markup(),
+            )
+            return
         configured_provider = hub.topups.configured_provider()
         resolved_provider = hub.topups.resolved_provider()
         providers = available_topup_provider_codes(configured_provider, resolved_provider)
@@ -570,7 +606,6 @@ async def continue_topup_flow(
                     user.id,
                     amount,
                     provider_code=providers[0],
-                    allow_below_minimum=selected_plan_code is not None or allow_below_minimum,
                 )
             except ConflictError as exc:
                 await answer_or_edit(target, str(exc), reply_markup=balance_actions().as_markup())
@@ -589,17 +624,17 @@ async def continue_topup_flow(
             admin_telegram_ids=admin_telegram_ids,
             subscription=subscription,
             selected_plan_code=selected_plan_code,
-            whitelist_topup=allow_below_minimum and selected_plan_code is None,
+            whitelist_topup=whitelist_topup and selected_plan_code is None,
         )
         return
 
-    if allow_below_minimum:
+    if whitelist_topup:
         await show_topup_provider_menu(
             target,
             amount,
             providers,
             selected_plan_code=selected_plan_code,
-            allow_below_minimum=True,
+            whitelist_topup=True,
         )
     else:
         await show_topup_provider_menu(
@@ -680,15 +715,44 @@ def portal_public_url(settings) -> str | None:
     return None
 
 
-def referral_share_vpn_url(settings, referral_code: str | None) -> str | None:
+def referral_vpn_url(settings, referral_code: str | None) -> str | None:
     target_url = bot_public_url(settings)
-    if referral_code and target_url:
-        target_url = f"{target_url}?start=ref_{referral_code}"
-    elif target_url is None:
-        target_url = site_public_url(settings)
+    normalized_code = (referral_code or "").strip()
+    if not target_url or not normalized_code:
+        return None
+    return f"{target_url}?start=ref_{normalized_code}"
+
+
+def referral_share_vpn_url(settings, referral_code: str | None) -> str | None:
+    target_url = referral_vpn_url(settings, referral_code)
     if target_url is None:
-        return share_vpn_url(settings)
+        return None
     return f"https://t.me/share/url?url={quote_plus(target_url)}"
+
+
+def referral_info_text(referral_url: str | None, stats) -> str:
+    lines = [
+        "👥 <b>Пригласить друга</b>",
+        "",
+        "Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который впервые оплатит тариф.",
+        "",
+        f"Приглашено: <b>{stats.invited_count}</b>",
+        f"Оплатили тариф: <b>{stats.rewarded_count}</b>",
+        f"Начислено: <b>{format_rub_compact(stats.earned_total_rub)}</b>",
+    ]
+    if referral_url:
+        lines.extend(
+            [
+                "",
+                "🔗 Ваша персональная ссылка:",
+                f"<code>{html.escape(referral_url)}</code>",
+                "",
+                "Нажмите на ссылку, чтобы скопировать её, или используйте кнопку отправки ниже.",
+            ]
+        )
+    else:
+        lines.extend(["", "Персональная ссылка пока не создана. Откройте раздел ещё раз через несколько секунд."])
+    return "\n".join(lines)
 
 
 def connection_help_url(settings) -> str | None:
@@ -1390,7 +1454,7 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         return (
             "🔐 Подписка\n\n"
             f"Последний тариф: {subscription_for_state.plan.name if subscription_for_state.plan else 'не выбран'}\n"
-            f"Статус: {subscription_for_state.status}\n"
+            f"Статус: {account_status_label(subscription_for_state.status)}\n"
             f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n\n"
             "Сейчас доступа нет. Пополните баланс и выберите тариф заново.\n\n"
             f"{access_links_text(settings)}"
@@ -1399,7 +1463,7 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
     lines = [
         "🔐 Подписка",
         "",
-        f"✨ Статус: {user.status}",
+        f"✨ Статус: {account_status_label(user.status)}",
         f"🧾 Тариф: {subscription.plan.name}",
         f"🔁 Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
         f"📅 Следующее списание: {format_msk_datetime(subscription.next_billing_at)}",
@@ -1444,7 +1508,9 @@ def subscription_details_text(subscription, user_servers: list) -> str:
             "whitelist": "Белые списки",
             "regular": "Обычный",
         }[access.server.server_type.value]
-        server_lines.append(f"{access.server.name} • {type_label} • {access.status}")
+        server_lines.append(
+            f"{access.server.name} • {type_label} • {server_access_status_label(access.status)}"
+        )
     lines.append("\n".join(server_lines) if server_lines else "Пока нет активных серверов.")
     return "\n".join(lines)
 
@@ -2051,7 +2117,7 @@ async def whitelist_package_buy(callback: CallbackQuery, container: AppContainer
             container,
             user=user,
             amount=missing,
-            allow_below_minimum=True,
+            whitelist_topup=True,
         )
         return
     extra = Decimal(status.extra_remaining_bytes) / Decimal(1024**3)
@@ -2103,10 +2169,9 @@ async def show_balance(target: Message | CallbackQuery, container: AppContainer,
             f"На счёте: {Decimal(user.balance_rub):.2f} ₽\n"
             f"Платежей в истории: {len(requests)}\n"
             f"Ожидают подтверждения: {pending_requests}\n"
-            f"Ваш реферальный код: {getattr(user, 'referral_code', 'будет создан позже')}\n"
             f"{promo_line}\n"
             f"{balance_topup_status_text(configured_provider=configured_provider, resolved_provider=resolved_provider, missing_settings=missing_settings)}\n"
-            "Промокод можно ввести кнопкой ниже, а реферальную ссылку открыть отдельно."
+            "Промокод можно ввести кнопкой ниже. Персональная ссылка для приглашений находится в разделе «Пригласить друга»."
         ),
         primary_markup=balance_actions().as_markup(),
         media_section="balance",
@@ -2301,6 +2366,8 @@ async def start(message: Message, container: AppContainer):
             try:
                 pay_amount = Decimal(start_payload[1].removeprefix("pay_").replace(",", "."))
             except (InvalidOperation, ValueError):
+                pay_amount = None
+            if pay_amount is not None and not pay_amount.is_finite():
                 pay_amount = None
         user = await ensure_client_access(message, container, hub)
         if user is None:
@@ -2853,6 +2920,9 @@ async def topup_custom_value(message: Message, state: FSMContext, container: App
     except (InvalidOperation, AttributeError):
         await answer_or_edit(message, "Не удалось распознать сумму. Попробуйте ещё раз.")
         return
+    if not amount.is_finite():
+        await answer_or_edit(message, "Не удалось распознать сумму. Попробуйте ещё раз.")
+        return
     if amount < MIN_TOPUP_AMOUNT_RUB:
         await answer_or_edit(message, f"Минимальная сумма пополнения — {MIN_TOPUP_AMOUNT_RUB:.0f} ₽.")
         return
@@ -2873,7 +2943,11 @@ async def topup_confirm_amount(callback: CallbackQuery, container: AppContainer)
 @router.callback_query(F.data.startswith("client:topup_provider_menu:"))
 async def topup_provider_menu(callback: CallbackQuery, container: AppContainer):
     amount_token = callback.data.split(":")[-1]
-    amount = parse_topup_amount_token(amount_token)
+    try:
+        amount = parse_topup_amount_token(amount_token)
+    except InvalidOperation:
+        await callback.answer("Некорректная сумма пополнения.", show_alert=True)
+        return
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
@@ -2888,7 +2962,11 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
         await callback.answer("Некорректные параметры пополнения.", show_alert=True)
         return
     _, _, provider_code, amount_token, *plan_tokens = parts
-    amount = parse_topup_amount_token(amount_token)
+    try:
+        amount = parse_topup_amount_token(amount_token)
+    except InvalidOperation:
+        await callback.answer("Некорректная сумма пополнения.", show_alert=True)
+        return
     whitelist_topup = bool(plan_tokens and plan_tokens[0] == "wl")
     selected_plan_code = (
         plan_code_from_topup_token(plan_tokens[0])
@@ -2926,6 +3004,8 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
                     ).as_markup(),
                 )
                 return
+        if selected_plan_code is not None or whitelist_topup:
+            amount = max(Decimal(amount), MIN_TOPUP_AMOUNT_RUB)
         configured_provider = hub.topups.configured_provider()
         resolved_provider = hub.topups.resolved_provider()
         available_providers = available_topup_provider_codes(configured_provider, resolved_provider)
@@ -2937,7 +3017,6 @@ async def topup_provider_select(callback: CallbackQuery, container: AppContainer
                 user.id,
                 amount,
                 provider_code=provider_code,
-                allow_below_minimum=selected_plan_code is not None or whitelist_topup,
             )
         except ConflictError as exc:
             await answer_or_edit(callback, str(exc), reply_markup=balance_actions().as_markup())
@@ -3230,17 +3309,15 @@ async def referral_info(callback: CallbackQuery, container: AppContainer):
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
+        stats = await hub.accounts.get_referral_stats(user.id)
+    referral_url = referral_vpn_url(container.settings, getattr(user, "referral_code", None))
     share_url = referral_share_vpn_url(container.settings, getattr(user, "referral_code", None))
-    text = (
-        "Рефералка\n\n"
-        f"Ваш код: {getattr(user, 'referral_code', 'будет создан позже')}\n"
-        "За пользователя, который придёт по вашей ссылке и оформит первый платный тариф, вы получите +100 ₽ на баланс."
+    await answer_or_edit(
+        callback,
+        referral_info_text(referral_url, stats),
+        reply_markup=referral_actions(share_url=share_url).as_markup(),
+        parse_mode="HTML",
     )
-    markup = balance_actions().as_markup()
-    if share_url:
-        await answer_or_edit(callback, f"{text}\n\nСсылкой можно поделиться кнопкой «Поделиться VPN» в меню и профиле.", reply_markup=markup)
-    else:
-        await answer_or_edit(callback, text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "client:plan_menu")

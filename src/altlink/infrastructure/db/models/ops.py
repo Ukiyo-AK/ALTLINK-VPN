@@ -36,6 +36,27 @@ class TrafficSnapshot(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     server: Mapped["Server | None"] = relationship(back_populates="traffic_snapshots")
 
 
+class ServerMetricSnapshot(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "server_metric_snapshots"
+    __table_args__ = (
+        Index("ix_server_metric_snapshots_server_captured", "server_id", "captured_at"),
+        Index("ix_server_metric_snapshots_captured_at", "captured_at"),
+    )
+
+    server_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    remnawave_node_uuid: Mapped[str] = mapped_column(String(64), nullable=False)
+    server_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    country_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    server_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_operational: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_connected: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_available: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    assigned_users: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    online_users: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    xray_uptime: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Notification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "notifications"
 

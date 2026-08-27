@@ -1,12 +1,100 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
 
-from altlink.domain.enums import BalanceTransactionType, PlanCode
+from altlink.domain.enums import BalanceTransactionType, PlanCode, ServerType
+from altlink.infrastructure.db.models import TrafficSnapshot
 from altlink.utils.time import utc_now
+
+
+@pytest.mark.asyncio
+async def test_dashboard_summary_reports_start_users_pinned_to_unavailable_servers(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=12020,
+            username="pinned_start_user",
+            first_name="Pinned",
+            last_name="Start",
+            language_code="ru",
+        )
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT, charge_user=False)
+        user = await hub.accounts.get_user(user.id)
+        server = await hub.catalog.get_server(user.assigned_server_id)
+        server.is_connected = False
+        await hub.catalog.rebuild_user_access_matrix()
+
+        summary = await hub.dashboard.summary()
+
+    assert summary["servers_unavailable"] >= 1
+    assert summary["affected_start_users_count"] == 1
+    assert summary["affected_start_users"][0]["user"].id == user.id
+    assert summary["affected_start_users"][0]["server"].id == server.id
+
+
+@pytest.mark.asyncio
+async def test_server_analytics_captures_uptime_assigned_and_online_history(test_services):
+    async with test_services.hub() as hub:
+        servers = await hub.catalog.list_servers()
+        server = next(item for item in servers if item.server_type == ServerType.TEN_GBIT)
+        server.current_clients = 7
+        server.users_online = 3
+        server.raw_payload = {**(server.raw_payload or {}), "xrayUptime": 90061}
+
+        captured = await hub.dashboard.capture_server_metrics(force=True)
+        skipped = await hub.dashboard.capture_server_metrics()
+        analytics = await hub.dashboard.server_analytics("1h", [server.id])
+
+    assert captured == len(servers)
+    assert skipped == 0
+    assert analytics["selected_server_ids"] == [server.id]
+    assert analytics["uptime_cards"]
+    card = next(item for item in analytics["uptime_cards"] if item["server"].id == server.id)
+    assert card["uptime_percent"] == 100.0
+    assert card["xray_uptime"] == "1 д 1 ч"
+    assert 7.0 in analytics["charts"]["assigned_users"][0]["values"]
+    assert 3.0 in analytics["charts"]["online_users"][0]["values"]
+    assert 100.0 in analytics["charts"]["uptime"][0]["values"]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_traffic_chart_uses_cumulative_counter_deltas(test_services):
+    gib = 1024**3
+    now = utc_now()
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=12021,
+            username="traffic_delta",
+            first_name="Traffic",
+            last_name="Delta",
+            language_code="ru",
+        )
+        user.created_at = now - timedelta(days=2)
+        for captured_at, lifetime_bytes in (
+            (now - timedelta(hours=2), 2 * gib),
+            (now - timedelta(minutes=45), 3 * gib),
+            (now - timedelta(minutes=30), 3 * gib),
+            (now - timedelta(minutes=15), 5 * gib),
+        ):
+            hub.session.add(
+                TrafficSnapshot(
+                    user_id=user.id,
+                    subscription_id=None,
+                    server_id=None,
+                    snapshot_date=date.today(),
+                    used_bytes=lifetime_bytes,
+                    lifetime_used_bytes=lifetime_bytes,
+                    source="test",
+                    created_at=captured_at,
+                )
+            )
+        await hub.session.flush()
+
+        overview = await hub.dashboard.overview(period="1h")
+
+    assert sum(overview["charts"]["traffic"]["datasets"]["total_gb"]) == pytest.approx(3.0)
 
 
 @pytest.mark.asyncio

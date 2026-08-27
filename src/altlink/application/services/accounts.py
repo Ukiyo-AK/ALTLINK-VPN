@@ -81,6 +81,13 @@ class UserListPage:
     direction: str
 
 
+@dataclass(slots=True, frozen=True)
+class ReferralStats:
+    invited_count: int
+    rewarded_count: int
+    earned_total_rub: Decimal
+
+
 class AccountService(BaseService):
     source = "accounts"
     registration_consent_version = "placeholder-v1"
@@ -1002,6 +1009,27 @@ class AccountService(BaseService):
             payload={"user_id": user.id, "referrer_user_id": referrer.id},
         )
         return user
+
+    async def get_referral_stats(self, user_id: str) -> ReferralStats:
+        invited_count, rewarded_count, earned_total = (
+            await self.session.execute(
+                select(
+                    func.count(User.id),
+                    func.count(User.id).filter(User.referral_reward_granted_at.is_not(None)),
+                    select(func.coalesce(func.sum(BalanceTransaction.amount_rub), 0))
+                    .where(
+                        BalanceTransaction.user_id == user_id,
+                        BalanceTransaction.type == BalanceTransactionType.REFERRAL_BONUS,
+                    )
+                    .scalar_subquery(),
+                ).where(User.referred_by_user_id == user_id)
+            )
+        ).one()
+        return ReferralStats(
+            invited_count=int(invited_count or 0),
+            rewarded_count=int(rewarded_count or 0),
+            earned_total_rub=Decimal(earned_total or 0),
+        )
 
     async def grant_referral_bonus_if_eligible(self, user_id: str, amount_rub: Decimal = Decimal("100")) -> bool:
         user = await self.get_user(user_id)

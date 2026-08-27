@@ -463,25 +463,14 @@ def test_portal_bot_login_helpers_build_deeplink_and_qr():
 
 
 @pytest.mark.asyncio
-async def test_admin_dashboard_route_passes_chart_context_and_refreshes_on_demand(monkeypatch):
+async def test_admin_dashboard_route_uses_fast_summary_even_with_legacy_refresh_param(monkeypatch):
     sync_calls: list[str] = []
     rendered: dict[str, object] = {}
-    overview = {
+    summary = {
         "active_users": 1,
-        "renewal_disabled_users": 0,
         "blocked_users": 0,
         "trial_users": 0,
-        "payments_total_rub": Decimal("100"),
-        "total_traffic_bytes": 5 * 1024**3,
-        "period": "1w",
-        "charts": {
-            "plan_mix": {"labels": ["Start", "Pro"], "values": [1, 2]},
-            "user_statuses": {"labels": [], "values": []},
-            "server_loads": {"labels": [], "values": [], "types": []},
-            "payments": {"labels": [], "values": []},
-            "server_types": {"labels": [], "values": []},
-        },
-        "top_users": [],
+        "payments_total_30d": Decimal("100"),
         "recent_topups": [],
     }
 
@@ -491,9 +480,9 @@ async def test_admin_dashboard_route_passes_chart_context_and_refreshes_on_deman
     async def fake_sync_servers():
         sync_calls.append("servers")
 
-    async def fake_overview(period="2w"):
-        sync_calls.append(f"overview:{period}")
-        return overview
+    async def fake_summary():
+        sync_calls.append("summary")
+        return summary
 
     async def fake_resolve_admin(request, hub):
         return SimpleNamespace(id="admin-1", username="admin")
@@ -508,7 +497,7 @@ async def test_admin_dashboard_route_passes_chart_context_and_refreshes_on_deman
         yield SimpleNamespace(
             billing=SimpleNamespace(snapshot_traffic=fake_snapshot_traffic),
             catalog=SimpleNamespace(sync_servers=fake_sync_servers),
-            dashboard=SimpleNamespace(overview=fake_overview),
+            dashboard=SimpleNamespace(summary=fake_summary),
         )
 
     request = SimpleNamespace(
@@ -522,22 +511,17 @@ async def test_admin_dashboard_route_passes_chart_context_and_refreshes_on_deman
     response = await web_routes.dashboard(request, period="1w", refresh=True)
 
     assert response is rendered["context"]
-    assert sync_calls == ["servers", "traffic", "overview:1w"]
+    assert sync_calls == ["summary"]
     assert rendered["template_name"] == "dashboard.html"
-    assert rendered["context"]["charts"] == overview["charts"]
-    assert rendered["context"]["charts_json"]
-    assert rendered["context"]["selected_period"] == "1w"
-    assert rendered["context"]["refresh_requested"] is True
+    assert rendered["context"]["summary"] == summary
+    assert "charts_json" not in rendered["context"]
 
 
 @pytest.mark.asyncio
-async def test_admin_dashboard_route_uses_cached_data_without_refresh(monkeypatch):
+async def test_admin_dashboard_route_does_not_run_remote_sync(monkeypatch):
     sync_calls: list[str] = []
     rendered: dict[str, object] = {}
-    overview = {
-        "period": "2w",
-        "charts": {"plan_mix": {"labels": ["Start", "Pro"], "values": [0, 0]}},
-    }
+    summary = {"active_users": 0, "recent_topups": []}
 
     async def fake_snapshot_traffic():
         sync_calls.append("traffic")
@@ -545,9 +529,9 @@ async def test_admin_dashboard_route_uses_cached_data_without_refresh(monkeypatc
     async def fake_sync_servers():
         sync_calls.append("servers")
 
-    async def fake_overview(period="2w"):
-        sync_calls.append(f"overview:{period}")
-        return overview
+    async def fake_summary():
+        sync_calls.append("summary")
+        return summary
 
     async def fake_resolve_admin(request, hub):
         return SimpleNamespace(id="admin-1", username="admin")
@@ -562,7 +546,7 @@ async def test_admin_dashboard_route_uses_cached_data_without_refresh(monkeypatc
         yield SimpleNamespace(
             billing=SimpleNamespace(snapshot_traffic=fake_snapshot_traffic),
             catalog=SimpleNamespace(sync_servers=fake_sync_servers),
-            dashboard=SimpleNamespace(overview=fake_overview),
+            dashboard=SimpleNamespace(summary=fake_summary),
         )
 
     request = SimpleNamespace(
@@ -576,9 +560,57 @@ async def test_admin_dashboard_route_uses_cached_data_without_refresh(monkeypatc
     response = await web_routes.dashboard(request, period="2w", refresh=False)
 
     assert response is rendered["context"]
-    assert sync_calls == ["overview:2w"]
+    assert sync_calls == ["summary"]
     assert rendered["template_name"] == "dashboard.html"
-    assert rendered["context"]["refresh_requested"] is False
+    assert rendered["context"]["summary"] == summary
+
+
+@pytest.mark.asyncio
+async def test_admin_analytics_route_passes_period_and_selected_servers(monkeypatch):
+    rendered: dict[str, object] = {}
+    calls: list[object] = []
+    overview = {"period": "1d", "charts": {"users": {"labels": []}}}
+    infrastructure = {"charts": {"labels": []}, "selected_server_ids": ["server-1"]}
+
+    async def fake_overview(period="2w"):
+        calls.append(("overview", period))
+        return overview
+
+    async def fake_server_analytics(period="2w", selected_server_ids=None):
+        calls.append(("servers", period, selected_server_ids))
+        return infrastructure
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            dashboard=SimpleNamespace(
+                overview=fake_overview,
+                server_analytics=fake_server_analytics,
+            )
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        query_params=SimpleNamespace(getlist=lambda key: ["server-1"] if key == "server_id" else []),
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.analytics(request, period="1d")
+
+    assert response is rendered["context"]
+    assert rendered["template_name"] == "analytics.html"
+    assert rendered["context"]["active_nav"] == "analytics"
+    assert calls == [("overview", "1d"), ("servers", "1d", ["server-1"])]
 
 
 @pytest.mark.asyncio

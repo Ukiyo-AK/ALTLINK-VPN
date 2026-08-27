@@ -87,12 +87,21 @@ def test_landing_support_handle_uses_dedicated_mobile_friendly_class():
     assert 'class="landing-support-handle"' in content
 
 
-def test_dashboard_template_reads_plan_mix_values_from_dict_keys():
-    content = (TEMPLATE_ROOT / "dashboard.html").read_text(encoding="utf-8")
+def test_analytics_template_reads_plan_mix_values_from_dict_keys():
+    content = (TEMPLATE_ROOT / "analytics.html").read_text(encoding="utf-8")
 
-    assert "charts.plan_mix.values[0]" not in content
-    assert 'charts["plan_mix"]["values"][0]' in content
-    assert 'charts["plan_mix"]["values"][1]' in content
+    assert "charts.business.plan_mix.values[0]" not in content
+    assert 'charts["business"]["plan_mix"]["values"][0]' in content
+    assert 'charts["business"]["plan_mix"]["values"][1]' in content
+    assert "{{ charts | tojson }}" in content
+    assert "charts_json | safe" not in content
+
+
+def test_promo_charts_use_safe_json_serialization():
+    content = (TEMPLATE_ROOT / "promos.html").read_text(encoding="utf-8")
+
+    assert "{{ promo_stats.charts | tojson }}" in content
+    assert "promo_charts_json | safe" not in content
 
 
 def test_traffic_template_handles_rows_without_active_plan():
@@ -206,7 +215,7 @@ def test_admin_user_template_exposes_start_server_reassignment():
     assert 'name="server_id"' in user_detail
     assert "available_start_servers" in user_detail
     assert "is_start_subscription" in user_detail
-    assert "Переназначить сервер" in user_detail
+    assert "Назначить выбранный сервер" in user_detail
 
 
 def test_landing_template_keeps_homepage_copy_compact():
@@ -272,28 +281,30 @@ def test_theme_bootstrap_defaults_to_light_and_uses_data_theme():
     assert "@media (prefers-color-scheme: dark)" not in style
 
 
-def test_admin_dashboard_has_mobile_section_navigation():
+def test_admin_analytics_contains_chart_navigation_and_server_history():
     dashboard = (TEMPLATE_ROOT / "dashboard.html").read_text(encoding="utf-8")
+    analytics = (TEMPLATE_ROOT / "analytics.html").read_text(encoding="utf-8")
 
-    assert 'class="dashboard-section-nav"' in dashboard
+    assert 'href="/admin/analytics"' in dashboard
+    assert "Chart.js" not in dashboard
+    assert 'class="dashboard-section-nav"' in analytics
     for section_id in (
-        "dashboard-overview",
-        "dashboard-users",
-        "dashboard-finance",
-        "dashboard-plans",
-        "dashboard-lists",
+        "analytics-users",
+        "analytics-finance",
+        "analytics-plans",
+        "analytics-infrastructure",
+        "analytics-lists",
     ):
-        assert f'href="#{section_id}"' in dashboard
-        assert f'id="{section_id}"' in dashboard
-    assert 'name="period"' in dashboard
-    assert 'name="refresh"' in dashboard
-    assert "usersChart" in dashboard
-    assert "conversionFunnelChart" in dashboard
-    assert "planSignupsChart" in dashboard
-    assert "nodeLoadChart" not in dashboard
-    assert "hostLoadChart" not in dashboard
-    assert "dashboard-load" not in dashboard
-    assert "trafficChart" in dashboard
+        assert f'href="#{section_id}"' in analytics
+        assert f'id="{section_id}"' in analytics
+    assert 'name="period"' in analytics
+    assert 'name="server_id"' in analytics
+    assert "usersChart" in analytics
+    assert "conversionFunnelChart" in analytics
+    assert "planSignupsChart" in analytics
+    assert "serverUsersChart" in analytics
+    assert "serverOnlineChart" in analytics
+    assert "serverUptimeChart" in analytics
 
 
 def test_admin_users_template_exposes_csrf_protected_node_access_sync():

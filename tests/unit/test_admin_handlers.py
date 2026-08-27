@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -524,6 +525,15 @@ async def test_show_user_card_does_not_lazy_load_assigned_server_after_session_c
     assert answers
     assert "Telegram ID: 123457" in answers[0]
     assert "Назначенный сервер:" in answers[0]
+    assert "Трафик за текущий цикл:" in answers[0]
+    assert "Общий трафик в сервисе:" in answers[0]
+    assert "????" not in answers[0]
+
+
+def test_admin_handlers_do_not_contain_corrupted_user_messages():
+    content = Path("src/altlink/presentation/bots/admin_handlers.py").read_text(encoding="utf-8")
+
+    assert "????" not in content
 
 
 @pytest.mark.asyncio
@@ -953,7 +963,7 @@ async def test_payment_approve_updates_request_card(monkeypatch):
 
     await admin_handlers.payment_approve(DummyCallback(), container)
 
-    assert approved_with == [("req-1", "admin-1", "???????????? ? admin bot")]
+    assert approved_with == [("req-1", "admin-1", "Подтверждено в admin bot")]
     assert rendered
     assert "1/1" in rendered[0]
     assert "req-1" in rendered[0]
@@ -994,7 +1004,7 @@ async def test_payment_approve_skips_manual_controls_for_yookassa(monkeypatch):
     await admin_handlers.payment_approve(DummyCallback(), container)
 
     assert approved_with == []
-    assert callback_answers == [("??? ?????? ??? ?????? ????????????? ?? ?????.", True)]
+    assert callback_answers == [("Этот платёж нельзя подтверждать вручную.", True)]
 
 
 @pytest.mark.asyncio

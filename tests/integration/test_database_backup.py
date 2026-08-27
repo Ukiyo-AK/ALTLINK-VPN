@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from decimal import Decimal
+import json
 
 import pytest
+from sqlalchemy import select
 
 from altlink.domain.enums import BalanceTransactionType
+from altlink.infrastructure.db.models import ServerMetricSnapshot
 
 
 @pytest.mark.asyncio
@@ -40,7 +43,9 @@ async def test_database_backup_roundtrip_restores_users_referrals_and_admins(tes
             description="seed balance",
             admin_id=admin.id,
         )
+        await hub.dashboard.capture_server_metrics(force=True)
         artifact = await hub.backups.export_database()
+        backup_payload = json.loads(artifact.content)
         referrer_id = referrer.id
         invited_id = invited.id
         referrer_code = referrer.referral_code
@@ -65,11 +70,14 @@ async def test_database_backup_roundtrip_restores_users_referrals_and_admins(tes
         restored_invited = await hub.accounts.get_user(invited_id)
         missing_extra_user = await hub.accounts.get_user_by_telegram_id(303)
         restored_admin = await hub.accounts.get_admin_by_telegram_id(9001)
+        restored_metric_snapshots = list((await hub.session.scalars(select(ServerMetricSnapshot))).all())
 
     assert summary["format"] == "altlink-db-backup-v1"
+    assert "server_metric_snapshots" not in backup_payload["tables"]
     assert summary["table_counts"]["users"] >= 2
     assert restored_admin is not None
     assert restored_referrer.referral_code == referrer_code
     assert restored_invited.referred_by_user_id == restored_referrer.id
     assert Decimal(restored_referrer.balance_rub) == Decimal("123.45")
     assert missing_extra_user is None
+    assert restored_metric_snapshots == []

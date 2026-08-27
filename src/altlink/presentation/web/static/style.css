@@ -1347,6 +1347,280 @@ textarea {
   line-height: 1;
 }
 
+.dashboard-summary-head .toolbar {
+  justify-content: flex-end;
+}
+
+.dashboard-attention-panel {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  border-color: rgba(194, 130, 35, 0.3);
+}
+
+.dashboard-attention-panel h2,
+.dashboard-attention-panel h3 {
+  margin: 0.45rem 0 0.25rem;
+}
+
+.dashboard-issue-list,
+.dashboard-compact-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.dashboard-issue-row,
+.dashboard-compact-list > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.25rem;
+  padding: 0.75rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.95rem;
+  background: var(--surface-muted);
+}
+
+.dashboard-issue-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.dashboard-issue-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.dashboard-user-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.dashboard-user-chips a {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-weight: 800;
+}
+
+.dashboard-user-chips a span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.server-assignment-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.95rem;
+  background: var(--surface-muted);
+}
+
+.server-assignment-current > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.server-assignment-current.is-unavailable {
+  border-color: rgba(194, 130, 35, 0.36);
+}
+
+.dashboard-alert-list > div {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.dashboard-alert-list small {
+  grid-column: 2;
+}
+
+.analytics-toolbar {
+  position: relative;
+  z-index: 8;
+}
+
+.analytics-filter-form {
+  flex-wrap: nowrap;
+}
+
+.analytics-server-filter {
+  position: relative;
+}
+
+.analytics-server-filter > summary {
+  display: flex;
+  min-height: 2.65rem;
+  align-items: center;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--surface-muted);
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.analytics-server-filter > summary::-webkit-details-marker {
+  display: none;
+}
+
+.analytics-server-options {
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  width: min(26rem, 78vw);
+  max-height: 24rem;
+  gap: 0.45rem;
+  padding: 0.85rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--panel-solid);
+  box-shadow: var(--shadow);
+}
+
+.analytics-server-options p {
+  margin: 0 0 0.25rem;
+}
+
+.analytics-server-options label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 0.75rem;
+  background: var(--surface-muted);
+  cursor: pointer;
+}
+
+.analytics-server-options input {
+  width: 1.05rem;
+  height: 1.05rem;
+  flex: 0 0 auto;
+}
+
+.analytics-section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 2.2rem 0 0.9rem;
+}
+
+.analytics-section-head > div {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.analytics-section-head > div > span {
+  color: var(--accent-strong);
+  font-family: "Unbounded", sans-serif;
+  font-size: 0.78rem;
+}
+
+.analytics-section-head h2,
+.analytics-section-head p {
+  margin: 0;
+}
+
+.analytics-section-head p {
+  max-width: 42rem;
+  text-align: right;
+}
+
+.analytics-plan-summary {
+  display: grid;
+  align-content: start;
+  gap: 0.7rem;
+}
+
+.analytics-plan-summary > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem;
+  border-radius: 0.95rem;
+  background: var(--surface-muted);
+}
+
+.analytics-plan-summary strong {
+  color: var(--accent-strong);
+  font-size: 1.5rem;
+}
+
+.analytics-uptime-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.analytics-uptime-card {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.analytics-uptime-card .split > div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.analytics-uptime-value {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.analytics-uptime-value strong {
+  color: var(--accent-strong);
+  font-family: "Unbounded", sans-serif;
+  font-size: clamp(1.65rem, 3vw, 2.35rem);
+  line-height: 1;
+}
+
+.analytics-uptime-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.analytics-uptime-card dl div {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.55rem;
+  border-radius: 0.75rem;
+  background: var(--surface-muted);
+}
+
+.analytics-uptime-card dt {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.analytics-uptime-card dd {
+  margin: 0;
+  font-weight: 800;
+}
+
+.analytics-wide-chart {
+  grid-column: 1 / -1;
+}
+
 .dashboard-filter-form,
 .chart-controls-row {
   display: flex;
@@ -3237,6 +3511,40 @@ html[data-theme="dark"] .portal-section-nav a {
   .chart-controls-row {
     flex-direction: column;
     align-items: stretch;
+  }
+  .analytics-filter-form {
+    flex-wrap: wrap;
+  }
+  .analytics-server-filter,
+  .analytics-server-filter > summary {
+    width: 100%;
+  }
+  .analytics-server-options {
+    position: static;
+    width: 100%;
+    max-height: 18rem;
+    margin-top: 0.5rem;
+    box-shadow: none;
+  }
+  .analytics-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-top: 1.55rem;
+  }
+  .analytics-section-head p {
+    text-align: left;
+  }
+  .analytics-uptime-grid {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-summary-head .toolbar {
+    justify-content: stretch;
+  }
+  .dashboard-summary-head .toolbar .button {
+    width: 100%;
+  }
+  .dashboard-issue-row {
+    grid-template-columns: minmax(0, 1fr);
   }
   .users-filter-head {
     flex-direction: column;

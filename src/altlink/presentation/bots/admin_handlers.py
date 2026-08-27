@@ -18,6 +18,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.registry import AppContainer
@@ -980,16 +981,22 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         topups = card.get("topups", [])
         transactions = card.get("transactions", [])
         assigned_server_name = "не назначен"
+        assigned_server_available = False
         assigned_server_id = getattr(user, "assigned_server_id", None)
         if assigned_server_id and getattr(hub, "session", None) is not None:
-            assigned_server_name = (
-                await hub.session.scalar(select(Server.name).where(Server.id == assigned_server_id))
-                or assigned_server_name
+            assigned_server_row = await hub.session.get(
+                Server,
+                assigned_server_id,
+                options=[selectinload(Server.inbounds)],
             )
+            if assigned_server_row is not None:
+                assigned_server_name = assigned_server_row.name
+                assigned_server_available = hub.catalog.is_server_usable(assigned_server_row)
         else:
             loaded_assigned_server = vars(user).get("assigned_server")
             if loaded_assigned_server is not None:
                 assigned_server_name = loaded_assigned_server.name
+                assigned_server_available = hub.catalog.is_server_usable(loaded_assigned_server)
 
     if not hasattr(user, "id"):
         user.id = user_id
@@ -1029,14 +1036,14 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         f"Лимит устройств: {plan.device_limit if plan else '—'}",
         f"Персональный лимит трафика: {traffic_limit}",
         f"Сброс лимита: {traffic_strategy}",
-        f"Назначенный сервер: {assigned_server}",
+        f"Назначенный сервер: {assigned_server} ({'доступен' if assigned_server_available else 'недоступен'})",
         f"Пополнений: {len(topups)}",
         f"Транзакций: {len(transactions)}",
     ]
     if subscription:
-        lines.append(f"?????? ?? ??????? ????: {subscription.traffic_used_bytes / 1024**3:.2f} ??")
+        lines.append(f"Трафик за текущий цикл: {subscription.traffic_used_bytes / 1024**3:.2f} ГБ")
         if latest_snapshot is not None:
-            lines.append(f"????? ?????? ? ??????: {latest_snapshot.lifetime_used_bytes / 1024**3:.2f} ??")
+            lines.append(f"Общий трафик в сервисе: {latest_snapshot.lifetime_used_bytes / 1024**3:.2f} ГБ")
         if is_metered_plan_code(subscription.plan.code):
             lines.append(f"Белые списки: {subscription.whitelist_traffic_used_bytes / 1024**3:.2f} ГБ")
         if subscription.notes:
@@ -1115,15 +1122,23 @@ async def show_user_start_servers(
         ):
             raise ConflictError("Переназначение сервера доступно только для тарифа Start.")
         servers = await hub.catalog.list_available_start_servers()
+        current_server = user.assigned_server
+        current_server_available = hub.catalog.is_server_usable(current_server)
     total_pages = max((len(servers) + 5) // 6, 1)
     page = min(max(page, 0), total_pages - 1)
-    current_name = user.assigned_server.name if user.assigned_server else "не назначен"
+    current_name = current_server.name if current_server else "не назначен"
+    current_status = "доступен" if current_server_available else "недоступен — выберите резерв вручную"
     await render_admin(
         target,
         "Переназначение Start-сервера\n\n"
         f"Пользователь: {user_label(user)}\n"
-        f"Текущий сервер: {current_name}\n\n"
-        + ("Выберите новый доступный Start-сервер." if servers else "Доступных Start-серверов сейчас нет."),
+        f"Текущий сервер: {current_name}\n"
+        f"Статус: {current_status}\n\n"
+        + (
+            "Выберите рабочий Start-сервер. В кнопках указано: назначено / онлайн."
+            if servers
+            else "Доступных Start-серверов сейчас нет."
+        ),
         reply_markup=user_start_server_actions(
             user_id,
             servers,
@@ -1852,7 +1867,7 @@ async def payment_approve(callback: CallbackQuery, container: AppContainer):
         item = await hub.topups.get_request(request_id)
         if payment_provider_code(item) != "manual":
             await callback.answer(
-                "??? ?????? ??? ?????? ????????????? ?? ?????.",
+                "Этот платёж нельзя подтверждать вручную.",
                 show_alert=True,
             )
             return
@@ -1860,7 +1875,7 @@ async def payment_approve(callback: CallbackQuery, container: AppContainer):
         await hub.topups.approve(
             request_id,
             admin_id=admin.id if admin else None,
-            comment="???????????? ? admin bot",
+            comment="Подтверждено в admin bot",
         )
     await render_payment_browser(callback, container, request_id=request_id)
 
@@ -1874,7 +1889,7 @@ async def payment_reject(callback: CallbackQuery, container: AppContainer):
         item = await hub.topups.get_request(request_id)
         if payment_provider_code(item) != "manual":
             await callback.answer(
-                "??? ?????? ??? ?????? ?????????? ?? ?????.",
+                "Этот платёж нельзя отклонять вручную.",
                 show_alert=True,
             )
             return
@@ -1882,12 +1897,12 @@ async def payment_reject(callback: CallbackQuery, container: AppContainer):
         await hub.topups.reject(
             request_id,
             admin_id=admin.id if admin else None,
-            comment="????????? ? admin bot",
+            comment="Отклонено в admin bot",
         )
     await render_payment_browser(callback, container, request_id=request_id)
 
 
-@router.message(F.text == "????????????")
+@router.message(F.text == "Пользователи")
 async def users_screen(message: Message, state: FSMContext, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return

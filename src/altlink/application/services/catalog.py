@@ -171,12 +171,13 @@ class CatalogService(BaseService):
         )
         return await self.list_servers()
 
-    async def refresh_server_health_and_failover(self) -> dict:
-        """Refresh lightweight node health and reroute users only when routing changed."""
+    async def refresh_server_health(self) -> dict:
+        """Refresh node health without changing a user's pinned Start server."""
         if self.remnawave is None:
             return {
                 "checked": 0,
                 "changed_servers": [],
+                "affected_start_users": [],
                 "start_failovers": [],
                 "skipped": "remnawave_not_configured",
             }
@@ -189,6 +190,7 @@ class CatalogService(BaseService):
             return {
                 "checked": 0,
                 "changed_servers": [],
+                "affected_start_users": [],
                 "start_failovers": [],
                 "skipped": "empty_remote_catalog",
             }
@@ -233,53 +235,57 @@ class CatalogService(BaseService):
                     }
                 )
 
-        has_available_start_server = any(
-            server.server_type == ServerType.TEN_GBIT and self._server_is_usable(server)
-            for server in servers
-        )
-        stranded_users = []
-        if unusable_start_server_ids and has_available_start_server:
-            stranded_users = list(
+        affected_start_users = []
+        if unusable_start_server_ids:
+            candidates = list(
                 (
                     await self.session.scalars(
-                        select(User).where(User.assigned_server_id.in_(unusable_start_server_ids))
+                        select(User)
+                        .where(
+                            User.assigned_server_id.in_(unusable_start_server_ids),
+                            User.status.in_([UserStatus.ACTIVE, UserStatus.GRACE]),
+                        )
+                        .options(selectinload(User.subscriptions).joinedload(Subscription.plan))
                     )
                 ).all()
             )
-        previous_assignments = {user.id: user.assigned_server_id for user in stranded_users}
+            for user in candidates:
+                subscription = self._resolve_current_subscription(user.subscriptions)
+                if subscription and subscription.plan and is_metered_plan_code(subscription.plan.code):
+                    affected_start_users.append(
+                        {
+                            "user_id": user.id,
+                            "telegram_id": user.telegram_id,
+                            "server_id": user.assigned_server_id,
+                        }
+                    )
 
-        if changed_servers or stranded_users:
+        if changed_servers:
             await self.rebuild_user_access_matrix()
             await self.session.flush()
 
-        start_failovers = [
-            {
-                "user_id": user.id,
-                "telegram_id": user.telegram_id,
-                "from_server_id": previous_assignments[user.id],
-                "to_server_id": user.assigned_server_id,
-            }
-            for user in stranded_users
-            if user.assigned_server_id
-            and user.assigned_server_id != previous_assignments[user.id]
-        ]
-        if changed_servers or start_failovers:
+        if changed_servers:
             await self.log_event(
-                level=SystemEventLevel.WARNING if changed_servers else SystemEventLevel.INFO,
-                event_type="server_health_failover",
-                message="Проверено состояние серверов и выполнено автоматическое переназначение доступа.",
+                level=SystemEventLevel.WARNING,
+                event_type="server_health_changed",
+                message="Состояние серверов изменилось. Start-серверы пользователей автоматически не менялись.",
                 payload={
                     "changed_servers": changed_servers,
-                    "start_failovers": start_failovers,
+                    "affected_start_users": affected_start_users,
                 },
             )
 
         return {
             "checked": len(servers),
             "changed_servers": changed_servers,
-            "start_failovers": start_failovers,
+            "affected_start_users": affected_start_users,
+            "start_failovers": [],
             "skipped": None,
         }
+
+    async def refresh_server_health_and_failover(self) -> dict:
+        """Backward-compatible alias for deployments that still call the old method name."""
+        return await self.refresh_server_health()
 
     async def set_server_availability(self, server_id: str, is_available: bool) -> Server:
         server = await self.session.get(Server, server_id)
@@ -357,6 +363,14 @@ class CatalogService(BaseService):
         user = await self.session.get(User, user_id, options=[joinedload(User.assigned_server)])
         if user is None:
             raise NotFoundError("Пользователь не найден.")
+        if is_metered_plan_code(plan_code) and user.assigned_server_id:
+            assigned_server = await self.session.get(
+                Server,
+                user.assigned_server_id,
+                options=[selectinload(Server.inbounds)],
+            )
+            if assigned_server is not None and assigned_server.server_type == ServerType.TEN_GBIT:
+                return assigned_server
         server = await self._pick_preferred_server_for_plan(plan_code)
         user.assigned_server_id = server.id
         await self.session.flush()
@@ -604,13 +618,13 @@ class CatalogService(BaseService):
                 if whitelist_allowed
                 else set()
             )
-            assigned_server = next((server for server in available_servers if server.id == user.assigned_server_id), None)
-            if assigned_server is None or assigned_server.server_type != ServerType.TEN_GBIT:
-                try:
-                    assigned_server = await self._pick_least_loaded_ten_gbit_server(servers)
-                except NotFoundError:
-                    return desired_server_ids
-                user.assigned_server_id = assigned_server.id
+            assigned_server = next((server for server in servers if server.id == user.assigned_server_id), None)
+            if (
+                assigned_server is None
+                or assigned_server.server_type != ServerType.TEN_GBIT
+                or not self._server_is_usable(assigned_server)
+            ):
+                return desired_server_ids
             desired_server_ids.add(assigned_server.id)
             return desired_server_ids
 
