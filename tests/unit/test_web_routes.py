@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from altlink.presentation.web import routes as web_routes
 from altlink.domain.enums import PlanCode
@@ -610,7 +611,57 @@ async def test_admin_analytics_route_passes_period_and_selected_servers(monkeypa
     assert response is rendered["context"]
     assert rendered["template_name"] == "analytics.html"
     assert rendered["context"]["active_nav"] == "analytics"
+    assert rendered["context"]["analytics_warning"] is None
     assert calls == [("overview", "1d"), ("servers", "1d", ["server-1"])]
+
+
+@pytest.mark.asyncio
+async def test_admin_analytics_falls_back_when_metric_history_table_is_unavailable(monkeypatch):
+    rendered: dict[str, object] = {}
+    rollback = AsyncMock()
+    overview = {"period": "1d", "charts": {"users": {"labels": []}}}
+    fallback = {"charts": {"labels": []}, "selected_server_ids": ["server-1"]}
+    current_server_analytics = AsyncMock(return_value=fallback)
+
+    async def failing_server_analytics(period="2w", selected_server_ids=None):
+        raise SQLAlchemyError("server_metric_snapshots is missing")
+
+    async def fake_resolve_admin(request, hub):
+        return SimpleNamespace(id="admin-1", username="admin")
+
+    def fake_render(request, template_name: str, **context):
+        rendered["template_name"] = template_name
+        rendered["context"] = context
+        return context
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(
+            session=SimpleNamespace(rollback=rollback),
+            dashboard=SimpleNamespace(
+                overview=AsyncMock(return_value=overview),
+                server_analytics=failing_server_analytics,
+                current_server_analytics=current_server_analytics,
+            ),
+        )
+
+    request = SimpleNamespace(
+        session={"admin_id": "admin-1"},
+        query_params=SimpleNamespace(getlist=lambda key: ["server-1"] if key == "server_id" else []),
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+    monkeypatch.setattr(web_routes, "resolve_admin", fake_resolve_admin)
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.analytics(request, period="1d")
+
+    assert response is rendered["context"]
+    assert "История серверов пока недоступна" in rendered["context"]["analytics_warning"]
+    rollback.assert_awaited_once()
+    current_server_analytics.assert_awaited_once_with(
+        period="1d",
+        selected_server_ids=["server-1"],
+    )
 
 
 @pytest.mark.asyncio

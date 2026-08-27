@@ -60,6 +60,25 @@ async def test_server_analytics_captures_uptime_assigned_and_online_history(test
 
 
 @pytest.mark.asyncio
+async def test_current_server_analytics_works_without_metric_history(test_services):
+    async with test_services.hub() as hub:
+        servers = await hub.catalog.list_servers()
+        server = next(item for item in servers if item.server_type == ServerType.TEN_GBIT)
+        server.current_clients = 9
+        server.users_online = 4
+
+        analytics = await hub.dashboard.current_server_analytics("1h", [server.id])
+
+    assert analytics["history_available"] is False
+    assert analytics["selected_server_ids"] == [server.id]
+    assert analytics["charts"]["assigned_users"][0]["values"][-1] == 9
+    assert analytics["charts"]["online_users"][0]["values"][-1] == 4
+    assert len(analytics["charts"]["labels"]) == len(
+        analytics["charts"]["assigned_users"][0]["values"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_dashboard_traffic_chart_uses_cumulative_counter_deltas(test_services):
     gib = 1024**3
     now = utc_now()

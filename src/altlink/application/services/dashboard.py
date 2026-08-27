@@ -438,11 +438,96 @@ class DashboardService(BaseService):
             "period": window.key,
             "period_label": window.label,
             "period_options": self.period_options(),
+            "history_available": True,
             "server_options": servers,
             "selected_server_ids": selected_ids,
             "selection_limit": MAX_ANALYTICS_SERVERS,
             "uptime_cards": uptime_cards,
             "last_captured_at": last_captured_at,
+            "charts": {
+                "labels": window.labels,
+                "assigned_users": assigned_datasets,
+                "online_users": online_datasets,
+                "uptime": uptime_datasets,
+            },
+        }
+
+    async def current_server_analytics(
+        self,
+        period: str = DEFAULT_DASHBOARD_PERIOD,
+        selected_server_ids: Sequence[str] | None = None,
+    ) -> dict:
+        """Build a current server snapshot when historical metrics are unavailable."""
+        window = self._dashboard_window(period)
+        servers = list(
+            (
+                await self.session.scalars(
+                    select(Server).options(selectinload(Server.inbounds)).order_by(Server.name.asc())
+                )
+            ).all()
+        )
+        server_by_id = {server.id: server for server in servers}
+        requested_ids = list(dict.fromkeys(selected_server_ids or []))
+        selected_ids = [server_id for server_id in requested_ids if server_id in server_by_id][
+            :MAX_ANALYTICS_SERVERS
+        ]
+        if not selected_ids:
+            selected_ids = [server.id for server in servers[:4]]
+
+        def server_label(server: Server) -> str:
+            country = f" [{server.country_code.upper()}]" if server.country_code else ""
+            return f"{server.name}{country}"
+
+        def current_values(value: int | float) -> list[int | float | None]:
+            return [None for _ in window.labels[:-1]] + [value]
+
+        assigned_datasets = []
+        online_datasets = []
+        uptime_datasets = []
+        for server_id in selected_ids:
+            server = server_by_id[server_id]
+            label = server_label(server)
+            assigned_datasets.append(
+                {
+                    "server_id": server_id,
+                    "label": label,
+                    "values": current_values(max(int(server.current_clients or 0), 0)),
+                }
+            )
+            online_datasets.append(
+                {
+                    "server_id": server_id,
+                    "label": label,
+                    "values": current_values(max(int(server.users_online or 0), 0)),
+                }
+            )
+            uptime_datasets.append(
+                {
+                    "server_id": server_id,
+                    "label": label,
+                    "values": current_values(100 if self._server_is_operational(server) else 0),
+                }
+            )
+
+        return {
+            "period": window.key,
+            "period_label": window.label,
+            "period_options": self.period_options(),
+            "history_available": False,
+            "server_options": servers,
+            "selected_server_ids": selected_ids,
+            "selection_limit": MAX_ANALYTICS_SERVERS,
+            "uptime_cards": [
+                {
+                    "server": server,
+                    "operational": self._server_is_operational(server),
+                    "uptime_percent": None,
+                    "sample_count": 0,
+                    "xray_uptime": self._format_xray_uptime((server.raw_payload or {}).get("xrayUptime")),
+                }
+                for server in servers
+            ],
+            "last_captured_at": None,
             "charts": {
                 "labels": window.labels,
                 "assigned_users": assigned_datasets,

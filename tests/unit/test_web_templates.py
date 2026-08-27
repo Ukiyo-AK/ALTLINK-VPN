@@ -305,6 +305,7 @@ def test_admin_analytics_contains_chart_navigation_and_server_history():
     assert "serverUsersChart" in analytics
     assert "serverOnlineChart" in analytics
     assert "serverUptimeChart" in analytics
+    assert "analytics_warning" in analytics
 
 
 def test_admin_users_template_exposes_csrf_protected_node_access_sync():

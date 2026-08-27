@@ -2551,23 +2551,20 @@ async def force_delete_server(callback: CallbackQuery, container: AppContainer):
 async def statistics(message: Message, container: AppContainer):
     if not await is_admin(message.from_user.id, container):
         return
-    await sync_dashboard_traffic_if_possible(container)
     async with container.hub() as hub:
-        overview = await hub.dashboard.overview()
-        panel = await hub.dashboard.panel_status()
+        summary = await hub.dashboard.summary()
     lines = [
         "Аналитика",
         "",
-        *format_panel_status(panel),
+        f"Активные: {summary['active_users']}",
+        f"Тестовые: {summary['trial_users']}",
+        f"Новые за 24 часа: {summary['new_users_24h']}",
+        f"Заблокированные: {summary['blocked_users']}",
+        f"Серверы в работе: {summary['servers_operational']} / {summary['servers_total']}",
+        f"Платежей за 30 дней: {summary['payments_count_30d']}",
+        f"Выручка за 30 дней: {summary['payments_total_30d']:.2f} ₽",
         "",
-        f"Активные: {overview['active_users']}",
-        f"Без продления: {overview['renewal_disabled_users']}",
-        f"Заблокированные: {overview['blocked_users']}",
-        f"Тестовые: {overview['trial_users']}",
-        f"Платежей за 30 дней: {overview['payments_count']}",
-        f"Выручка за 30 дней: {overview['payments_total_rub']:.2f} ₽",
-        f"Трафик: {overview['total_traffic_bytes'] / 1024**3:.2f} ГБ",
-        f"Whitelist-трафик: {overview['whitelist_traffic_bytes'] / 1024**3:.2f} ГБ",
+        "Подробные графики и история серверов доступны в аналитике на сайте.",
     ]
     await render_admin(message, "\n".join(lines))
 

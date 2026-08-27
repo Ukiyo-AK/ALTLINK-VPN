@@ -51,6 +51,44 @@ def test_parse_promo_payload_supports_repeat_trial():
 
 
 @pytest.mark.asyncio
+async def test_admin_analytics_uses_fast_local_summary(monkeypatch):
+    rendered: list[str] = []
+    summary = AsyncMock(
+        return_value={
+            "active_users": 10,
+            "trial_users": 3,
+            "new_users_24h": 2,
+            "blocked_users": 1,
+            "servers_operational": 4,
+            "servers_total": 5,
+            "payments_count_30d": 7,
+            "payments_total_30d": Decimal("1234.50"),
+        }
+    )
+
+    async def fake_is_admin(telegram_id: int, container) -> bool:
+        return True
+
+    async def fake_render_admin(target, text: str, **kwargs):
+        rendered.append(text)
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(dashboard=SimpleNamespace(summary=summary))
+
+    message = SimpleNamespace(from_user=SimpleNamespace(id=42))
+    monkeypatch.setattr(admin_handlers, "is_admin", fake_is_admin)
+    monkeypatch.setattr(admin_handlers, "render_admin", fake_render_admin)
+
+    await admin_handlers.statistics(message, SimpleNamespace(hub=fake_hub))
+
+    summary.assert_awaited_once_with()
+    assert "Серверы в работе: 4 / 5" in rendered[0]
+    assert "Платежей за 30 дней: 7" in rendered[0]
+    assert "Выручка за 30 дней: 1234.50 ₽" in rendered[0]
+
+
+@pytest.mark.asyncio
 async def test_users_search_handles_reply_after_prompt(monkeypatch):
     bot = Bot("123456:ABCDEF")
     dispatcher = Dispatcher()

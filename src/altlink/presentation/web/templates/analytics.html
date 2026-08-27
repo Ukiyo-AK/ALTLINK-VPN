@@ -44,6 +44,18 @@
   </form>
 </section>
 
+{% if analytics_warning %}
+<section class="panel dashboard-attention-panel">
+  <div class="split">
+    <div>
+      <span class="badge warning">Неполные данные</span>
+      <h2>История инфраструктуры временно недоступна</h2>
+      <p class="muted">{{ analytics_warning }}</p>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 <section class="cards analytics-kpis">
   <article class="card"><div class="muted">Активные</div><strong>{{ overview.active_users }}</strong></article>
   <article class="card"><div class="muted">Тестовые</div><strong>{{ overview.trial_users }}</strong></article>

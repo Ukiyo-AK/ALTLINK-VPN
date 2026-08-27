@@ -1334,8 +1334,9 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "🛡️ БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ" in text
     assert "🛡️ БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ" in text
     assert "лимит долга -10 ₽" not in text
-    assert "⚡ — высокоскоростной сервер" in text
-    assert "«БС» — сервер белых списков" in text
+    assert "Подсказка по меткам" not in text
+    assert "🤖 Доступ к Gemini" in text
+    assert "▶️ YouTube без рекламы" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
     assert "ALTLINK помогает вернуть доступ к привычным сервисам!" in text
 
@@ -1412,6 +1413,8 @@ async def test_plan_family_menu_uses_updated_copy(monkeypatch):
     assert "До 8 устройств" in text
     assert "Безлимитный трафик на всех серверах" in text
     assert "Разные локации для выбора под ваш маршрут" in text
+    assert "Доступ к Gemini" in text
+    assert "YouTube без рекламы" in text
     assert "🛡️ Включено 10 ГБ БС на неделю или 50 ГБ на месяц, затем 2 ₽/ГБ" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
     assert "ALTLINK помогает вернуть доступ к привычным сервисам!" in text

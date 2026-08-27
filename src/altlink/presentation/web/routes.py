@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
 
 from altlink.domain.billing import bytes_to_gb_cost
@@ -1428,32 +1429,58 @@ async def dashboard(request: Request, period: str = "2w", refresh: bool = False)
 
 @router.get("/admin/analytics")
 async def analytics(request: Request, period: str = "2w"):
+    container = request.app.state.container
     selected_server_ids = request.query_params.getlist("server_id")
-    async with request.app.state.container.hub() as hub:
+    async with container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
-        overview = await hub.dashboard.overview(period=period)
-        server_analytics = await hub.dashboard.server_analytics(
-            period=period,
-            selected_server_ids=selected_server_ids,
-        )
-        charts = {
-            "business": overview["charts"],
-            "servers": server_analytics["charts"],
-        }
-        return render(
-            request,
-            "analytics.html",
-            title="Аналитика",
-            admin=admin,
-            overview=overview,
-            server_analytics=server_analytics,
-            charts=charts,
-            charts_json=json.dumps(charts, ensure_ascii=False),
-            selected_period=overview["period"],
-            active_nav="analytics",
-        )
+
+    async def load_business_analytics() -> dict:
+        async with container.hub() as hub:
+            return await hub.dashboard.overview(period=period)
+
+    async def load_server_analytics() -> tuple[dict, str | None]:
+        async with container.hub() as hub:
+            try:
+                result = await hub.dashboard.server_analytics(
+                    period=period,
+                    selected_server_ids=selected_server_ids,
+                )
+                return result, None
+            except SQLAlchemyError:
+                logger.exception("Failed to load server metric history; using current server snapshot.")
+                await hub.session.rollback()
+                result = await hub.dashboard.current_server_analytics(
+                    period=period,
+                    selected_server_ids=selected_server_ids,
+                )
+                return result, (
+                    "История серверов пока недоступна. Показан текущий срез; "
+                    "проверьте применение миграций базы данных."
+                )
+
+    overview, (server_analytics, analytics_warning) = await asyncio.gather(
+        load_business_analytics(),
+        load_server_analytics(),
+    )
+    charts = {
+        "business": overview["charts"],
+        "servers": server_analytics["charts"],
+    }
+    return render(
+        request,
+        "analytics.html",
+        title="Аналитика",
+        admin=admin,
+        overview=overview,
+        server_analytics=server_analytics,
+        analytics_warning=analytics_warning,
+        charts=charts,
+        charts_json=json.dumps(charts, ensure_ascii=False),
+        selected_period=overview["period"],
+        active_nav="analytics",
+    )
 
 
 @router.get("/admin/users")
