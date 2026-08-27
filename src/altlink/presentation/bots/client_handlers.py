@@ -27,6 +27,7 @@ from altlink.domain.plans import (
     UNLIMITED_WEEKLY_PRICE_RUB,
     WHITELIST_BILLING_VERSION,
     WHITELIST_GB_PRICE_RUB,
+    WHITELIST_INCLUDED_GB_BY_PLAN,
     WHITELIST_TRAFFIC_PACKAGES,
     is_metered_plan_code,
     parse_paid_plan_code,
@@ -1513,99 +1514,6 @@ def vless_keys_file_content(keys: list[str]) -> bytes:
     return "\n".join(lines).encode("utf-8")
 
 
-def plan_menu_text() -> str:
-    return as_list(
-        Bold("🌍 Тарифы ALTLINK"),
-        as_list(
-            Bold("Start"),
-            as_marked_list(
-                "🔹 Один основной сервер",
-                "📱 До 2 устройств",
-                "∞ Безлимитный трафик на основном сервере",
-                "⚡ Один случайный высокоскоростной сервер",
-                "🛡️ БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ",
-                marker="• ",
-            ),
-            sep="\n",
-        ),
-        as_list(
-            Bold("Pro"),
-            as_marked_list(
-                "🚀 Все активные серверы",
-                "📱 До 8 устройств",
-                "∞ Безлимитный трафик на всех серверах",
-                "🌐 Разные локации и серверы со скоростью до 10 Гбит/с",
-                "🤖 Доступ к Gemini",
-                "▶️ YouTube без рекламы",
-                "🛡️ БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ",
-                marker="• ",
-            ),
-            sep="\n",
-        ),
-        as_list(
-            Bold("Что такое режим белых списков"),
-            "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а часть сайтов и приложений не открывается. ALTLINK помогает вернуть доступ к привычным сервисам!",
-            sep="\n",
-        ),
-        "Выберите тариф, а затем срок подключения.",
-        sep="\n\n",
-    ).as_html()
-
-
-def plan_family_text(family: str) -> str:
-    if family == "10gbit":
-        return as_list(
-            Bold("Start"),
-            as_marked_list(
-                "🔹 Один основной сервер",
-                "📱 До 2 устройств",
-                "∞ Безлимитный трафик на основном сервере",
-                "⚡ Один случайный высокоскоростной сервер",
-                marker="• ",
-            ),
-            as_list(
-                Bold("Что такое режим белых списков"),
-                "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а часть сайтов и приложений не открывается. ALTLINK помогает вернуть доступ к привычным сервисам!",
-                sep="\n",
-            ),
-            "🛡️ Включено 1 ГБ БС на неделю или 5 ГБ на месяц, затем 2 ₽/ГБ.",
-            as_list(
-                Bold("Стоимость"),
-                f"На месяц: {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽",
-                f"На неделю: {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽",
-                sep="\n",
-            ),
-            sep="\n\n",
-        ).as_html()
-
-    return as_list(
-        Bold("Pro"),
-        as_marked_list(
-            "🚀 Все активные серверы",
-            "📱 До 8 устройств",
-            "∞ Безлимитный трафик на всех серверах",
-            "🌐 Разные локации для выбора под ваш маршрут",
-            "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с",
-            "🤖 Доступ к Gemini",
-            "▶️ YouTube без рекламы",
-            "🛡️ Включено 10 ГБ БС на неделю или 50 ГБ на месяц, затем 2 ₽/ГБ",
-            marker="• ",
-        ),
-        as_list(
-            Bold("Что такое режим белых списков"),
-            "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а часть сайтов и приложений не открывается. ALTLINK помогает вернуть доступ к привычным сервисам!",
-            sep="\n",
-        ),
-        as_list(
-            Bold("Стоимость"),
-            f"На месяц: {UNLIMITED_MONTHLY_PRICE_RUB} ₽",
-            f"На неделю: {UNLIMITED_WEEKLY_PRICE_RUB} ₽",
-            sep="\n",
-        ),
-        sep="\n\n",
-    ).as_html()
-
-
 def format_rub_compact(amount: Decimal) -> str:
     normalized = quantize_money(Decimal(amount))
     if normalized == normalized.to_integral():
@@ -1617,8 +1525,29 @@ def whitelist_gb_price_text() -> str:
     return format_rub_compact(WHITELIST_GB_PRICE_RUB).replace(" ₽", " ₽/ГБ")
 
 
-def whitelist_gb_price_sentence() -> str:
-    return f"{format_rub_compact(WHITELIST_GB_PRICE_RUB)} за 1 ГБ"
+def plan_whitelist_allowance_text(family: str, *, prefix: str = "БС") -> str:
+    weekly_code = PlanCode.SINGLE_10GBIT_WEEKLY if family == "10gbit" else PlanCode.UNLIMITED_WEEKLY
+    monthly_code = PlanCode.SINGLE_10GBIT if family == "10gbit" else PlanCode.UNLIMITED
+    weekly_gb = WHITELIST_INCLUDED_GB_BY_PLAN[weekly_code]
+    monthly_gb = WHITELIST_INCLUDED_GB_BY_PLAN[monthly_code]
+    return (
+        f"{prefix}: {weekly_gb} ГБ в неделю или {monthly_gb} ГБ в месяц, "
+        f"затем {whitelist_gb_price_text()}"
+    )
+
+
+def whitelist_package_catalog_text() -> str:
+    lines: list[str] = []
+    for code, package in WHITELIST_TRAFFIC_PACKAGES.items():
+        gigabytes = int(package["gigabytes"])
+        price = Decimal(package["price_rub"])
+        unit_price = price / Decimal(gigabytes)
+        value_badge = ", выгодно" if code == "100" else ""
+        lines.append(
+            f"{gigabytes} ГБ — {format_rub_compact(price)} "
+            f"({unit_price:.2f} ₽/ГБ{value_badge})"
+        )
+    return "\n".join(lines)
 
 
 def format_percent_compact(value: Decimal) -> str:
@@ -1690,10 +1619,10 @@ def plan_menu_text() -> str:
             Bold("Start"),
             as_marked_list(
                 f"💸 От {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽ в неделю или {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽ в месяц",
-                "⚡ Один случайный высокоскоростной сервер",
+                "⚡ Один автоматически назначенный сервер Start",
                 "📱 До 2 устройств",
-                "∞ Безлимитный трафик на основном сервере",
-                "🛡️ БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ",
+                "∞ Безлимитный трафик на сервере Start",
+                f"🛡️ {plan_whitelist_allowance_text('10gbit')}",
                 marker="• ",
             ),
             sep="\n",
@@ -1708,7 +1637,7 @@ def plan_menu_text() -> str:
                 "🌐 Разные локации и серверы со скоростью до 10 Гбит/с",
                 "🤖 Доступ к Gemini",
                 "▶️ YouTube без рекламы",
-                "🛡️ БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ",
+                f"🛡️ {plan_whitelist_allowance_text('unlimited')}",
                 marker="• ",
             ),
             sep="\n",
@@ -1746,18 +1675,17 @@ def plan_family_text(family: str, *, discount_preview: dict[str, object] | None 
             Bold("Start"),
             as_marked_list(
                 f"💸 От {SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽ в неделю или {SINGLE_10GBIT_MONTHLY_PRICE_RUB} ₽ в месяц",
-                "⚡ Один случайный высокоскоростной сервер",
+                "⚡ Один автоматически назначенный сервер Start",
                 "📱 До 2 устройств",
-                "∞ Безлимитный трафик на основном сервере",
+                "∞ Безлимитный трафик на сервере Start",
                 marker="• ",
             ),
-            "📍 В интерфейсе он отмечен ⚡.",
             as_list(
                 Bold("Что такое режим белых списков"),
                 "Это режим для ситуаций, когда на мобильном интернете работают только отдельные российские сервисы, а часть сайтов и приложений не открывается. ALTLINK помогает вернуть доступ к привычным сервисам!",
                 sep="\n",
             ),
-            "🛡️ Включено 1 ГБ БС на неделю или 5 ГБ на месяц, затем 2 ₽/ГБ.",
+            f"🛡️ {plan_whitelist_allowance_text('10gbit', prefix='В тариф включено БС')}.",
             as_list(
                 Bold("Стоимость"),
                 *(price_lines or [
@@ -1781,7 +1709,7 @@ def plan_family_text(family: str, *, discount_preview: dict[str, object] | None 
             "⚡ Серверы сети рассчитаны на скорость до 10 Гбит/с",
             "🤖 Доступ к Gemini",
             "▶️ YouTube без рекламы",
-            "🛡️ Включено 10 ГБ БС на неделю или 50 ГБ на месяц, затем 2 ₽/ГБ",
+            f"🛡️ {plan_whitelist_allowance_text('unlimited', prefix='В тариф включено БС')}",
             marker="• ",
         ),
         as_list(
@@ -2042,11 +1970,8 @@ async def whitelist_packages(callback: CallbackQuery, container: AppContainer):
         callback,
         "🛡️ Дополнительный трафик белых списков\n\n"
         f"Текущий остаток: {extra:.1f} ГБ\n"
-        "25 ГБ — 45 ₽ (1.80 ₽/ГБ)\n"
-        "50 ГБ — 85 ₽ (1.70 ₽/ГБ)\n"
-        "100 ГБ — 159 ₽ (1.59 ₽/ГБ, выгодно)\n"
-        "250 ГБ — 375 ₽ (1.50 ₽/ГБ)\n\n"
-        "Без пакета дальнейший трафик оплачивается по 2 ₽/ГБ.",
+        f"{whitelist_package_catalog_text()}\n\n"
+        f"Без пакета дальнейший трафик оплачивается по {whitelist_gb_price_text()}.",
         reply_markup=whitelist_package_actions().as_markup(),
     )
 
@@ -3356,35 +3281,16 @@ async def plan_family_menu(callback: CallbackQuery, container: AppContainer):
 
 
 @router.callback_query(F.data == "client:plan_menu_legacy")
-async def plan_menu(callback: CallbackQuery, container: AppContainer):
+async def legacy_plan_menu(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
         user = await ensure_client_access(callback, container, hub)
         if user is None:
             return
     await answer_or_edit(
         callback,
-        (
-            "Тарифы\n\n"
-            "10 Гбит:\n"
-            "• 69 ₽ в месяц, 2 устройства.\n"
-            "• 22.43 ₽ в неделю, в пересчёте на месяц на 30% дороже.\n\n"
-            "Безлимит:\n"
-            "• 200 ₽ в месяц, 8 устройств.\n"
-            "• 65 ₽ в неделю, в пересчёте на месяц на 30% дороже.\n\n"
-            f"Для тарифа 10 Гбит белые списки считаются отдельно: {whitelist_gb_price_sentence()}."
-        ),
+        plan_menu_text(),
         reply_markup=plan_actions().as_markup(),
-    )
-    return
-    await answer_or_edit(
-        callback,
-        (
-            "Тарифы\n\n"
-            "Один сервер 10 Гбит: 69 ₽ в месяц.\n"
-            f"Белые списки: {whitelist_gb_price_sentence()} отдельно.\n"
-            "Безлимит: 200 ₽ в месяц."
-        ),
-        reply_markup=plan_actions().as_markup(),
+        parse_mode="HTML",
     )
 
 

@@ -47,6 +47,7 @@ from altlink.domain.notifications import (
 )
 from altlink.domain.plans import (
     WHITELIST_GB_PRICE_RUB,
+    WHITELIST_INCLUDED_GB_BY_PLAN,
     WHITELIST_TRAFFIC_PACKAGES,
     is_metered_plan_code,
     parse_paid_plan_code,
@@ -766,11 +767,18 @@ def group_portal_plans(plans) -> list[dict]:
         if family is None:
             continue
         if family not in groups:
+            weekly_plan_code = (
+                PlanCode.SINGLE_10GBIT_WEEKLY if family == "10gbit" else PlanCode.UNLIMITED_WEEKLY
+            )
+            monthly_plan_code = PlanCode.SINGLE_10GBIT if family == "10gbit" else PlanCode.UNLIMITED
             groups[family] = {
                 "family": family,
                 "title": "Start" if family == "10gbit" else "Pro",
                 "description": plan.description,
                 "device_limit": plan.device_limit,
+                "whitelist_weekly_gb": WHITELIST_INCLUDED_GB_BY_PLAN[weekly_plan_code],
+                "whitelist_monthly_gb": WHITELIST_INCLUDED_GB_BY_PLAN[monthly_plan_code],
+                "whitelist_price_per_gb_rub": WHITELIST_GB_PRICE_RUB,
                 "periods": [],
             }
             order.append(family)
@@ -1250,6 +1258,14 @@ async def landing_page(request: Request):
     portal_login_url = "/portal" if portal_authenticated else "/portal/login?autostart=1"
     paid_device_limits = [plan.device_limit for plan in plans if not plan.is_trial and plan.device_limit]
     landing_max_device_limit = max(paid_device_limits) if paid_device_limits else None
+    paid_weekly_prices = [
+        Decimal(plan.price_rub)
+        for plan in plans
+        if not plan.is_trial and plan.period_days <= 7
+    ]
+    landing_min_weekly_price_label = (
+        format_rub_amount(min(paid_weekly_prices)) if paid_weekly_prices else None
+    )
     landing_latency_items = build_landing_latency_items(servers, server_latency_state)
     landing_location_items = build_landing_location_items(landing_latency_items)
     landing_latency_values = [
@@ -1267,6 +1283,7 @@ async def landing_page(request: Request):
         title="ALTLINK VPN — быстрый и конфиденциальный доступ",
         portal_plan_groups=group_portal_plans(plans),
         landing_max_device_limit=landing_max_device_limit,
+        landing_min_weekly_price_label=landing_min_weekly_price_label,
         portal_login_url=portal_login_url,
         landing_portal_authenticated=portal_authenticated,
         landing_account_button_label="Личный кабинет" if portal_authenticated else "Войти",

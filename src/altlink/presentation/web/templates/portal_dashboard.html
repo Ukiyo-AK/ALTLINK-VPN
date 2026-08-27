@@ -151,7 +151,7 @@
               </span>
               <div>
               <h2>Реферальная программа</h2>
-              <p>Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который оплатит тариф.</p>
+              <p>Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который впервые оплатит тариф.</p>
               </div>
             </div>
             {% if portal_referral_link %}
@@ -364,7 +364,7 @@
               </article>
               {% endfor %}
             </div>
-            <p class="muted">Без пакета: 2 ₽/ГБ по факту. Неиспользованный пакет переносится на следующий период.</p>
+            <p class="muted">Без пакета: {{ whitelist_price_per_gb|rub }} ₽/ГБ по факту. Неиспользованный пакет переносится на следующий период.</p>
           </details>
           {% endif %}
         </section>
@@ -803,7 +803,7 @@
         <h2>Поделиться VPN</h2>
         <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
       </div>
-      <p class="muted">Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который оплатит тариф.</p>
+      <p class="muted">Получайте 100 ₽ на баланс за каждого приглашённого пользователя, который впервые оплатит тариф.</p>
       <div class="stack compact">
         <button type="button" class="button full" data-share-referral data-share-url="{{ portal_referral_link or '' }}">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.8A3.8 3.8 0 0 1 8.8 9H11V6.4a1 1 0 0 1 1.7-.7l5.6 5.6a1 1 0 0 1 0 1.4l-5.6 5.6a1 1 0 0 1-1.7-.7V15H8.8A1.8 1.8 0 0 0 7 16.8V18a1 1 0 1 1-2 0v-1.2Z" fill="currentColor"/></svg>

@@ -701,6 +701,16 @@ def test_topup_menu_text_lists_tariff_prices():
     assert "Pro: 65 ₽ в неделю или 199 ₽ в месяц" in text
 
 
+def test_whitelist_package_catalog_uses_domain_prices():
+    text = client_handlers.whitelist_package_catalog_text()
+
+    for code, package in client_handlers.WHITELIST_TRAFFIC_PACKAGES.items():
+        gigabytes = int(package["gigabytes"])
+        price = Decimal(package["price_rub"])
+        assert f"{gigabytes} ГБ — {client_handlers.format_rub_compact(price)}" in text
+    assert f"затем {client_handlers.whitelist_gb_price_text()}" not in text
+
+
 def test_topup_plan_action_text_depends_on_current_subscription():
     paid_subscription = SimpleNamespace(plan=SimpleNamespace(is_trial=False))
     trial_subscription = SimpleNamespace(plan=SimpleNamespace(is_trial=True))
@@ -1330,7 +1340,7 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "🟡" not in text
     assert "До 2 устройств" in text
     assert "До 8 устройств" in text
-    assert "⚡ Один случайный высокоскоростной сервер" in text
+    assert "⚡ Один автоматически назначенный сервер Start" in text
     assert "серверы со скоростью до 10 Гбит/с" in text
     assert "🛡️ БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ" in text
     assert "🛡️ БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ" in text
@@ -1340,6 +1350,38 @@ async def test_plan_menu_v2_uses_new_descriptions(monkeypatch):
     assert "▶️ YouTube без рекламы" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
     assert "ALTLINK помогает вернуть доступ к привычным сервисам!" in text
+
+
+@pytest.mark.asyncio
+async def test_legacy_plan_button_opens_current_tariff_copy(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def fake_answer_or_edit(target, text, *, reply_markup=None, **kwargs):
+        captured["text"] = text
+        captured["kwargs"] = kwargs
+
+    async def fake_ensure_client_access(callback, container, hub):
+        return SimpleNamespace(id="user-legacy")
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace()
+
+    monkeypatch.setattr(client_handlers, "answer_or_edit", fake_answer_or_edit)
+    monkeypatch.setattr(client_handlers, "ensure_client_access", fake_ensure_client_access)
+
+    await client_handlers.legacy_plan_menu(
+        SimpleNamespace(data="client:plan_menu_legacy"),
+        SimpleNamespace(hub=fake_hub),
+    )
+
+    text = str(captured["text"])
+    assert captured["kwargs"]["parse_mode"] == "HTML"
+    assert "<b>🌍 Тарифы ALTLINK</b>" in text
+    assert "200 ₽" not in text
+    assert "22.43 ₽" not in text
+    assert f"{client_handlers.UNLIMITED_MONTHLY_PRICE_RUB} ₽" in text
+    assert f"{client_handlers.SINGLE_10GBIT_WEEKLY_PRICE_RUB} ₽" in text
 
 
 @pytest.mark.asyncio
@@ -1416,7 +1458,7 @@ async def test_plan_family_menu_uses_updated_copy(monkeypatch):
     assert "Разные локации для выбора под ваш маршрут" in text
     assert "Доступ к Gemini" in text
     assert "YouTube без рекламы" in text
-    assert "🛡️ Включено 10 ГБ БС на неделю или 50 ГБ на месяц, затем 2 ₽/ГБ" in text
+    assert "🛡️ В тариф включено БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ" in text
     assert "на мобильном интернете работают только отдельные российские сервисы" in text
     assert "ALTLINK помогает вернуть доступ к привычным сервисам!" in text
 
@@ -1454,11 +1496,11 @@ async def test_plan_family_menu_for_start_explains_whitelist_bypass(monkeypatch)
     assert captured["kwargs"]["parse_mode"] == "HTML"
     assert "<b>Start</b>" in text
     assert "До 2 устройств" in text
-    assert "Безлимитный трафик на основном сервере" in text
-    assert "⚡ Один случайный высокоскоростной сервер" in text
-    assert "В интерфейсе он отмечен ⚡" in text
+    assert "Безлимитный трафик на сервере Start" in text
+    assert "⚡ Один автоматически назначенный сервер Start" in text
+    assert "В интерфейсе он отмечен ⚡" not in text
     assert "Что такое режим белых списков" in text
-    assert "1 ГБ БС на неделю или 5 ГБ на месяц, затем 2 ₽/ГБ" in text
+    assert "В тариф включено БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ" in text
     assert "При балансе -10 ₽" not in text
 
 

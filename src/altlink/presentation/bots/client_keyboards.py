@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -9,6 +11,7 @@ from altlink.domain.plans import (
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
     UNLIMITED_MONTHLY_PRICE_RUB,
     UNLIMITED_WEEKLY_PRICE_RUB,
+    WHITELIST_TRAFFIC_PACKAGES,
 )
 
 DIRECT_MESSAGE_REPLY_PREFIX = "client:dm_reply"
@@ -224,9 +227,11 @@ def subscription_actions(
 
 def whitelist_package_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    for code, gb, price in (("25", 25, 45), ("50", 50, 85), ("100", 100, 159), ("250", 250, 375)):
+    for code, package in WHITELIST_TRAFFIC_PACKAGES.items():
+        gb = int(package["gigabytes"])
+        price = Decimal(package["price_rub"])
         builder.button(
-            text=f"+{gb} ГБ — {price} ₽",
+            text=f"+{gb} ГБ — {price:g} ₽",
             callback_data=f"client:whitelist_package_select:{code}",
             style="success" if code == "100" else "primary",
         )

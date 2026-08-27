@@ -49,7 +49,7 @@
             <div class="landing-hero-badges" aria-label="Ключевые преимущества">
               <span>2 дня теста</span>
               <span>безлимит трафика</span>
-              <span>от 30 ₽ в неделю</span>
+              {% if landing_min_weekly_price_label %}<span>от {{ landing_min_weekly_price_label }} ₽ в неделю</span>{% endif %}
               <span>до {{ landing_max_device_limit or 8 }} устройств</span>
             </div>
           </div>
@@ -292,15 +292,12 @@
             </div>
             <div class="landing-plan-devices">до {{ group.device_limit or '—' }} устройств</div>
             <div class="muted">
-              {% if group.family == 'unlimited' %}
-                БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ.
-              {% else %}
-                БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ.
-              {% endif %}
+              БС: {{ group.whitelist_weekly_gb }} ГБ в неделю или {{ group.whitelist_monthly_gb }} ГБ в месяц,
+              затем {{ group.whitelist_price_per_gb_rub|rub }} ₽/ГБ.
             </div>
             <p class="muted">
               {% if group.family == 'unlimited' %}
-                Для постоянного использования: Gemini, YouTube без рекламы, до 8 устройств.
+                Для постоянного использования: Gemini, YouTube без рекламы, до {{ group.device_limit or '—' }} устройств.
               {% else %}
                 Для быстрого старта, теста качества и коротких периодов оплаты.
               {% endif %}

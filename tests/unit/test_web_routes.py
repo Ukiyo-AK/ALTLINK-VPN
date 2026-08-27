@@ -152,6 +152,9 @@ def test_group_portal_plans_keeps_device_limit_on_group():
             "title": "Pro",
             "description": "unlimited",
             "device_limit": 8,
+            "whitelist_weekly_gb": 10,
+            "whitelist_monthly_gb": 50,
+            "whitelist_price_per_gb_rub": Decimal("2"),
             "periods": [
                 {
                     "label": "На месяц",

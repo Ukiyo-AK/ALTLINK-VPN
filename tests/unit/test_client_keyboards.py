@@ -6,6 +6,7 @@ from altlink.domain.plans import (
     SINGLE_10GBIT_WEEKLY_PRICE_RUB,
     UNLIMITED_MONTHLY_PRICE_RUB,
     UNLIMITED_WEEKLY_PRICE_RUB,
+    WHITELIST_TRAFFIC_PACKAGES,
 )
 from altlink.presentation.bots.client_keyboards import (
     agreement_actions,
@@ -31,6 +32,7 @@ from altlink.presentation.bots.client_keyboards import (
     topup_amount_confirm_actions,
     topup_checkout_actions,
     topup_provider_actions,
+    whitelist_package_actions,
 )
 
 
@@ -417,6 +419,21 @@ def test_topup_checkout_actions_preserve_whitelist_package_context():
     )
     assert check_button["callback_data"] == "client:topup_check:req-whitelist:wl"
     assert return_button["callback_data"] == "client:whitelist_packages"
+
+
+def test_whitelist_package_buttons_use_domain_catalog():
+    buttons = inline_buttons(whitelist_package_actions().as_markup())
+
+    package_buttons = [
+        item for item in buttons if item.get("callback_data", "").startswith("client:whitelist_package_select:")
+    ]
+    assert len(package_buttons) == len(WHITELIST_TRAFFIC_PACKAGES)
+    for code, package in WHITELIST_TRAFFIC_PACKAGES.items():
+        expected = f"+{int(package['gigabytes'])} ГБ — {package['price_rub']:g} ₽"
+        assert any(
+            item["text"] == expected and item["callback_data"].endswith(f":{code}")
+            for item in package_buttons
+        )
 
 
 def test_device_list_actions_paginate_more_than_eight_devices():

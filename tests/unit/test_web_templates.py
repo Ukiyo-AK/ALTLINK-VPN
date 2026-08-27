@@ -255,8 +255,10 @@ def test_landing_template_keeps_homepage_copy_compact():
     assert "landing-latency-list" not in landing
     assert "landing-plan-card{% if group.family == 'unlimited' %} is-featured{% endif %}" in landing
     assert "landing-plan-devices" in landing
-    assert "БС: 1 ГБ в неделю или 5 ГБ в месяц, затем 2 ₽/ГБ" in landing
-    assert "БС: 10 ГБ в неделю или 50 ГБ в месяц, затем 2 ₽/ГБ" in landing
+    assert "group.whitelist_weekly_gb" in landing
+    assert "group.whitelist_monthly_gb" in landing
+    assert "group.whitelist_price_per_gb_rub|rub" in landing
+    assert "landing_min_weekly_price_label" in landing
     assert "{{ landing_account_button_label }}" in landing
     assert "Соглашение" in landing
     assert "Конфиденциальность" in landing
