@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import hashlib
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -424,7 +425,38 @@ class BillingService(BaseService):
             f"Промокод применён. Повторный тест на {trial_days} дн. активирован.",
         )
 
+    @asynccontextmanager
+    async def _activation_transaction(self, user_id: str):
+        user = await self.session.scalar(
+            select(User).where(User.id == user_id).with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if user is None:
+            raise NotFoundError("Пользователь не найден.")
+        try:
+            # UI handlers may catch the error and commit their outer transaction.
+            async with self.session.begin_nested():
+                yield
+        except Exception:
+            # A savepoint rollback expires changed ORM attributes used by handlers.
+            await self.session.refresh(user)
+            raise
+
     async def activate_trial(
+        self,
+        user_id: str,
+        *,
+        repeat_trial_promo: PromoCode | None = None,
+        repeat_trial_redemption: PromoCodeRedemption | None = None,
+        duration_days: int | None = None,
+    ) -> Subscription:
+        async with self._activation_transaction(user_id):
+            return await self._activate_trial(
+                user_id, repeat_trial_promo=repeat_trial_promo,
+                repeat_trial_redemption=repeat_trial_redemption, duration_days=duration_days,
+            )
+
+    async def _activate_trial(
         self,
         user_id: str,
         *,
@@ -515,6 +547,17 @@ class BillingService(BaseService):
         return subscription
 
     async def activate_paid_plan(
+        self,
+        user_id: str,
+        plan_code: PlanCode,
+        *,
+        charge_user: bool = True,
+        admin_id: str | None = None,
+    ) -> Subscription:
+        async with self._activation_transaction(user_id):
+            return await self._activate_paid_plan(user_id, plan_code, charge_user=charge_user, admin_id=admin_id)
+
+    async def _activate_paid_plan(
         self,
         user_id: str,
         plan_code: PlanCode,
@@ -1047,7 +1090,7 @@ class BillingService(BaseService):
                     subscription_id=subscription.id,
                     applied_amount=discount_rub,
                 )
-                discount_note = f"Автопродление с промокодом {discount_promo.code}: скидка {discount_rub:.2f} ₽."
+                discount_note = f"Продление с промокодом {discount_promo.code}: скидка {discount_rub:.2f} ₽."
                 subscription.notes = " ".join(filter(None, [subscription.notes, discount_note]))
             await self.log_event(
                 level=SystemEventLevel.INFO,

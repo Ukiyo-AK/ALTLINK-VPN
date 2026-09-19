@@ -6,8 +6,10 @@
     const mobileQuery = window.matchMedia ? window.matchMedia("(max-width: 980px)") : null;
 
     const defaultPreference = () => (mobileQuery?.matches ? "system" : "light");
+    let memoryPreference = null;
 
     const readPreference = () => {
+      if (memoryPreference !== null) return memoryPreference;
       try {
         const saved = window.localStorage.getItem(storageKey);
         return modes.has(saved) ? saved : defaultPreference();
@@ -36,6 +38,7 @@
 
     const savePreference = (preference) => {
       const safePreference = modes.has(preference) ? preference : defaultPreference();
+      memoryPreference = safePreference;
       try {
         window.localStorage.setItem(storageKey, safePreference);
       } catch (error) {
@@ -62,6 +65,14 @@
     };
 
     applyTheme(readPreference());
+
+    window.addEventListener("storage", (event) => {
+      if (event.key !== storageKey && event.key !== null) return;
+      memoryPreference = null;
+      const state = applyTheme(readPreference());
+      syncControls();
+      window.dispatchEvent(new CustomEvent("altlink-theme-change", { detail: state }));
+    });
 
     systemQuery?.addEventListener?.("change", () => {
       if (readPreference() === "system") {

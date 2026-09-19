@@ -123,7 +123,7 @@ def test_renewal_disabled_expiring_message_contains_balance_charge_and_deadline(
         datetime(2026, 7, 5, 12, 0, tzinfo=UTC),
     )
 
-    assert "Автопродление сейчас отключено" in message
+    assert "автопродлен" not in message.casefold()
     assert "50.00 ₽" in message
     assert "69.00 ₽" in message
     assert "05.07.2026 15:00 МСК" in message
@@ -137,7 +137,7 @@ def test_renewal_disabled_notification_has_resume_and_topup_buttons():
 
     assert markup is not None
     assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
-        ["client:subscription_resume"],
+        ["client:subscription"],
         ["client:topup_menu"],
     ]
 
@@ -150,7 +150,7 @@ def test_subscription_ended_with_disabled_autorenew_message_explains_recovery():
     )
 
     assert "Срок действия подписки закончился" in message
-    assert "Автопродление было отключено" in message
+    assert "автопродлен" not in message.casefold()
     assert "Тариф: Pro" in message
     assert "Текущий баланс: 25.00 ₽" in message
     assert "Для возобновления потребуется: 199.00 ₽" in message
@@ -163,7 +163,7 @@ def test_subscription_ended_notification_has_resume_button():
 
     assert markup is not None
     assert [[button.callback_data for button in row] for row in markup.inline_keyboard] == [
-        ["client:subscription_resume"],
+        ["client:plan_menu"],
     ]
 
 
@@ -173,10 +173,10 @@ def test_topup_notifications_offer_correct_autorenew_action():
 
     assert active_markup is not None
     assert ended_markup is not None
-    assert active_markup.inline_keyboard[0][0].callback_data == "client:subscription_resume"
-    assert active_markup.inline_keyboard[0][0].text == "🔄 Включить автопродление"
-    assert ended_markup.inline_keyboard[0][0].callback_data == "client:subscription_resume"
-    assert ended_markup.inline_keyboard[0][0].text == "🧾 Возобновить тариф"
+    assert active_markup.inline_keyboard[0][0].callback_data == "client:subscription"
+    assert active_markup.inline_keyboard[0][0].text == "🧾 Подписка"
+    assert ended_markup.inline_keyboard[0][0].callback_data == "client:plan_menu"
+    assert ended_markup.inline_keyboard[0][0].text == "🧾 Выбрать тариф"
 
 
 def test_low_balance_notification_has_topup_button():

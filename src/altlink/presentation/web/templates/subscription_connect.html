@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="referrer" content="no-referrer">
+  <title>{{ title }}</title>
+  <link rel="icon" type="image/png" href="/media/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
+  {% include "_theme_bootstrap.html" %}
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
+</head>
+<body class="subscription-connect-page">
+  <main class="subscription-connect-shell">
+    <header class="subscription-connect-header">
+      <a class="subscription-connect-brand" href="/" aria-label="ALTLINK">
+        <img src="/media/altlink%20icon.svg" alt="">
+        <span>ALTLINK</span>
+      </a>
+      <a class="button ghost compact" href="/portal">Личный кабинет</a>
+    </header>
+
+    <section class="subscription-connect-hero">
+      <div class="subscription-connect-copy">
+        <span class="badge highlight">Персональное подключение</span>
+        <h1>Подключите ALTLINK за пару нажатий</h1>
+        <p>Выберите приложение, добавьте подписку и включите подходящий сервер. Список серверов будет обновляться автоматически.</p>
+      </div>
+      <div class="subscription-connect-qr" aria-label="QR-код подписки">
+        <img src="{{ qr_data_uri }}" alt="QR-код для добавления подписки">
+        <span>Можно отсканировать из приложения</span>
+      </div>
+    </section>
+
+    <section class="subscription-client-grid" aria-label="Приложения для подключения">
+      <article class="subscription-client-card is-primary">
+        <div class="subscription-client-card__head">
+          <span class="subscription-client-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M12 3 4.8 6.1v5.2c0 4.6 2.9 8.2 7.2 9.7 4.3-1.5 7.2-5.1 7.2-9.7V6.1L12 3Z" stroke="currentColor" stroke-width="1.8"/><path d="m8.7 12.1 2.1 2.1 4.7-4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <div><h2>Happ</h2><span class="badge">Рекомендуем</span></div>
+        </div>
+        <p>Универсальный клиент для телефона и компьютера.</p>
+        <div class="subscription-client-actions">
+          <a class="button full" href="{{ happ_import_url }}" data-app-import>Добавить в Happ</a>
+          <a class="button ghost full" href="{{ happ_download_url }}" target="_blank" rel="noopener noreferrer">Скачать Happ</a>
+        </div>
+      </article>
+
+      <article class="subscription-client-card">
+        <div class="subscription-client-card__head">
+          <span class="subscription-client-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M7 4.5h10A2.5 2.5 0 0 1 19.5 7v10a2.5 2.5 0 0 1-2.5 2.5H7A2.5 2.5 0 0 1 4.5 17V7A2.5 2.5 0 0 1 7 4.5Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 8.5v7M15 8.5v7M9 12h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </span>
+          <div><h2>INCY</h2><span class="muted">Альтернативный клиент</span></div>
+        </div>
+        <p>Кроссплатформенное приложение с импортом подписки по ссылке.</p>
+        <div class="subscription-client-actions">
+          <a class="button full" href="{{ incy_import_url }}" data-app-import>Добавить в INCY</a>
+          <a class="button ghost full" href="{{ incy_download_url }}" target="_blank" rel="noopener noreferrer">Скачать INCY</a>
+        </div>
+      </article>
+    </section>
+
+    <section class="subscription-link-card" data-copy-root data-copy-text="{{ subscription_url }}">
+      <div>
+        <span class="muted">Ссылка подписки</span>
+        <input class="subscription-link-value" aria-label="Персональная ссылка" value="{{ subscription_url }}" readonly data-subscription-link>
+      </div>
+      <button class="button ghost" type="button" data-copy-button>Скопировать</button>
+      <p class="subscription-copy-status muted" data-copy-status aria-live="polite">Не передавайте эту ссылку другим людям.</p>
+    </section>
+
+    <section class="subscription-connect-steps">
+      <div><strong>1</strong><span>Установите Happ или INCY</span></div>
+      <div><strong>2</strong><span>Нажмите «Добавить»</span></div>
+      <div><strong>3</strong><span>Выберите сервер и подключитесь</span></div>
+    </section>
+
+    <footer class="subscription-connect-footer">
+      <span>Не получилось подключиться?</span>
+      <a href="{{ support_url }}" target="_blank" rel="noopener noreferrer">Написать в поддержку</a>
+    </footer>
+  </main>
+
+  <script>
+    (() => {
+      const root = document.querySelector("[data-copy-root]");
+      if (!root) return;
+      const button = root.querySelector("[data-copy-button]");
+      const status = root.querySelector("[data-copy-status]");
+      const linkInput = root.querySelector("[data-subscription-link]");
+      const value = root.dataset.copyText || "";
+
+      const fallbackCopy = () => {
+        linkInput.focus();
+        linkInput.select();
+        linkInput.setSelectionRange(0, value.length);
+        return document.execCommand("copy");
+      };
+
+      button?.addEventListener("click", async () => {
+        try {
+          let copied = false;
+          if (navigator.clipboard && window.isSecureContext) {
+            try {
+              await navigator.clipboard.writeText(value);
+              copied = true;
+            } catch (_) {
+              // Some WebViews expose the API but deny clipboard permission.
+            }
+          }
+          if (!copied && !fallbackCopy()) {
+            throw new Error("copy failed");
+          }
+          button.textContent = "Скопировано";
+          status.textContent = "Ссылка скопирована. Добавьте её в приложение вручную.";
+          window.setTimeout(() => { button.textContent = "Скопировать"; }, 2400);
+        } catch (_) {
+          button.textContent = "Скопировать";
+          status.textContent = "Не удалось скопировать автоматически. Нажмите и удерживайте ссылку.";
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

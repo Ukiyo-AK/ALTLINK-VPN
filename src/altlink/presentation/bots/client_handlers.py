@@ -258,16 +258,14 @@ def topup_provider_status_text(*, configured_provider: str, resolved_provider: s
     if configured_provider == "yookassa":
         if resolved_provider == "yookassa":
             return "Оплата откроется через Юкасса СБП."
-        missing = ", ".join(missing_settings) or "YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY"
         return (
-            "Юкасса СБП выбрана как касса, но бот не видит полную настройку.\n"
-            f"Не хватает: {missing}.\n"
-            "Пока используется тестовая заглушка."
+            "Автоматическая оплата временно недоступна.\n"
+            "Пополнить баланс можно через поддержку с подтверждением оплаты."
         )
     if resolved_provider == "manual":
         return "Пополнение доступно через поддержку с подтверждением заявки."
     if resolved_provider == "stub":
-        return "Если касса не настроена, бот использует тестовую заглушку и зачисляет деньги сразу."
+        return "Тестовая касса для разработки. Реальная оплата не производится."
     return "Пополнение будет обработано автоматически."
 
 
@@ -275,11 +273,9 @@ def balance_topup_status_text(*, configured_provider: str, resolved_provider: st
     if configured_provider == "yookassa":
         if resolved_provider == "yookassa":
             return "Пополнение доступно через Юкасса СБП."
-        missing = ", ".join(missing_settings) or "YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY"
         return (
-            "Юкасса СБП выбрана как касса, но бот не видит полную настройку.\n"
-            f"Не хватает: {missing}.\n"
-            "Пока используется тестовая заглушка."
+            "Автоматическая оплата временно недоступна.\n"
+            "Пополнить баланс можно через поддержку с подтверждением оплаты."
         )
     if resolved_provider == "manual":
         return "Пополнение сейчас проходит через поддержку с подтверждением заявки."
@@ -837,7 +833,7 @@ def activation_link_pending_note() -> str:
     )
 
 
-def subscription_markup(subscription, *, latest_subscription=None):
+def subscription_markup(subscription, *, latest_subscription=None, connect_url: str | None = None):
     if (
         subscription is None
         and latest_subscription is not None
@@ -858,6 +854,7 @@ def subscription_markup(subscription, *, latest_subscription=None):
             and not subscription.plan.is_trial
             and int(getattr(subscription, "whitelist_billing_version", 1) or 1) >= WHITELIST_BILLING_VERSION
         ),
+        connect_url=connect_url,
     ).as_markup()
 
 
@@ -943,8 +940,8 @@ def subscription_link_caption(payload: str) -> str:
     return (
         "🔗 Ваша персональная ссылка VPN\n\n"
         f"<code>{escaped_payload}</code>\n\n"
-        "Откройте её в Happ или отсканируйте QR-код.\n\n"
-        "Рекомендуемое приложение: <code>Happ</code>"
+        "Откройте её в Happ или INCY либо отсканируйте QR-код.\n\n"
+        "Рекомендуемые приложения: <code>Happ</code> и <code>INCY</code>"
     )
 
 
@@ -958,7 +955,7 @@ def activation_success_caption(subscription, payload: str) -> str:
         f"Лимит устройств: {device_limit_label(subscription.plan)}\n\n"
         "🔗 Ваша персональная ссылка VPN\n"
         f"<code>{escaped_payload}</code>\n\n"
-        "Откройте ссылку в Happ или импортируйте её в приложение. Можно также отсканировать QR-код."
+        "Откройте ссылку в Happ или INCY. Можно также отсканировать QR-код."
     )
 
 
@@ -970,14 +967,15 @@ def trial_activation_caption(subscription, payload: str) -> str:
         f"Лимит устройств: {device_limit_label(subscription.plan)}\n\n"
         "🔗 Ваша персональная ссылка VPN\n"
         f"<code>{escaped_payload}</code>\n\n"
-        "Откройте ссылку в Happ или импортируйте её в приложение. Можно также отсканировать QR-код."
+        "Откройте ссылку в Happ или INCY. Можно также отсканировать QR-код."
     )
 
 
-def subscription_link_markup(settings, subscription):
+def subscription_link_markup(settings, subscription, *, connect_url: str | None = None):
     return subscription_link_actions(
         show_traffic=show_metered_usage(subscription),
         help_url=connection_help_url(settings),
+        connect_url=connect_url,
     ).as_markup()
 
 
@@ -1245,22 +1243,25 @@ def agreement_text(*, consent_accepted: bool = False, agreement_link_available: 
 
 def channel_subscription_text(*, consent_ok: bool, channel_ok: bool, settings, legal_url: str | None = None) -> str:
     status = (
-        "Подписка подтверждена. Можно продолжать работу в боте."
+        "Подписка подтверждена. Можно идти дальше!"
         if channel_ok
-        else "Подпишитесь на канал и нажмите кнопку проверки подписки."
+        else "Рады видеть вас в ALTLINK!\nПодпишитесь на канал и нажмите «Проверить подписку»."
     )
     agreement_link = legal_url or agreement_url(settings)
     agreement_note = (
-        "Продолжая пользоваться ботом, вы автоматически соглашаетесь с пользовательским соглашением"
+        "Продолжая, вы принимаете пользовательское соглашение"
         f": {agreement_link}"
         if agreement_link
-        else "Продолжая пользоваться ботом, вы автоматически соглашаетесь с пользовательским соглашением."
+        else "Продолжая, вы принимаете пользовательское соглашение."
+    )
+    channel_note = (
+        f"\nКанал: {settings.required_subscription_channel}"
+        if not settings.required_subscription_channel_url and settings.required_subscription_channel
+        else ""
     )
     return (
         "Шаг 1 из 2. Подписка на канал\n\n"
-        f"{status}\n"
-        "Без подписки бот не откроет меню и действия с VPN.\n"
-        f"Канал проекта: {settings.required_subscription_channel_url or settings.required_subscription_channel or 'ссылка будет добавлена позже'}\n\n"
+        f"{status}{channel_note}\n\n"
         f"{agreement_note}"
     )
 
@@ -1268,8 +1269,8 @@ def channel_subscription_text(*, consent_ok: bool, channel_ok: bool, settings, l
 def promo_onboarding_text() -> str:
     return (
         "Шаг 2 из 2. Промокод\n\n"
-        "Если у вас есть промокод, можно ввести его сейчас и сразу получить бонус или скидку.\n"
-        "Если промокода нет, просто нажмите кнопку «Пропустить». Потом промокод всё равно можно будет ввести в разделе «Баланс»."
+        "Есть промокод? Нажмите «Ввести промокод» и отправьте его.\n"
+        "Если нет, нажмите «Пропустить». Промокод можно добавить позже."
     )
 
 
@@ -1364,7 +1365,7 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
             f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
             "Доступ сейчас остановлен. Обычно это означает, что закончился баланс для продления.",
             "",
-            "Пополните баланс и заново выберите тариф или включите продление.",
+            "Пополните баланс и заново выберите тариф.",
         ]
         return "\n".join(lines)
 
@@ -1390,8 +1391,6 @@ def profile_text(user, subscription, settings, *, total_traffic_bytes: int = 0) 
     ]
     if subscription:
         if subscription.plan and not subscription.plan.is_trial:
-            auto_renew = "включено" if subscription.auto_renew else "отключено"
-            lines.append(f"Автопродление: {auto_renew}")
             lines.append(f"Следующее списание: {format_msk_datetime(subscription.next_billing_at)}")
         else:
             lines.append(f"Действует до: {format_msk_datetime(subscription.next_billing_at)}")
@@ -1431,9 +1430,8 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
                 f"Последний тариф: {latest_plan.name}\n"
                 "Статус: завершена\n"
                 f"Баланс: {Decimal(user.balance_rub):.2f} ₽\n\n"
-                "Срок действия подписки закончился, потому что автопродление было отключено.\n"
-                "Пополните баланс при необходимости и нажмите «Включить автопродление», "
-                "чтобы снова активировать прежний тариф. Также можно выбрать другой тариф.\n\n"
+                "Срок действия подписки закончился.\n"
+                "Пополните баланс при необходимости и нажмите «Выбрать тариф», чтобы вернуть доступ.\n\n"
                 f"{access_links_text(settings)}"
             )
         return (
@@ -1450,7 +1448,6 @@ def subscription_text(bundle: dict, user_servers: list, settings, latest_subscri
         "",
         f"✨ Статус: {account_status_label(user.status)}",
         f"🧾 Тариф: {subscription.plan.name}",
-        f"🔁 Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
         f"📅 Следующее списание: {format_msk_datetime(subscription.next_billing_at)}",
         f"📱 Лимит устройств: {device_limit_label(subscription.plan)}",
     ]
@@ -1479,7 +1476,6 @@ def subscription_details_text(subscription, user_servers: list) -> str:
     lines.extend(
         [
             f"🧾 Тариф: {subscription.plan.name}",
-            f"🔁 Автопродление: {'включено' if subscription.auto_renew else 'отключено'}",
             "",
             "🌐 Доступные серверы:",
         ]
@@ -1949,7 +1945,11 @@ async def show_subscription(target: Message | CallbackQuery, container: AppConta
     await send_card_with_optional_media(
         target,
         body,
-        primary_markup=subscription_markup(subscription, latest_subscription=latest_subscription),
+        primary_markup=subscription_markup(
+            subscription,
+            latest_subscription=latest_subscription,
+            connect_url=bundle.get("subscription_connect_url"),
+        ),
         media_section="subscription",
         force_new_message=not isinstance(target, CallbackQuery),
     )
@@ -3298,6 +3298,7 @@ async def legacy_plan_menu(callback: CallbackQuery, container: AppContainer):
 async def trial_activate(callback: CallbackQuery, container: AppContainer):
     subscription = None
     activation_payload = None
+    connection_url = None
     reply_markup = None
     response_parse_mode = None
     async with container.hub() as hub:
@@ -3308,6 +3309,7 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
             subscription = await hub.billing.activate_trial(user.id)
             bundle = await safe_get_subscription_bundle(hub, user.id)
             activation_payload = resolve_subscription_payload(bundle)
+            connection_url = bundle.get("subscription_connect_url") if bundle else None
             text = (
                 "Тестовый период Pro активирован.\n\n"
                 f"Доступ ко всем активным серверам будет работать до {format_msk_datetime(subscription.ends_at)}.\n"
@@ -3315,7 +3317,11 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
             )
             if not activation_payload:
                 text += activation_link_pending_note()
-            reply_markup = subscription_link_markup(container.settings, subscription)
+            reply_markup = subscription_link_markup(
+                container.settings,
+                subscription,
+                connect_url=connection_url,
+            )
         except ConflictError as exc:
             text = str(exc)
         except (NotFoundError, ServiceError) as exc:
@@ -3364,6 +3370,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
         return
     current_subscription = None
     activation_payload = None
+    connection_url = None
     reply_markup = None
     response_parse_mode = None
     required_topup = Decimal("0.00")
@@ -3386,6 +3393,7 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
                 current_subscription = subscription
                 bundle = await safe_get_subscription_bundle(hub, user.id)
                 activation_payload = resolve_subscription_payload(bundle)
+                connection_url = bundle.get("subscription_connect_url") if bundle else None
                 if not activation_payload:
                     text += activation_link_pending_note()
         except ConflictError as exc:
@@ -3406,7 +3414,11 @@ async def activate_plan(callback: CallbackQuery, container: AppContainer):
         return
     if reply_markup is None:
         reply_markup = (
-            subscription_link_markup(container.settings, current_subscription)
+            subscription_link_markup(
+                container.settings,
+                current_subscription,
+                connect_url=connection_url,
+            )
             if activation_payload
             else subscription_markup(current_subscription)
         )
@@ -3522,55 +3534,14 @@ async def vless_keys(callback: CallbackQuery, container: AppContainer):
 
 @router.callback_query(F.data == "client:subscription_cancel")
 async def subscription_cancel(callback: CallbackQuery, container: AppContainer):
-    async with container.hub() as hub:
-        user = await ensure_client_access(callback, container, hub)
-        if user is None:
-            return
-        try:
-            subscription = await hub.billing.cancel_subscription_renewal(user.id)
-            text = (
-                "Автопродление отключено.\n\n"
-                f"Доступ сохранится до {format_msk_datetime(subscription.ends_at)}, после этого подписка завершится."
-            )
-        except (ConflictError, NotFoundError, ServiceError) as exc:
-            text = str(exc)
-            subscription = await hub.accounts.get_current_subscription(user.id)
-    await answer_or_edit(callback, text, reply_markup=subscription_details_markup(subscription))
+    # Old Telegram messages can retain a button after it is removed from the menu.
+    await callback.answer("Эта кнопка больше не используется. Откройте раздел «Подписка».", show_alert=True)
 
 
 @router.callback_query(F.data == "client:subscription_resume")
 async def subscription_resume(callback: CallbackQuery, container: AppContainer):
     async with container.hub() as hub:
-        user = await ensure_client_access(callback, container, hub)
-        if user is None:
-            return
-        previous_subscription = await hub.accounts.get_current_subscription(user.id)
-        try:
-            subscription = await hub.billing.restore_subscription_renewal(user.id)
-            text = (
-                "Тариф снова активирован, автопродление включено."
-                if previous_subscription is None
-                else "Автопродление снова включено."
-            )
-        except (ConflictError, NotFoundError, ServiceError) as exc:
-            text = str(exc)
-            subscription = await hub.accounts.get_current_subscription(user.id)
-            latest_subscription = (
-                await hub.accounts.get_latest_paid_subscription(user.id)
-                if subscription is None
-                else subscription
-            )
-        else:
-            latest_subscription = subscription
-    await answer_or_edit(
-        callback,
-        text,
-        reply_markup=(
-            subscription_details_markup(subscription)
-            if subscription is not None
-            else subscription_markup(None, latest_subscription=latest_subscription)
-        ),
-    )
+        await show_subscription(callback, container, hub)
 
 
 @router.callback_query(F.data == "client:subscription_link")
@@ -3582,6 +3553,7 @@ async def subscription_link(callback: CallbackQuery, container: AppContainer):
         bundle = await safe_get_subscription_bundle(hub, user.id)
         subscription = bundle.get("subscription") if bundle else await hub.accounts.get_current_subscription(user.id)
         payload = resolve_subscription_payload(bundle)
+        connection_url = bundle.get("subscription_connect_url") if bundle else None
         if not payload:
             await answer_or_edit(
                 callback,
@@ -3591,7 +3563,11 @@ async def subscription_link(callback: CallbackQuery, container: AppContainer):
                     if subscription
                     else "Ссылка пока недоступна. Сначала активируйте тестовый период или тариф."
                 ),
-                reply_markup=subscription_link_markup(container.settings, subscription),
+                reply_markup=subscription_link_markup(
+                    container.settings,
+                    subscription,
+                    connect_url=connection_url,
+                ),
                 disable_web_page_preview=True,
             )
             return
@@ -3603,7 +3579,11 @@ async def subscription_link(callback: CallbackQuery, container: AppContainer):
                 image_bytes=image,
                 filename="altlink-vpn-qr.png",
                 caption=caption,
-                reply_markup=subscription_link_markup(container.settings, subscription),
+                reply_markup=subscription_link_markup(
+                    container.settings,
+                    subscription,
+                    connect_url=connection_url,
+                ),
                 parse_mode="HTML",
             )
             return
@@ -3612,7 +3592,11 @@ async def subscription_link(callback: CallbackQuery, container: AppContainer):
     await answer_or_edit(
         callback,
         caption,
-        reply_markup=subscription_link_markup(container.settings, subscription),
+        reply_markup=subscription_link_markup(
+            container.settings,
+            subscription,
+            connect_url=connection_url,
+        ),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )

@@ -218,8 +218,8 @@ class NotificationService(BaseService):
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🔄 Включить автопродление",
-                            callback_data="client:subscription_resume",
+                            text="🧾 Подписка",
+                            callback_data="client:subscription",
                         )
                     ],
                     [InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="client:topup_menu")],
@@ -230,8 +230,8 @@ class NotificationService(BaseService):
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🔄 Включить автопродление",
-                            callback_data="client:subscription_resume",
+                            text="🧾 Выбрать тариф",
+                            callback_data="client:plan_menu",
                         )
                     ],
                 ]
@@ -241,8 +241,8 @@ class NotificationService(BaseService):
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🔄 Включить автопродление",
-                            callback_data="client:subscription_resume",
+                            text="🧾 Подписка",
+                            callback_data="client:subscription",
                         )
                     ],
                 ]
@@ -252,8 +252,8 @@ class NotificationService(BaseService):
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="🧾 Возобновить тариф",
-                            callback_data="client:subscription_resume",
+                            text="🧾 Выбрать тариф",
+                            callback_data="client:plan_menu",
                         )
                     ],
                 ]

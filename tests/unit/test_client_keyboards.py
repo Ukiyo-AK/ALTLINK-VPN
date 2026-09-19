@@ -247,7 +247,22 @@ def test_subscription_actions_render_details_and_hide_traffic():
     assert "Подробнее" not in unlimited_flat
 
 
-def test_subscription_details_actions_render_auto_renew_and_technical_controls():
+def test_subscription_actions_show_personal_quick_connect_for_active_subscription():
+    markup = subscription_actions(
+        show_link=True,
+        show_traffic=False,
+        can_cancel=True,
+        auto_renew_disabled=False,
+        connect_url="https://altlink.online/connect/abc123",
+    ).as_markup()
+    buttons = inline_buttons(markup)
+
+    quick_connect = next(button for button in buttons if button["text"] == "⚡ Быстрое подключение")
+    assert quick_connect["url"] == "https://altlink.online/connect/abc123"
+    assert quick_connect["style"] == "success"
+
+
+def test_subscription_details_actions_hide_auto_renew_and_keep_technical_controls():
     enabled_flat = [
         text
         for row in inline_rows(
@@ -255,7 +270,7 @@ def test_subscription_details_actions_render_auto_renew_and_technical_controls()
         )
         for text in row
     ]
-    assert "Выкл. автопродление" in enabled_flat
+    assert "Выкл. автопродление" not in enabled_flat
     assert "Вкл. автопродление" not in enabled_flat
     assert "Перевыпустить ссылку" in enabled_flat
     assert "VLESS-ключи" in enabled_flat
@@ -267,8 +282,15 @@ def test_subscription_details_actions_render_auto_renew_and_technical_controls()
         )
         for text in row
     ]
-    assert "Вкл. автопродление" in disabled_flat
+    assert "Вкл. автопродление" not in disabled_flat
     assert "Выкл. автопродление" not in disabled_flat
+    assert enabled_flat == disabled_flat
+    for can_manage in (True, False):
+        markup = subscription_details_actions(can_manage_auto_renew=can_manage, auto_renew_disabled=True).as_markup()
+        assert not any(
+            button.callback_data in {"client:subscription_cancel", "client:subscription_resume"}
+            for row in markup.inline_keyboard for button in row
+        )
 
 
 def test_subscription_revoke_confirmation_actions_require_explicit_confirmation():
@@ -292,6 +314,18 @@ def test_subscription_link_actions_keep_only_help_and_navigation():
     assert "Трафик и списания" in flat
     assert "Подписка" in flat
     assert "Меню" in flat
+
+
+def test_subscription_link_actions_prefer_personal_connection_page():
+    markup = subscription_link_actions(
+        show_traffic=False,
+        help_url="https://altlink.online/help/connect",
+        connect_url="https://altlink.online/connect/abc123",
+    ).as_markup()
+    flat = [text for row in inline_rows(markup) for text in row]
+
+    assert "Подключить через Happ / INCY" in flat
+    assert "Помощь по подключению" not in flat
 
 
 def test_plan_actions_switch_to_two_step_flow():

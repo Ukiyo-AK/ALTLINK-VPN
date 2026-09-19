@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
+import secrets
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
@@ -24,7 +25,10 @@ async def require_admin_api_key(
     x_admin_api_key: str | None = Header(default=None),
     container: AppContainer = Depends(get_container),
 ) -> None:
-    if x_admin_api_key != container.settings.admin_api_key:
+    expected = container.settings.admin_api_key
+    if not expected or expected == "change-me-admin-api-key":
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Административный API не настроен.")
+    if not x_admin_api_key or not secrets.compare_digest(x_admin_api_key.encode(), expected.encode()):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный API ключ.")
 
 

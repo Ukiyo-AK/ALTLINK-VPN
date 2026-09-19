@@ -65,9 +65,9 @@ class TopupService(BaseService):
     def resolved_provider(self) -> str:
         configured = (self.settings.payment_provider or "manual").strip().lower()
         if configured == "yookassa":
-            return "yookassa" if self._is_yookassa_configured() else "stub"
+            return "yookassa" if self._is_yookassa_configured() else "manual"
         if configured == "stub":
-            return "stub"
+            return "manual" if self.settings.environment == "production" else "stub"
         return "manual"
 
     def configured_provider(self) -> str:
@@ -106,11 +106,11 @@ class TopupService(BaseService):
         provider = (provider_code or self.resolved_provider()).strip().lower()
         if provider not in self.available_checkout_providers():
             raise ConflictError("Этот способ пополнения сейчас недоступен.")
-        if self.configured_provider() == "yookassa" and provider == "stub":
+        if self.configured_provider() == "yookassa" and self.yookassa_missing_settings():
             await self.log_event(
                 level=SystemEventLevel.WARNING,
-                event_type="topup_provider_fallback_stub",
-                message="Юкасса СБП включена, но не настроена полностью. Использована заглушка.",
+                event_type="topup_provider_fallback_manual",
+                message="Юкасса не настроена полностью. Доступно только ручное подтверждение оплаты.",
                 payload={"missing_settings": self.yookassa_missing_settings()},
             )
         if provider == "yookassa":
@@ -262,23 +262,12 @@ class TopupService(BaseService):
         )
         if self.catalog is not None and (legacy_whitelist_restored or versioned_whitelist_restored):
             await self.catalog.rebuild_user_access_matrix()
-        if (
-            current_subscription is not None
-            and current_subscription.plan is not None
-            and not current_subscription.plan.is_trial
-            and not current_subscription.auto_renew
-        ):
-            notification_message += (
-                "\n\nАвтопродление подписки отключено. Включите его, чтобы доступ продолжился после окончания тарифа."
-            )
-            notification_payload = {"cta": "topup_enable_auto_renew"}
-        elif current_subscription is None:
+        if current_subscription is None:
             latest_paid_subscription = await self.accounts.get_latest_paid_subscription(item.user_id)
-            if latest_paid_subscription is not None and not latest_paid_subscription.auto_renew:
+            if latest_paid_subscription is not None:
                 plan_name = latest_paid_subscription.plan.name if latest_paid_subscription.plan is not None else "тариф"
                 notification_message += (
-                    f"\n\nПополнение не возобновляет тариф «{plan_name}» автоматически, "
-                    "потому что автопродление было отключено. Возобновите тариф, чтобы вернуть доступ."
+                    f"\n\nТариф «{plan_name}» сейчас не активен. Выберите тариф, чтобы вернуть доступ."
                 )
                 notification_payload = {"cta": "topup_resume_subscription"}
         await self.notifications.queue(

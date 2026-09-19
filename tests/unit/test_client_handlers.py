@@ -85,6 +85,25 @@ class DummyCallback:
         return None
 
 
+@pytest.mark.asyncio
+async def test_old_cancel_button_cannot_change_subscription():
+    callback = DummyCallback()
+    # No container access or service mutation is needed for a retired button.
+    await client_handlers.subscription_cancel(callback, SimpleNamespace())
+    assert callback.callback_answers[0]["show_alert"] is True
+    assert "больше не используется" in callback.callback_answers[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_old_resume_button_opens_subscription_without_charging(test_services, monkeypatch):
+    callback = DummyCallback()
+    show = AsyncMock()
+    monkeypatch.setattr(client_handlers, "show_subscription", show)
+    await client_handlers.subscription_resume(callback, test_services)
+    show.assert_awaited_once()
+    assert show.await_args.args[:2] == (callback, test_services)
+
+
 def _paid_subscription_stub(*, plan_code: PlanCode = PlanCode.UNLIMITED, plan_name: str = "Pro"):
     return SimpleNamespace(
         plan=SimpleNamespace(
@@ -100,6 +119,65 @@ def _paid_subscription_stub(*, plan_code: PlanCode = PlanCode.UNLIMITED, plan_na
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("trial", [True, False])
+@pytest.mark.parametrize("media_fails", [True, False])
+async def test_activation_keeps_original_link_and_adds_quick_connect(test_services, monkeypatch, trial, media_fails):
+    test_services.settings.backend_public_url = "https://altlink.online"
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=660011, username="activation_links", first_name="Demo",
+            last_name="User", language_code="ru",
+        )
+        user.balance_rub = Decimal("1000")
+
+    monkeypatch.setattr(client_handlers, "ensure_client_access", AsyncMock(return_value=user))
+    media = AsyncMock(side_effect=RuntimeError("Telegram media unavailable") if media_fails else None)
+    message = AsyncMock()
+    monkeypatch.setattr(client_handlers, "edit_or_send_dynamic_media_card", media)
+    monkeypatch.setattr(client_handlers, "answer_or_edit", message)
+    callback = DummyCallback()
+    callback.data = f"client:activate_plan:{PlanCode.UNLIMITED.value}"
+    handler = client_handlers.trial_activate if trial else client_handlers.activate_plan
+    await handler(callback, test_services)
+
+    async with test_services.hub() as hub:
+        bundle = await hub.accounts.get_subscription_bundle(user.id)
+    source = bundle["subscription_url"]
+    connect = bundle["subscription_connect_url"]
+    assert source.startswith("https://sub.example/")
+    assert connect.startswith("https://altlink.online/connect/")
+    media.assert_awaited_once()
+    result = message.await_args if media_fails else media.await_args
+    caption = result.args[1] if media_fails else result.kwargs["caption"]
+    assert f"<code>{source}</code>" in caption
+    buttons = [button for row in result.kwargs["reply_markup"].inline_keyboard for button in row]
+    assert any(button.url == connect for button in buttons)
+    if not media_fails:
+        message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_insufficient_balance_does_not_send_successful_quick_connect(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=660012, username="no_funds", first_name="Demo",
+            last_name="User", language_code="ru",
+        )
+    monkeypatch.setattr(client_handlers, "ensure_client_access", AsyncMock(return_value=user))
+    media, message, topup = AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(client_handlers, "edit_or_send_dynamic_media_card", media)
+    monkeypatch.setattr(client_handlers, "answer_or_edit", message)
+    monkeypatch.setattr(client_handlers, "continue_topup_flow", topup)
+    callback = DummyCallback()
+    callback.data = f"client:activate_plan:{PlanCode.UNLIMITED.value}"
+    await client_handlers.activate_plan(callback, test_services)
+    topup.assert_awaited_once()
+    assert topup.await_args.kwargs["amount"] > 0
+    media.assert_not_awaited()
+    message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_ensure_client_access_sends_combined_channel_and_agreement_step(test_services):
     message = DummyMessage(text="/start", user_id=21001)
 
@@ -109,8 +187,49 @@ async def test_ensure_client_access_sends_combined_channel_and_agreement_step(te
     assert user is None
     assert len(message.answers) == 1
     assert "Шаг 1 из 2" in str(message.answers[0]["text"])
-    assert "Продолжая пользоваться ботом" in str(message.answers[0]["text"])
-    assert "пользовательским соглашением" in str(message.answers[0]["text"])
+    assert "Продолжая, вы принимаете" in str(message.answers[0]["text"])
+    assert "пользовательское соглашение" in str(message.answers[0]["text"])
+
+
+@pytest.mark.parametrize("channel_ok", [False, True])
+def test_channel_registration_copy_is_short_and_keeps_agreement(channel_ok):
+    settings = Settings(
+        _env_file=None,
+        required_subscription_channel="@altlink_news",
+        required_subscription_channel_url="https://t.me/altlink_news",
+    )
+    text = client_handlers.channel_subscription_text(
+        consent_ok=False, channel_ok=channel_ok, settings=settings,
+        legal_url="https://altlink.online/legal/agreement",
+    )
+    assert "Шаг 1 из 2" in text
+    assert "https://altlink.online/legal/agreement" in text
+    assert "пользовательское соглашение" in text
+    assert "https://t.me/altlink_news" not in text  # Available on the existing button.
+    assert "Без подписки бот не откроет" not in text
+    assert len(text) < 300
+    if channel_ok:
+        assert "Подписка подтверждена" in text
+    else:
+        assert "«Проверить подписку»" in text
+
+
+def test_channel_registration_copy_keeps_channel_without_url_button():
+    settings = Settings(
+        _env_file=None,
+        required_subscription_channel="@altlink_news",
+    ).model_copy(update={"required_subscription_channel_url": ""})
+    text = client_handlers.channel_subscription_text(consent_ok=False, channel_ok=False, settings=settings)
+    assert "Канал: @altlink_news" in text
+
+
+def test_promo_registration_copy_explains_both_actions_briefly():
+    text = client_handlers.promo_onboarding_text()
+    assert "Шаг 2 из 2" in text
+    assert "«Ввести промокод»" in text
+    assert "«Пропустить»" in text
+    assert "можно добавить позже" in text
+    assert len(text) < 160
 
 
 @pytest.mark.asyncio
@@ -351,6 +470,7 @@ def test_home_text_for_start_does_not_show_legacy_whitelist_debt_copy():
     assert "белые списки тарифицируются отдельно" not in text
     assert "При балансе -10 ₽" not in text
     assert "БС: 2.00 ГБ" not in text
+    assert "автопродлен" not in text.casefold()
 
 
 def test_profile_text_keeps_only_key_details_and_links():
@@ -415,7 +535,7 @@ def test_home_text_without_subscription_points_user_to_subscription_button():
     assert "«Выбрать тариф»" in text
 
 
-def test_expired_paid_subscription_with_disabled_autorenew_explains_one_click_resume():
+def test_expired_paid_subscription_with_disabled_autorenew_offers_plan_selection():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("199.00"), status="canceled")
     latest_subscription = SimpleNamespace(
@@ -433,9 +553,9 @@ def test_expired_paid_subscription_with_disabled_autorenew_explains_one_click_re
     markup = client_handlers.subscription_markup(None, latest_subscription=latest_subscription)
 
     assert "Статус: завершена" in text
-    assert "автопродление было отключено" in text
-    assert "Включить автопродление" in text
-    assert markup.inline_keyboard[0][0].callback_data == "client:subscription_resume"
+    assert "автопродлен" not in text.casefold()
+    assert "Выбрать тариф" in text
+    assert markup.inline_keyboard[0][0].callback_data == "client:plan_menu"
 
 
 def test_subscription_text_hides_billing_cycle_line():
@@ -460,6 +580,7 @@ def test_subscription_text_hides_billing_cycle_line():
     assert "Статус: Активен" in text
     assert "Статус: active" not in text
     assert "Формат списания" not in text
+    assert "автопродлен" not in text.casefold()
 
 
 def test_subscription_text_for_start_on_whitelist_server_keeps_billing_details_without_push_warning():
@@ -499,7 +620,7 @@ def test_subscription_text_for_start_on_whitelist_server_keeps_billing_details_w
     assert "Regular PL" not in text
 
 
-def test_subscription_details_text_contains_servers_and_auto_renew_status():
+def test_subscription_details_text_contains_servers_without_auto_renew_status():
     subscription = _paid_subscription_stub()
     user_servers = [
         SimpleNamespace(
@@ -515,7 +636,7 @@ def test_subscription_details_text_contains_servers_and_auto_renew_status():
     text = client_handlers.subscription_details_text(subscription, user_servers)
 
     assert "Подробнее о подписке" in text
-    assert "Автопродление: включено" in text
+    assert "автопродлен" not in text.casefold()
     assert "Whitelist EU • Белые списки • доступен" in text
     assert "Regular PL • Обычный • доступен" in text
     assert " • active" not in text
@@ -790,6 +911,7 @@ async def test_home_quick_action_for_lapsed_paid_user_depends_on_balance(
 
 @pytest.mark.asyncio
 async def test_show_subscription_renders_for_active_trial_user(test_services):
+    test_services.settings.backend_public_url = "https://altlink.online"
     message = DummyMessage(text="Подписка", user_id=21055)
 
     async with test_services.hub() as hub:
@@ -805,6 +927,14 @@ async def test_show_subscription_renders_for_active_trial_user(test_services):
     assert len(message.answers) == 1
     assert "Подписка" in str(message.answers[0]["text"])
     assert "Тариф" in str(message.answers[0]["text"])
+    buttons = [
+        button
+        for row in message.answers[0]["reply_markup"].inline_keyboard
+        for button in row
+    ]
+    quick_connect = next(button for button in buttons if button.text == "⚡ Быстрое подключение")
+    assert quick_connect.url is not None
+    assert quick_connect.url.startswith("https://altlink.online/connect/")
 
 
 @pytest.mark.asyncio
@@ -992,17 +1122,17 @@ async def test_continue_topup_flow_raises_shortage_to_minimum_payment(
     assert captured["whitelist_topup"] is whitelist_topup
 
 
-def test_topup_provider_status_text_explains_missing_yookassa_settings():
+def test_topup_provider_status_text_explains_safe_manual_fallback():
     text = client_handlers.topup_provider_status_text(
         configured_provider="yookassa",
         resolved_provider="stub",
         missing_settings=["YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY"],
     )
 
-    assert "Юкасса СБП выбрана как касса" in text
-    assert "YOOKASSA_SHOP_ID" in text
-    assert "YOOKASSA_SECRET_KEY" in text
-    assert "тестовая заглушка" in text
+    assert "временно недоступна" in text
+    assert "поддержку" in text
+    assert "YOOKASSA_" not in text
+    assert "заглушка" not in text
 
 
 def test_balance_topup_status_text_reflects_live_yookassa():
@@ -1015,15 +1145,16 @@ def test_balance_topup_status_text_reflects_live_yookassa():
     assert text == "Пополнение доступно через Юкасса СБП."
 
 
-def test_balance_topup_status_text_reflects_stub_fallback():
+def test_balance_topup_status_text_reflects_manual_fallback():
     text = client_handlers.balance_topup_status_text(
         configured_provider="yookassa",
         resolved_provider="stub",
         missing_settings=["YOOKASSA_SECRET_KEY"],
     )
 
-    assert "YOOKASSA_SECRET_KEY" in text
-    assert "тестовая заглушка" in text
+    assert "подтверждением оплаты" in text
+    assert "YOOKASSA_" not in text
+    assert "заглушка" not in text
 
 
 def test_balance_topup_status_text_reflects_support_flow():

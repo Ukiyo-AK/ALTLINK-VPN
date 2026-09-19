@@ -354,8 +354,32 @@ async def test_get_subscription_bundle_tolerates_missing_subscription_info(test_
     assert bundle["accessible_nodes"]
     assert bundle["connection_keys"] is not None
     assert bundle["subscription_info"] is None
+    assert bundle["subscription_source_url"] == f"https://remna.example/api/sub/{short_uuid}"
     assert bundle["subscription_url"] == f"https://remna.example/api/sub/{short_uuid}"
+    assert bundle["subscription_mirror_url"] == f"http://localhost:8000/sub/{short_uuid}"
+    assert bundle["subscription_connect_url"] == f"http://localhost:8000/connect/{short_uuid}"
     assert user.remnawave_short_uuid == short_uuid
+
+
+@pytest.mark.asyncio
+async def test_get_subscription_bundle_keeps_remnawave_and_connection_page_as_separate_links(test_services):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=11008,
+            username="bundle_links_user",
+            first_name="Bundle",
+            last_name="Links",
+            language_code="ru",
+        )
+        await hub.billing.activate_trial(user.id)
+        short_uuid = user.remnawave_short_uuid
+        bundle = await hub.accounts.get_subscription_bundle(user.id)
+
+    assert bundle["subscription_url"] == f"https://sub.example/{short_uuid}"
+    assert bundle["subscription_source_url"] == bundle["subscription_url"]
+    assert bundle["subscription_mirror_url"] == f"http://localhost:8000/sub/{short_uuid}"
+    assert bundle["subscription_connect_url"] == f"http://localhost:8000/connect/{short_uuid}"
+    assert bundle["subscription_url"] != bundle["subscription_connect_url"]
 
 
 @pytest.mark.asyncio

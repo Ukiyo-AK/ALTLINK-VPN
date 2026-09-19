@@ -15,6 +15,7 @@ ASSET_TEMPLATES = [
     "portal_dashboard.html",
     "portal_help.html",
     "portal_login.html",
+    "subscription_connect.html",
 ]
 
 
@@ -69,6 +70,27 @@ def test_portal_dashboard_template_supports_one_tap_copy_for_subscription_link()
     assert ">Скопировать<" in content
     assert "data-qr-toggle" in content
     assert "subscription-link-preview" in content
+
+
+def test_subscription_connect_template_has_safe_happ_and_incy_actions():
+    content = (TEMPLATE_ROOT / "subscription_connect.html").read_text(encoding="utf-8")
+
+    assert 'content="noindex, nofollow, noarchive"' in content
+    assert 'content="no-referrer"' in content
+    assert 'href="{{ happ_import_url }}"' in content
+    assert 'href="{{ incy_import_url }}"' in content
+    assert "data-copy-text=\"{{ subscription_url }}\"" in content
+    assert "navigator.clipboard.writeText" in content
+
+
+def test_portal_dashboard_has_quick_connect_in_subscription_and_activation_result():
+    content = (TEMPLATE_ROOT / "portal_dashboard.html").read_text(encoding="utf-8")
+
+    assert "portal-current-plan-actions" in content
+    assert "⚡ Быстрое подключение" in content
+    assert "portal_activation_completed and portal_subscription_connect_url" in content
+    assert 'id="portal-activation-connect-modal"' in content
+    assert "⚡ Подключиться сейчас" in content
 
 
 def test_portal_topup_form_shows_and_enforces_forty_ruble_minimum():

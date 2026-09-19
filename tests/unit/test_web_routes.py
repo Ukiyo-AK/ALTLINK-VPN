@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -161,6 +162,8 @@ def test_group_portal_plans_keeps_device_limit_on_group():
                     "caption": "Основной формат",
                     "price_rub": Decimal("199"),
                     "price_label": "199",
+                    "original_price_label": "199",
+                    "discount_percent": Decimal("0"),
                     "plan_code": PlanCode.UNLIMITED.value,
                     "period_days": 30,
                 }
@@ -1039,7 +1042,8 @@ def test_strip_document_title_removes_duplicate_first_h1():
 
 
 @pytest.mark.asyncio
-async def test_build_portal_context_includes_server_latency_state(monkeypatch):
+@pytest.mark.parametrize("has_subscription,has_connect_url", [(True, True), (True, False), (False, True)])
+async def test_build_portal_context_includes_server_latency_state(monkeypatch, has_subscription, has_connect_url):
     async def fake_portal_channel_state(request, user):
         return True
 
@@ -1062,6 +1066,7 @@ async def test_build_portal_context_includes_server_latency_state(monkeypatch):
     monkeypatch.setattr(web_routes, "portal_channel_state", fake_portal_channel_state)
 
     request = SimpleNamespace(
+        session={"portal_activation_completed": True},
         app=SimpleNamespace(
             state=SimpleNamespace(
                 settings=SimpleNamespace(
@@ -1075,7 +1080,15 @@ async def test_build_portal_context_includes_server_latency_state(monkeypatch):
     )
     hub = SimpleNamespace(
         accounts=SimpleNamespace(
-            get_subscription_bundle=AsyncMock(return_value={"subscription": None, "subscription_info": None, "connection_keys": None}),
+            get_subscription_bundle=AsyncMock(
+                return_value={
+                    "subscription": SimpleNamespace(plan=None, whitelist_traffic_used_bytes=0) if has_subscription else None,
+                    "subscription_info": None,
+                    "connection_keys": None,
+                    "subscription_url": "https://sub.example/source-token",
+                    "subscription_connect_url": "https://altlink.online/connect/source-token" if has_connect_url else None,
+                }
+            ),
             can_offer_trial=AsyncMock(return_value=False),
             list_user_hwid_devices=AsyncMock(return_value=[]),
         ),
@@ -1092,6 +1105,14 @@ async def test_build_portal_context_includes_server_latency_state(monkeypatch):
     assert context["portal_server_latency_checked_at"] == "2026-05-19T12:00:00+00:00"
     assert context["portal_server_latency_state"]["server-1"]["latency_ms"] == 64
     assert context["portal_server_latency_state"]["server-1"]["probe_target_host"] == "wl.altlink.online"
+    assert context["portal_subscription_payload"] == "https://sub.example/source-token"
+    ready = has_subscription and has_connect_url
+    assert context["portal_subscription_connect_url"] == ("https://altlink.online/connect/source-token" if ready else None)
+    assert context["portal_activation_completed"] is ready
+    assert ("portal_activation_completed" in request.session) is not ready
+    if ready:
+        next_context = await build_portal_context(request, hub, SimpleNamespace(id="user-1"))
+        assert next_context["portal_activation_completed"] is False
 
 
 @pytest.mark.asyncio
@@ -1273,3 +1294,214 @@ async def test_portal_login_status_consumes_approved_attempt_and_sets_session(te
     assert b"approved" in response.body
     assert request.session["portal_user_id"] == user.id
     assert "portal_login_attempt_token" not in request.session
+
+
+@pytest.mark.asyncio
+async def test_subscription_mirror_forwards_safe_client_metadata_and_response_headers(monkeypatch):
+    captured = {}
+
+    @asynccontextmanager
+    async def fake_hub():
+        accounts = SimpleNamespace(
+            get_user_by_remnawave_short_uuid=AsyncMock(return_value=SimpleNamespace(id="user-1"))
+        )
+        yield SimpleNamespace(accounts=accounts)
+
+    async def fake_fetch(settings, url, *, headers, query):
+        captured.update(url=url, headers=headers, query=query)
+        request = httpx.Request("GET", url)
+        return httpx.Response(
+            200,
+            request=request,
+            content=b"vless://demo",
+            headers={
+                "content-type": "text/plain",
+                "profile-title": "ALTLINK",
+                "subscription-userinfo": "upload=0; download=10; total=100",
+                "x-hwid-active": "true",
+                "x-hwid-max-devices-reached": "true",
+                "set-cookie": "must-not-leak=1",
+            },
+        )
+
+    settings = SimpleNamespace(
+        backend_public_url="https://altlink.online",
+        remnawave_subscription_base_url="https://sub-manager.altlink.online/api/sub",
+        remnawave_base_url="https://panel.altlink.online",
+        remnawave_timeout_seconds=20,
+    )
+    query_params = SimpleNamespace(multi_items=lambda: [("client", "happ")])
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(settings=settings, container=SimpleNamespace(hub=fake_hub))
+        ),
+        headers={
+            "accept": "*/*",
+            "authorization": "Bearer secret",
+            "cookie": "session=secret",
+            "user-agent": "Happ/1.0",
+            "x-hwid": "device-1",
+            "x-ver-os": "18.3",
+        },
+        query_params=query_params,
+        method="GET",
+    )
+    monkeypatch.setattr(web_routes, "fetch_upstream_subscription", fake_fetch)
+
+    response = await web_routes.subscription_mirror(request, "abc_DEF-123", "happ")
+
+    assert response.status_code == 200
+    assert response.body == b"vless://demo"
+    assert response.headers["profile-title"] == "ALTLINK"
+    assert response.headers["subscription-userinfo"] == "upload=0; download=10; total=100"
+    assert response.headers["x-hwid-active"] == "true"
+    assert response.headers["x-hwid-max-devices-reached"] == "true"
+    assert "set-cookie" not in response.headers
+    assert "no-store" in response.headers["cache-control"]
+    assert captured["url"] == "https://sub-manager.altlink.online/api/sub/abc_DEF-123/happ"
+    assert captured["headers"]["x-hwid"] == "device-1"
+    assert captured["headers"]["x-ver-os"] == "18.3"
+    assert captured["headers"]["accept-encoding"] == "identity"
+    assert "authorization" not in captured["headers"]
+    assert "cookie" not in captured["headers"]
+    assert captured["query"] == [("client", "happ")]
+
+
+@pytest.mark.asyncio
+async def test_subscription_mirror_does_not_proxy_unknown_token(monkeypatch):
+    @asynccontextmanager
+    async def fake_hub():
+        accounts = SimpleNamespace(
+            get_user_by_remnawave_short_uuid=AsyncMock(return_value=None)
+        )
+        yield SimpleNamespace(accounts=accounts)
+
+    fetch = AsyncMock()
+    monkeypatch.setattr(web_routes, "fetch_upstream_subscription", fetch)
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                settings=SimpleNamespace(),
+                container=SimpleNamespace(hub=fake_hub),
+            )
+        ),
+        headers={},
+        query_params=SimpleNamespace(multi_items=lambda: []),
+        method="GET",
+    )
+
+    with pytest.raises(web_routes.HTTPException) as exc_info:
+        await web_routes.subscription_mirror(request, "unknown-token")
+
+    assert exc_info.value.status_code == 404
+    fetch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_subscription_connect_page_builds_app_deep_links(monkeypatch):
+    @asynccontextmanager
+    async def fake_hub():
+        accounts = SimpleNamespace(
+            get_user_by_remnawave_short_uuid=AsyncMock(return_value=SimpleNamespace(id="user-1"))
+        )
+        yield SimpleNamespace(accounts=accounts)
+
+    rendered = {}
+
+    def fake_render(request, template_name: str, **context):
+        rendered.update(template_name=template_name, context=context)
+        return SimpleNamespace(status_code=200)
+
+    settings = SimpleNamespace(backend_public_url="https://altlink.online")
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(settings=settings, container=SimpleNamespace(hub=fake_hub))
+        )
+    )
+    monkeypatch.setattr(web_routes, "render", fake_render)
+
+    response = await web_routes.subscription_connect_page(request, "abc_DEF-123")
+
+    assert response.status_code == 200
+    assert rendered["template_name"] == "subscription_connect.html"
+    assert rendered["context"]["subscription_url"] == "https://altlink.online/sub/abc_DEF-123"
+    assert rendered["context"]["happ_import_url"] == (
+        "happ://add/https://altlink.online/sub/abc_DEF-123"
+    )
+    assert rendered["context"]["incy_import_url"] == (
+        "incy://import/https://altlink.online/sub/abc_DEF-123"
+    )
+    assert rendered["context"]["qr_data_uri"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_portal_trial_marks_successful_activation_for_quick_connect(monkeypatch, fails):
+    billing = SimpleNamespace(activate_trial=AsyncMock(side_effect=web_routes.ConflictError("Already used") if fails else None))
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(billing=billing)
+
+    async def fake_resolve_portal_user(request, hub):
+        return SimpleNamespace(id="user-1")
+
+    async def fake_channel_state(request, user):
+        return True
+
+    class DummyRequest(SimpleNamespace):
+        async def form(self):
+            return {"csrf_token": "token"}
+
+    request = DummyRequest(
+        session={"csrf_token": "token"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+    monkeypatch.setattr(web_routes, "resolve_portal_user", fake_resolve_portal_user)
+    monkeypatch.setattr(web_routes, "portal_channel_state", fake_channel_state)
+
+    response = await web_routes.portal_trial(request)
+
+    assert response.status_code == 303
+    assert bool(request.session.get("portal_activation_completed")) is not fails
+    billing.activate_trial.assert_awaited_once_with("user-1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fails", [False, True])
+async def test_portal_plan_marks_successful_activation_for_quick_connect(monkeypatch, fails):
+    billing = SimpleNamespace(activate_paid_plan=AsyncMock(side_effect=web_routes.ConflictError("Insufficient balance") if fails else None))
+
+    @asynccontextmanager
+    async def fake_hub():
+        yield SimpleNamespace(billing=billing)
+
+    async def fake_resolve_portal_user(request, hub):
+        return SimpleNamespace(id="user-1")
+
+    async def fake_channel_state(request, user):
+        return True
+
+    class DummyRequest(SimpleNamespace):
+        async def form(self):
+            return {
+                "csrf_token": "token",
+                "plan_code": PlanCode.UNLIMITED.value,
+            }
+
+    request = DummyRequest(
+        session={"csrf_token": "token"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=fake_hub))),
+    )
+    monkeypatch.setattr(web_routes, "resolve_portal_user", fake_resolve_portal_user)
+    monkeypatch.setattr(web_routes, "portal_channel_state", fake_channel_state)
+
+    response = await web_routes.portal_plan(request)
+
+    assert response.status_code == 303
+    assert bool(request.session.get("portal_activation_completed")) is not fails
+    billing.activate_paid_plan.assert_awaited_once_with(
+        "user-1",
+        PlanCode.UNLIMITED,
+        charge_user=True,
+    )

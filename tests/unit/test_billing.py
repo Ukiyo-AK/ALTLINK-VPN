@@ -1461,7 +1461,8 @@ async def test_renewal_reminders_require_enabled_autorenew_and_insufficient_bala
         item.user_id == user.id and item.type in reminder_types
         for item in disabled_autorenew_notifications
     )
-    assert "Автопродление сейчас отключено" in disabled_autorenew_notice.message
+    assert "Срок действия подписки скоро истечёт" in disabled_autorenew_notice.message
+    assert "автопродлен" not in disabled_autorenew_notice.message.casefold()
     assert disabled_autorenew_notice.payload["cta"] == "renewal_disabled_expiring"
     low_balance_notice = next(
         item

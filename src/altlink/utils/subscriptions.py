@@ -17,6 +17,14 @@ def local_subscription_proxy_url(settings, short_uuid: str, client_type: str | N
     return url
 
 
+def local_subscription_connect_url(settings, short_uuid: str) -> str | None:
+    public_url = (getattr(settings, "backend_public_url", "") or "").strip()
+    parsed = urlparse(public_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not short_uuid:
+        return None
+    return f"{public_url.rstrip('/')}/connect/{quote(short_uuid, safe='')}"
+
+
 def remnawave_public_subscription_url(settings, short_uuid: str, client_type: str | None = None) -> str | None:
     base_url = (
         getattr(settings, "remnawave_subscription_base_url", "")

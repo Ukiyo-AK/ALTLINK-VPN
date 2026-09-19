@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -69,7 +68,10 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="ALTLINK", lifespan=lifespan, docs_url="/docs", redoc_url=None)
     settings = get_settings()
-    app.add_middleware(SessionMiddleware, secret_key=settings.session_secret_key, same_site="lax")
+    app.add_middleware(
+        SessionMiddleware, secret_key=settings.session_secret_key, same_site="lax",
+        https_only=settings.backend_public_url.lower().startswith("https://"),
+    )
     app.add_middleware(SimpleRateLimitMiddleware)
     app.add_middleware(CacheControlMiddleware)
 

@@ -69,7 +69,7 @@
       <section class="portal-page is-active-page" id="portal-home" data-portal-page="home">
         <div class="portal-page-head">
           <span class="badge highlight">Главная</span>
-          <h1 class="portal-username">{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}</h1>
+          <h1 class="portal-username" title="{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}">{{ portal_user.first_name or portal_user.username or portal_user.telegram_id }}</h1>
           <p class="muted">Здесь собраны статус аккаунта, быстрые действия, доступные серверы и поддержка.</p>
         </div>
 
@@ -88,7 +88,7 @@
 
         <section class="portal-mobile-home">
           <div class="portal-mobile-balance-card">
-            <div class="portal-mobile-balance">{{ portal_user.balance_rub|rub }} ₽</div>
+            <div class="portal-mobile-balance" data-balance-value>{{ portal_user.balance_rub|rub }} ₽</div>
             <div class="portal-mobile-plan-summary">
             <div class="portal-mobile-plan-line">
               {% if portal_subscription and portal_subscription.plan %}
@@ -288,20 +288,15 @@
                 <span>Списание</span>
                 <strong>{{ portal_subscription.next_billing_at|msk_datetime if portal_subscription and portal_subscription.next_billing_at else '—' }}</strong>
               </div>
-              <div class="portal-metric">
-                <span>Автопродление</span>
-                <strong>
-                  {% if portal_subscription and portal_subscription.plan and not portal_subscription.plan.is_trial %}
-                    {{ 'Вкл' if portal_subscription.auto_renew else 'Выкл' }}
-                  {% else %}
-                    —
-                  {% endif %}
-                </strong>
-              </div>
             </div>
-            <button type="button" class="button full portal-mobile-plan-trigger" data-modal-open="portal-plan-modal">
-              {% if portal_subscription and portal_subscription.plan and not portal_subscription.plan.is_trial %}Изменить тариф{% else %}Выбрать тариф{% endif %}
-            </button>
+            <div class="portal-current-plan-actions">
+              {% if portal_subscription_connect_url %}
+              <a class="button full" href="{{ portal_subscription_connect_url }}">⚡ Быстрое подключение</a>
+              {% endif %}
+              <button type="button" class="button ghost full portal-mobile-plan-trigger" data-modal-open="portal-plan-modal">
+                {% if portal_subscription and portal_subscription.plan and not portal_subscription.plan.is_trial %}Изменить тариф{% else %}Выбрать тариф{% endif %}
+              </button>
+            </div>
           </article>
 
           {% if portal_trial_available %}
@@ -513,7 +508,7 @@
               <h2>Пополнение</h2>
               <span class="badge">Через Telegram-бота</span>
             </div>
-            <div class="balance-amount">{{ portal_user.balance_rub|rub }} ₽</div>
+            <div class="balance-amount" data-balance-value>{{ portal_user.balance_rub|rub }} ₽</div>
             <p class="muted">Выберите сумму, и бот сразу откроет оплату на эту сумму.</p>
             <div class="portal-topup-grid">
               {% for item in portal_topup_links %}
@@ -725,7 +720,10 @@
               <strong>{{ period.label }}</strong>
               <div class="muted">{{ period.caption }}{% if period.plan_code == portal_current_plan_code %} · выбрано{% endif %}</div>
             </div>
-            <div class="plan-period-price">{{ period.price_label }} ₽</div>
+            <div data-plan-price="{{ period.plan_code }}">
+              <div class="muted" data-plan-discount{% if not period.discount_percent %} hidden{% endif %}><s>{{ period.original_price_label }} ₽</s> · <span>скидка {{ period.discount_percent|rub }}%</span></div>
+              <div class="plan-period-price">{{ period.price_label }} ₽</div>
+            </div>
             <button type="submit" class="button compact{% if period.plan_code == portal_current_plan_code %} ghost{% endif %}" {% if not portal_channel_ok or period.plan_code == portal_current_plan_code %}disabled{% endif %}>
               {% if period.plan_code == portal_current_plan_code %}Выбрано{% else %}Выбрать{% endif %}
             </button>
@@ -747,7 +745,10 @@
               <strong>{{ period.label }}</strong>
               <div class="muted">{{ period.caption }}{% if period.plan_code == portal_current_plan_code %} · выбрано{% endif %}</div>
             </div>
-            <div class="plan-period-price">{{ period.price_label }} ₽</div>
+            <div data-plan-price="{{ period.plan_code }}">
+              <div class="muted" data-plan-discount{% if not period.discount_percent %} hidden{% endif %}><s>{{ period.original_price_label }} ₽</s> · <span>скидка {{ period.discount_percent|rub }}%</span></div>
+              <div class="plan-period-price">{{ period.price_label }} ₽</div>
+            </div>
             <button type="submit" class="button compact{% if period.plan_code == portal_current_plan_code %} ghost{% endif %}" {% if not portal_channel_ok or period.plan_code == portal_current_plan_code %}disabled{% endif %}>
               {% if period.plan_code == portal_current_plan_code %}Выбрано{% else %}Выбрать{% endif %}
             </button>
@@ -992,6 +993,23 @@
   </div>
   {% endif %}
 
+  {% if portal_activation_completed and portal_subscription_connect_url %}
+  <div class="portal-modal portal-mobile-sheet is-open" id="portal-activation-connect-modal" aria-hidden="false">
+    <div class="portal-modal-backdrop" data-modal-close></div>
+    <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Подписка активирована">
+      <div class="split">
+        <h2>Подписка активирована</h2>
+        <button class="button ghost compact portal-icon-button" type="button" data-modal-close aria-label="Закрыть"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.7 5.3 12 12-1.4 1.4-12-12 1.4-1.4Zm12 1.4-12 12-1.4-1.4 12-12 1.4 1.4Z" fill="currentColor"/></svg></button>
+      </div>
+      <p class="muted">Откройте страницу быстрого подключения и добавьте подписку в Happ или INCY.</p>
+      <div class="stack compact">
+        <a class="button full" href="{{ portal_subscription_connect_url }}">⚡ Подключиться сейчас</a>
+        <button type="button" class="button ghost full" data-modal-close>Позже</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <div class="portal-modal portal-mobile-sheet" id="portal-devices-modal" aria-hidden="true">
     <div class="portal-modal-backdrop" data-modal-close></div>
     <div class="portal-modal-card" role="dialog" aria-modal="true" aria-label="Мои устройства">
@@ -1151,20 +1169,32 @@
     (() => {
       const fallbackCopy = (text) => {
         const textarea = document.createElement("textarea");
+        const previousFocus = document.activeElement;
         textarea.value = text;
         textarea.setAttribute("readonly", "");
-        textarea.style.position = "absolute";
-        textarea.style.left = "-9999px";
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        textarea.style.pointerEvents = "none";
         document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
+        try {
+          textarea.focus({ preventScroll: true });
+          textarea.select();
+          textarea.setSelectionRange(0, text.length);
+          if (!document.execCommand("copy")) throw new Error("Copy unavailable");
+        } finally {
+          textarea.remove();
+          previousFocus?.focus?.({ preventScroll: true });
+        }
       };
 
       const copyText = async (text) => {
         if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(text);
-          return;
+          try {
+            await navigator.clipboard.writeText(text);
+            return;
+          } catch (error) {
+            // Some WebViews expose Clipboard API but deny its permission.
+          }
         }
         fallbackCopy(text);
       };
@@ -1203,7 +1233,9 @@
             if (hint) hint.textContent = "Скопировано в буфер обмена.";
             window.setTimeout(restore, 1800);
           } catch (error) {
+            if (button) setButtonText("Не скопировано");
             if (hint) hint.textContent = "Не удалось скопировать автоматически.";
+            window.setTimeout(restore, 1800);
           }
         };
 
@@ -1281,6 +1313,23 @@
     })();
 
     (() => {
+      window.altlinkApplyPromoResult = (payload) => {
+        if (typeof payload.balance === "string") {
+          document.querySelectorAll("[data-balance-value]").forEach((item) => {
+            item.textContent = `${payload.balance} ₽`;
+          });
+        }
+        document.querySelectorAll("[data-plan-price]").forEach((item) => {
+          const price = payload.plan_prices?.[item.dataset.planPrice];
+          if (!price) return;
+          item.querySelector(".plan-period-price").textContent = `${price.price} ₽`;
+          const discount = item.querySelector("[data-plan-discount]");
+          discount.hidden = !(Number(price.discount) > 0);
+          discount.querySelector("s").textContent = `${price.original_price} ₽`;
+          discount.querySelector("span").textContent = `скидка ${price.discount}%`;
+        });
+        if (payload.trial_activated) window.location.reload();
+      };
       const sheet = document.querySelector("#portal-topup-modal");
       if (!sheet) return;
 
@@ -1347,6 +1396,7 @@
           }
           if (promoInput) promoInput.dataset.applied = "true";
           setMessage(payload.message || "Промокод применён.", "success");
+          window.altlinkApplyPromoResult(payload);
         } catch (error) {
           setMessage(error.message || "Не удалось применить промокод.", "error");
         } finally {
@@ -1461,6 +1511,7 @@
           }
           if (payload.success) {
             form.reset();
+            window.altlinkApplyPromoResult(payload);
           }
         } catch (error) {
           if (result) result.textContent = "Не удалось применить промокод. Попробуйте ещё раз.";

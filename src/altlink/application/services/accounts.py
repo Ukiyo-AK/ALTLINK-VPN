@@ -36,7 +36,11 @@ from altlink.infrastructure.db.models import (
     User,
 )
 from altlink.infrastructure.remnawave_schemas import RemoteHwidDevice, RemoteUser
-from altlink.utils.subscriptions import remnawave_public_subscription_url
+from altlink.utils.subscriptions import (
+    local_subscription_connect_url,
+    local_subscription_proxy_url,
+    remnawave_public_subscription_url,
+)
 from altlink.utils.security import hash_password, verify_password
 from altlink.utils.time import ensure_utc, utc_now
 
@@ -657,10 +661,20 @@ class AccountService(BaseService):
             lambda: self.remnawave.get_subscription_info(user.remnawave_short_uuid),
             default=None,
         )
-        bundle["subscription_url"] = (
+        source_subscription_url = (
             bundle["subscription_info"].subscriptionUrl
             if bundle["subscription_info"] is not None
             else remnawave_public_subscription_url(self.settings, user.remnawave_short_uuid)
+        )
+        bundle["subscription_source_url"] = source_subscription_url
+        bundle["subscription_url"] = source_subscription_url
+        bundle["subscription_mirror_url"] = local_subscription_proxy_url(
+            self.settings,
+            user.remnawave_short_uuid,
+        )
+        bundle["subscription_connect_url"] = local_subscription_connect_url(
+            self.settings,
+            user.remnawave_short_uuid,
         )
 
         return bundle

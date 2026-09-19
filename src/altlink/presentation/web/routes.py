@@ -12,6 +12,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+import httpx
 from aiogram import Bot
 from aiogram.types import FSInputFile
 from fastapi import APIRouter, HTTPException, Request, status
@@ -22,7 +23,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
 
-from altlink.domain.billing import bytes_to_gb_cost
+from altlink.domain.billing import bytes_to_gb_cost, quantize_money
 from altlink.application.services.accounts import DEFAULT_USER_LIST_PAGE_SIZE, USER_LIST_PAGE_SIZE_OPTIONS, UserListFilters
 from altlink.domain.enums import (
     BalanceTransactionType,
@@ -81,6 +82,10 @@ from altlink.utils.latency import (
 from altlink.utils.devices import hwid_device_view
 from altlink.utils.qr import render_qr_png
 from altlink.utils.security import generate_token
+from altlink.utils.subscriptions import (
+    local_subscription_proxy_url,
+    remnawave_public_subscription_url,
+)
 from altlink.utils.telegram_web import (
     check_channel_membership,
     verify_telegram_auth_payload,
@@ -101,7 +106,42 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260827-admin-analytics"
+ASSET_VERSION = "20260912-audit-fixes"
+SUBSCRIPTION_SHORT_UUID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
+SUBSCRIPTION_CLIENT_TYPE_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
+SUBSCRIPTION_REQUEST_HEADERS = {
+    "accept",
+    "if-modified-since",
+    "if-none-match",
+    "user-agent",
+    "x-client-version",
+    "x-device-id",
+    "x-device-model",
+    "x-device-os",
+    "x-hwid",
+    "x-ver-os",
+}
+SUBSCRIPTION_RESPONSE_HEADERS = {
+    "announce",
+    "announce-url",
+    "content-disposition",
+    "content-language",
+    "content-type",
+    "etag",
+    "last-modified",
+    "profile-title",
+    "profile-update-interval",
+    "profile-web-page-url",
+    "providerid",
+    "routing",
+    "routing-enable",
+    "subscription-userinfo",
+    "support-url",
+    "x-hwid-active",
+    "x-hwid-not-supported",
+    "x-hwid-max-devices-reached",
+    "x-hwid-limit",
+}
 COUNTRY_NAMES_RU = {
     "AM": "Армения",
     "AT": "Австрия",
@@ -179,8 +219,20 @@ def get_csrf_token(request: Request) -> str:
 
 
 def validate_csrf(request: Request, form: dict) -> None:
-    if form.get("csrf_token") != request.session.get("csrf_token"):
+    expected = request.session.get("csrf_token")
+    supplied = form.get("csrf_token")
+    if not isinstance(expected, str) or not expected or not isinstance(supplied, str) or not secrets.compare_digest(supplied.encode(), expected.encode()):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный CSRF токен.")
+
+
+async def read_json_object(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Некорректный JSON.") from None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    return body
 
 
 def set_flash(request: Request, message: str, level: str = "success") -> None:
@@ -191,7 +243,8 @@ def parse_decimal_query(value: str | None) -> Decimal | None:
     if value is None or not str(value).strip():
         return None
     try:
-        return Decimal(str(value).strip().replace(",", "."))
+        amount = Decimal(str(value).strip().replace(",", "."))
+        return amount if amount.is_finite() and abs(amount) <= Decimal("1e18") else None
     except Exception:
         return None
 
@@ -200,7 +253,8 @@ def parse_int_query(value: str | None) -> int | None:
     if value is None or not str(value).strip():
         return None
     try:
-        return int(str(value).strip())
+        amount = int(str(value).strip())
+        return amount if -(2**63) <= amount < 2**63 else None
     except ValueError:
         return None
 
@@ -209,7 +263,8 @@ def parse_gb_to_bytes(value: str | None) -> int | None:
     amount = parse_decimal_query(value)
     if amount is None:
         return None
-    return max(int(amount * Decimal(1024**3)), 0)
+    byte_count = max(int(amount * Decimal(1024**3)), 0)
+    return byte_count if byte_count < 2**63 else None
 
 
 def parse_date_query(value: str | None, *, end_of_day: bool = False) -> datetime | None:
@@ -632,6 +687,61 @@ def render(request: Request, template_name: str, **context):
     return response
 
 
+def subscription_upstream_headers(request: Request) -> dict[str, str]:
+    headers = {
+        name: value
+        for name, value in request.headers.items()
+        if name.lower() in SUBSCRIPTION_REQUEST_HEADERS
+    }
+    # httpx transparently decompresses responses, so request an uncompressed body
+    # to keep the mirrored payload and response headers consistent.
+    headers["accept-encoding"] = "identity"
+    return headers
+
+
+def subscription_proxy_response(upstream: httpx.Response, *, include_body: bool = True) -> Response:
+    headers = {
+        name: value
+        for name, value in upstream.headers.items()
+        if name.lower() in SUBSCRIPTION_RESPONSE_HEADERS
+    }
+    headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0"
+    headers["Pragma"] = "no-cache"
+    headers["X-Content-Type-Options"] = "nosniff"
+    headers["Referrer-Policy"] = "no-referrer"
+    headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    # The mirror serves client data, never executable upstream pages on our origin.
+    headers["Content-Security-Policy"] = "sandbox; default-src 'none'; frame-ancestors 'none'"
+    if not include_body and upstream.status_code not in {204, 304}:
+        headers["Content-Length"] = str(len(upstream.content))
+    return Response(
+        content=upstream.content if include_body else b"",
+        status_code=upstream.status_code,
+        headers=headers,
+    )
+
+
+async def fetch_upstream_subscription(
+    settings,
+    url: str,
+    *,
+    headers: dict[str, str],
+    query: list[tuple[str, str]],
+) -> httpx.Response:
+    timeout = min(max(float(settings.remnawave_timeout_seconds), 3.0), 30.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, max_redirects=3) as client:
+        return await client.get(url, headers=headers, params=query)
+
+
+def validate_subscription_path(short_uuid: str, client_type: str | None = None) -> None:
+    if not SUBSCRIPTION_SHORT_UUID_RE.fullmatch(short_uuid):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Подписка не найдена.")
+    if client_type is not None and (
+        client_type in {".", ".."} or not SUBSCRIPTION_CLIENT_TYPE_RE.fullmatch(client_type)
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Подписка не найдена.")
+
+
 def format_user_node_access_sync_flash(summary: dict[str, object]) -> str:
     parts = [
         f"проверено {summary.get('total', 0)}",
@@ -716,7 +826,11 @@ async def resolve_admin(request: Request, hub):
     if not admin_id:
         return None
     try:
-        return await hub.accounts.get_admin(admin_id)
+        admin = await hub.accounts.get_admin(admin_id)
+        if not admin.is_active:
+            request.session.pop("admin_id", None)
+            return None
+        return admin
     except Exception:
         request.session.clear()
         return None
@@ -756,9 +870,10 @@ def portal_plan_family(plan) -> str | None:
     return None
 
 
-def group_portal_plans(plans) -> list[dict]:
+def group_portal_plans(plans, *, discount_percent: Decimal = Decimal("0")) -> list[dict]:
     groups: dict[str, dict] = {}
     order: list[str] = []
+    discount_percent = min(max(discount_percent, Decimal("0")), Decimal("100"))
 
     for plan in sorted(plans, key=lambda item: item.sort_order):
         if plan.is_trial:
@@ -782,12 +897,16 @@ def group_portal_plans(plans) -> list[dict]:
                 "periods": [],
             }
             order.append(family)
+        discount = quantize_money(Decimal(plan.price_rub) * discount_percent / Decimal("100"))
+        discounted_price = quantize_money(Decimal(plan.price_rub) - discount)
         groups[family]["periods"].append(
             {
                 "label": "На неделю" if plan.period_days <= 7 else "На месяц",
                 "caption": "Гибкое продление" if plan.period_days <= 7 else "Основной формат",
-                "price_rub": plan.price_rub,
-                "price_label": format_rub_amount(plan.price_rub),
+                "price_rub": discounted_price,
+                "price_label": format_rub_amount(discounted_price),
+                "original_price_label": format_rub_amount(plan.price_rub),
+                "discount_percent": discount_percent if discount else Decimal("0"),
                 "plan_code": getattr(plan.code, "value", plan.code),
                 "period_days": plan.period_days,
             }
@@ -1132,6 +1251,11 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
     user_servers = await hub.catalog.get_user_servers(user.id)
     plans = await hub.dashboard.list_plans()
     payments = await hub.topups.list_requests(user_id=user.id)
+    promo_service = getattr(hub, "promos", None)
+    discount_percent = Decimal("0")
+    if promo_service is not None:
+        # One lookup for all prices, using the same pending discount as billing.
+        discount_percent, _, _ = await promo_service.calculate_discount(user.id, Decimal("100"))
     channel_ok = await portal_channel_state(request, user)
     show_usage_details = bool(subscription and subscription.plan and is_metered_plan_code(subscription.plan.code))
     trial_available = await hub.accounts.can_offer_trial(user.id)
@@ -1185,6 +1309,14 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
     current_plan_code = getattr(current_plan.code, "value", current_plan.code) if current_plan else None
     request_session = getattr(request, "session", None)
     portal_link_reissued = bool(request_session.pop("portal_link_reissued", False)) if request_session is not None else False
+    portal_connect_url = bundle.get("subscription_connect_url") if subscription is not None else None
+    portal_activation_completed = bool(
+        request_session is not None
+        and request_session.get("portal_activation_completed")
+        and portal_connect_url
+    )
+    if portal_activation_completed:
+        request_session.pop("portal_activation_completed", None)
 
     return {
         "title": "Личный кабинет",
@@ -1195,7 +1327,7 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_bundle": bundle,
         "portal_servers": user_servers,
         "portal_plans": plans,
-        "portal_plan_groups": group_portal_plans(plans),
+        "portal_plan_groups": group_portal_plans(plans, discount_percent=discount_percent),
         "portal_payments": payments,
         "portal_server_latency_state": server_latency_state,
         "portal_server_latency_checked_at": server_latency_checked_at,
@@ -1206,7 +1338,9 @@ async def build_portal_context(request: Request, hub, user: User) -> dict:
         "portal_devices": portal_devices,
         "portal_devices_error": portal_devices_error,
         "portal_subscription_payload": payload,
+        "portal_subscription_connect_url": portal_connect_url,
         "portal_link_reissued": portal_link_reissued,
+        "portal_activation_completed": portal_activation_completed,
         "portal_support_requests": support_requests,
         "portal_active_support_request": active_support_request,
         "portal_referral_count": referral["count"],
@@ -1370,6 +1504,84 @@ async def latency_probe(request: Request) -> JSONResponse:
     )
 
 
+@router.api_route("/sub/{short_uuid}", methods=["GET", "HEAD"])
+@router.api_route("/sub/{short_uuid}/{client_type}", methods=["GET", "HEAD"])
+async def subscription_mirror(
+    request: Request,
+    short_uuid: str,
+    client_type: str | None = None,
+) -> Response:
+    validate_subscription_path(short_uuid, client_type)
+    settings = request.app.state.settings
+
+    async with request.app.state.container.hub() as hub:
+        user = await hub.accounts.get_user_by_remnawave_short_uuid(short_uuid)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Подписка не найдена.")
+
+    upstream_url = remnawave_public_subscription_url(settings, short_uuid, client_type)
+    local_url = local_subscription_proxy_url(settings, short_uuid, client_type)
+    if not upstream_url:
+        logger.error("Subscription mirror upstream URL is not configured.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Подписка временно недоступна.")
+    if local_url and upstream_url.rstrip("/") == local_url.rstrip("/"):
+        logger.error("Subscription mirror points to itself; check REMNAWAVE_SUBSCRIPTION_BASE_URL.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Подписка временно недоступна.")
+
+    try:
+        upstream = await fetch_upstream_subscription(
+            settings,
+            upstream_url,
+            headers=subscription_upstream_headers(request),
+            query=list(request.query_params.multi_items()),
+        )
+    except httpx.RequestError as exc:
+        logger.warning(
+            "Subscription mirror upstream request failed for token suffix %s (%s).",
+            short_uuid[-6:],
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Не удалось обновить подписку. Повторите попытку чуть позже.",
+        ) from None
+
+    return subscription_proxy_response(upstream, include_body=request.method != "HEAD")
+
+
+@router.get("/connect/{short_uuid}")
+async def subscription_connect_page(request: Request, short_uuid: str):
+    validate_subscription_path(short_uuid)
+    settings = request.app.state.settings
+    async with request.app.state.container.hub() as hub:
+        user = await hub.accounts.get_user_by_remnawave_short_uuid(short_uuid)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Подписка не найдена.")
+
+    subscription_url = local_subscription_proxy_url(settings, short_uuid)
+    if not subscription_url:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Подписка временно недоступна.")
+    qr_png = render_qr_png(subscription_url)
+    qr_data_uri = f"data:image/png;base64,{base64.b64encode(qr_png).decode('ascii')}"
+    return render(
+        request,
+        "subscription_connect.html",
+        title="Подключение ALTLINK",
+        subscription_url=subscription_url,
+        subscription_preview=(
+            f"{subscription_url[:36]}…{subscription_url[-10:]}"
+            if len(subscription_url) > 52
+            else subscription_url
+        ),
+        happ_import_url=f"happ://add/{subscription_url}",
+        incy_import_url=f"incy://import/{subscription_url}",
+        happ_download_url="https://www.happ.su/main/ru",
+        incy_download_url="https://github.com/INCY-DEV/incy-platforms#downloads",
+        qr_data_uri=qr_data_uri,
+        support_url="https://t.me/altlink_support",
+    )
+
+
 @router.get("/help/connect")
 async def connect_help_page(request: Request):
     return render(
@@ -1424,6 +1636,7 @@ async def login_submit(request: Request):
 
 @router.post("/admin/logout")
 async def logout(request: Request):
+    validate_csrf(request, dict(await request.form()))
     request.session.clear()
     return RedirectResponse("/admin/login", status_code=303)
 
@@ -2796,10 +3009,7 @@ async def portal_telegram_auth(request: Request):
 @router.post("/api/auth/telegram-webapp")
 async def portal_telegram_webapp_auth(request: Request) -> JSONResponse:
     settings = request.app.state.settings
-    try:
-        body = await request.json()
-    except ValueError:
-        body = {}
+    body = await read_json_object(request)
     init_data = str(body.get("init_data") or "")
     verified = verify_telegram_webapp_init_data(
         init_data,
@@ -2865,6 +3075,7 @@ async def portal_dev_login(request: Request):
 
 @router.post("/portal/logout")
 async def portal_logout(request: Request):
+    validate_csrf(request, dict(await request.form()))
     request.session.pop("portal_user_id", None)
     set_flash(request, "Вы вышли из личного кабинета.")
     return RedirectResponse("/portal/login", status_code=303)
@@ -2913,6 +3124,7 @@ async def portal_trial(request: Request):
             return RedirectResponse("/portal", status_code=303)
         try:
             await hub.billing.activate_trial(user.id)
+            request.session["portal_activation_completed"] = True
             set_flash(request, "Тестовый период на 2 дня активирован.")
         except (ConflictError, NotFoundError, ServiceError) as exc:
             set_flash(request, str(exc), "danger")
@@ -2936,6 +3148,7 @@ async def portal_plan(request: Request):
             return RedirectResponse("/portal", status_code=303)
         try:
             await hub.billing.activate_paid_plan(user.id, plan_code, charge_user=True)
+            request.session["portal_activation_completed"] = True
             set_flash(request, "Тариф успешно активирован.")
         except (ConflictError, NotFoundError, ServiceError) as exc:
             set_flash(request, str(exc), "danger")
@@ -3042,13 +3255,10 @@ async def portal_whitelist_purchases_api(request: Request) -> JSONResponse:
 
 @router.post("/api/whitelist/purchases")
 async def portal_whitelist_purchase_api(request: Request) -> JSONResponse:
-    try:
-        body = await request.json()
-    except ValueError:
-        body = {}
+    body = await read_json_object(request)
     provided_csrf = str(body.get("csrf_token") or "")
     session_csrf = str(request.session.get("csrf_token") or "")
-    if not provided_csrf or not session_csrf or not secrets.compare_digest(provided_csrf, session_csrf):
+    if not provided_csrf or not session_csrf or not secrets.compare_digest(provided_csrf.encode(), session_csrf.encode()):
         return JSONResponse({"success": False, "message": "Некорректный CSRF токен."}, status_code=400)
     package_code = str(body.get("package_code") or "")
     request_key = str(body.get("request_key") or "") or secrets.token_hex(16)
@@ -3130,12 +3340,8 @@ async def portal_topup(request: Request):
 
 @router.post("/api/payments/create")
 async def portal_payment_create(request: Request) -> JSONResponse:
-    try:
-        body = await request.json()
-    except ValueError:
-        body = {}
-    if body.get("csrf_token") != request.session.get("csrf_token"):
-        return JSONResponse({"success": False, "message": "Некорректный CSRF токен."}, status_code=400)
+    body = await read_json_object(request)
+    validate_csrf(request, body)
 
     try:
         amount = Decimal(str(body.get("amount") or "0"))
@@ -3193,12 +3399,8 @@ async def portal_payment_create(request: Request) -> JSONResponse:
 
 @router.post("/api/promo/apply")
 async def portal_promo_apply(request: Request) -> JSONResponse:
-    try:
-        body = await request.json()
-    except ValueError:
-        body = {}
-    if body.get("csrf_token") != request.session.get("csrf_token"):
-        return JSONResponse({"success": False, "message": "Некорректный CSRF токен."}, status_code=400)
+    body = await read_json_object(request)
+    validate_csrf(request, body)
     code = str(body.get("code") or "").strip()
     if not code:
         return JSONResponse({"success": False, "message": "Введите промокод."}, status_code=400)
@@ -3222,6 +3424,17 @@ async def portal_promo_apply(request: Request) -> JSONResponse:
         else:
             message = result_message
             payload = {"trial_days": int(promo.reward_value), "trial_activated": True}
+        discount_percent, _, _ = await hub.promos.calculate_discount(user.id, Decimal("100"))
+        groups = group_portal_plans(await hub.dashboard.list_plans(), discount_percent=discount_percent)
+        payload["plan_prices"] = {
+            period["plan_code"]: {
+                "price": period["price_label"],
+                "original_price": period["original_price_label"],
+                "discount": format_rub_amount(period["discount_percent"]),
+            }
+            for group in groups for period in group["periods"]
+        }
+        payload["balance"] = format_rub_amount(user.balance_rub)
     return JSONResponse({"success": True, "message": message, **payload})
 
 

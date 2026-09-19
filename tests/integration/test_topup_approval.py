@@ -100,11 +100,12 @@ async def test_topup_after_disabled_autorenew_expiration_offers_plan_resume(test
 
         assert notification is not None
         assert notification.payload["cta"] == "topup_resume_subscription"
-        assert "Возобновите тариф" in notification.message
+        assert "Выберите тариф" in notification.message
+        assert "автопродлен" not in notification.message.casefold()
 
 
 @pytest.mark.asyncio
-async def test_topup_for_active_subscription_with_disabled_autorenew_offers_enable(test_services):
+async def test_topup_for_active_subscription_hides_autorenew_controls(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=3017,
@@ -127,8 +128,8 @@ async def test_topup_for_active_subscription_with_disabled_autorenew_offers_enab
         )
 
         assert notification is not None
-        assert notification.payload["cta"] == "topup_enable_auto_renew"
-        assert "Автопродление подписки отключено" in notification.message
+        assert notification.payload is None
+        assert "автопродлен" not in notification.message.casefold()
 
 
 @pytest.mark.asyncio
@@ -212,7 +213,7 @@ async def test_topup_checkout_stays_manual_by_default(test_services):
 
 
 @pytest.mark.asyncio
-async def test_yookassa_without_credentials_falls_back_to_stub_checkout(test_services):
+async def test_yookassa_without_credentials_requires_manual_payment(test_services):
     test_services.settings.payment_provider = "yookassa"
     test_services.settings.yookassa_shop_id = ""
     test_services.settings.yookassa_secret_key = ""
@@ -231,11 +232,32 @@ async def test_yookassa_without_credentials_falls_back_to_stub_checkout(test_ser
         refreshed = await hub.accounts.get_user_by_telegram_id(3004)
         request = await hub.topups.get_request(checkout.request.id)
         assert hub.topups.yookassa_missing_settings() == ["YOOKASSA_SHOP_ID", "YOOKASSA_SECRET_KEY"]
-        assert hub.topups.resolved_provider() == "stub"
-        assert checkout.provider == "stub"
-        assert checkout.auto_completed is True
-        assert str(request.status) == "approved"
-        assert Decimal(refreshed.balance_rub) == Decimal("125")
+        assert hub.topups.resolved_provider() == "manual"
+        assert checkout.provider == "manual"
+        assert checkout.auto_completed is False
+        assert checkout.admin_required is True
+        assert str(request.status) == "new"
+        assert Decimal(refreshed.balance_rub) == Decimal("0")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured_provider", ["stub", "yookassa"])
+async def test_production_cannot_credit_through_test_checkout(test_services, configured_provider):
+    test_services.settings.environment = "production"
+    test_services.settings.payment_provider = configured_provider
+    test_services.settings.yookassa_shop_id = ""
+    test_services.settings.yookassa_secret_key = ""
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=809100, username="production_checkout", first_name="Test",
+            last_name=None, language_code="ru",
+        )
+        assert hub.topups.available_checkout_providers() == ["manual"]
+        with pytest.raises(ConflictError):
+            await hub.topups.create_checkout(user.id, Decimal("100"), provider_code="stub")
+        checkout = await hub.topups.create_checkout(user.id, Decimal("100"))
+        assert checkout.admin_required and not checkout.auto_completed
+        assert user.balance_rub == Decimal("0")
 
 
 @pytest.mark.asyncio

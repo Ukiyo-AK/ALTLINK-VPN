@@ -39,6 +39,7 @@ def create_engine(settings: Settings) -> AsyncEngine:
         "echo": settings.sql_echo,
         "future": True,
         "pool_pre_ping": True,
+        "hide_parameters": True,
     }
     if not url.drivername.startswith("sqlite"):
         engine_kwargs["pool_recycle"] = 1800

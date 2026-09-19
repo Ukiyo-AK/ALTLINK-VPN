@@ -199,10 +199,13 @@ def subscription_actions(
     can_cancel: bool,
     auto_renew_disabled: bool,
     show_whitelist_packages: bool = False,
+    connect_url: str | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(text="Выбрать тариф", callback_data="client:plan_menu", style="primary")
     if show_link:
+        if connect_url:
+            builder.button(text="⚡ Быстрое подключение", url=connect_url, style="success")
         builder.button(text="Моя ссылка", callback_data="client:subscription_link", style="primary")
         builder.button(text="Мои устройства", callback_data="client:devices:0", style="primary")
         if show_whitelist_packages:
@@ -214,6 +217,8 @@ def subscription_actions(
     builder.button(text="Меню", callback_data="client:home")
     rows = [1]
     if show_link:
+        if connect_url:
+            rows.append(1)
         rows.append(2)
         if show_whitelist_packages:
             rows.append(1)
@@ -255,28 +260,23 @@ def whitelist_package_confirm_actions(package_code: str, request_key: str) -> In
 def expired_subscription_actions() -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     builder.button(
-        text="🔄 Включить автопродление",
-        callback_data="client:subscription_resume",
+        text="🧾 Выбрать тариф",
+        callback_data="client:plan_menu",
         style="success",
     )
-    builder.button(text="🧾 Выбрать другой тариф", callback_data="client:plan_menu", style="primary")
     builder.button(text="➕ Пополнить баланс", callback_data="client:topup_menu", style="success")
     builder.button(text="🏠 Меню", callback_data="client:home")
-    builder.adjust(1, 1, 1, 1)
+    builder.adjust(1, 1, 1)
     return builder
 
 
 def subscription_details_actions(*, can_manage_auto_renew: bool, auto_renew_disabled: bool) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    if can_manage_auto_renew and not auto_renew_disabled:
-        builder.button(text="Выкл. автопродление", callback_data="client:subscription_cancel", style="danger")
-    if can_manage_auto_renew and auto_renew_disabled:
-        builder.button(text="Вкл. автопродление", callback_data="client:subscription_resume", style="success")
     builder.button(text="Перевыпустить ссылку", callback_data="client:subscription_revoke_prompt", style="danger")
     builder.button(text="VLESS-ключи", callback_data="client:vless_keys", style="primary")
     builder.button(text="Подписка", callback_data="client:subscription", style="primary")
     builder.button(text="Меню", callback_data="client:home")
-    builder.adjust(*([1] * (2 + int(can_manage_auto_renew))), 2)
+    builder.adjust(1, 1, 2)
     return builder
 
 
@@ -337,16 +337,19 @@ def subscription_link_actions(
     *,
     show_traffic: bool,
     help_url: str | None = None,
+    connect_url: str | None = None,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
-    if help_url:
+    if connect_url:
+        builder.button(text="Подключить через Happ / INCY", url=connect_url, style="primary")
+    elif help_url:
         builder.button(text="Помощь по подключению", url=help_url, style="primary")
     if show_traffic:
         builder.button(text="Трафик и списания", callback_data="client:traffic")
     builder.button(text="Подписка", callback_data="client:subscription", style="primary")
     builder.button(text="Меню", callback_data="client:home")
     row_sizes: list[int] = []
-    if help_url:
+    if connect_url or help_url:
         row_sizes.append(1)
     if show_traffic:
         row_sizes.append(1)

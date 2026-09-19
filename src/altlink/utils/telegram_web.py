@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from urllib.parse import parse_qsl
 
@@ -20,7 +21,7 @@ def verify_telegram_auth_payload(
 ) -> bool:
     auth_hash = payload.get("hash")
     auth_date = payload.get("auth_date")
-    if not auth_hash or not auth_date:
+    if not bot_token or not isinstance(auth_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", auth_hash) or not auth_date:
         return False
 
     try:
@@ -29,7 +30,7 @@ def verify_telegram_auth_payload(
         return False
 
     now_ts = int(datetime.now(UTC).timestamp())
-    if now_ts - auth_ts > max_age_seconds:
+    if not -30 <= now_ts - auth_ts <= max_age_seconds:
         return False
 
     data_check_string = "\n".join(
@@ -55,10 +56,13 @@ def verify_telegram_webapp_init_data(
     if not init_data or not bot_token:
         return None
 
-    pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+    fields = parse_qsl(init_data, keep_blank_values=True)
+    pairs = dict(fields)
+    if len(pairs) != len(fields):
+        return None
     auth_hash = pairs.pop("hash", None)
     auth_date = pairs.get("auth_date")
-    if not auth_hash or not auth_date:
+    if not isinstance(auth_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", auth_hash) or not auth_date:
         return None
 
     try:
@@ -67,7 +71,7 @@ def verify_telegram_webapp_init_data(
         return None
 
     now_ts = int(datetime.now(UTC).timestamp())
-    if now_ts - auth_ts > max_age_seconds:
+    if not -30 <= now_ts - auth_ts <= max_age_seconds:
         return None
 
     data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(pairs.items()))
@@ -84,7 +88,7 @@ def verify_telegram_webapp_init_data(
         user = json.loads(pairs.get("user") or "{}")
     except json.JSONDecodeError:
         return None
-    if not isinstance(user, dict) or not user.get("id"):
+    if not isinstance(user, dict) or type(user.get("id")) is not int or not 0 < user["id"] < 2**63:
         return None
     return {"user": user, "auth_date": auth_ts, "raw": pairs}
 
