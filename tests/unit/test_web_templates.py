@@ -80,7 +80,9 @@ def test_subscription_connect_template_has_safe_happ_and_incy_actions():
     assert 'href="{{ happ_import_url }}"' in content
     assert 'href="{{ incy_import_url }}"' in content
     assert "data-copy-text=\"{{ subscription_url }}\"" in content
-    assert "navigator.clipboard.writeText" in content
+    script = Path("src/altlink/presentation/web/static/subscription_connect.js").read_text(encoding="utf-8")
+    assert 'src="/static/subscription_connect.js?v={{ asset_version }}" defer' in content
+    assert "navigator.clipboard.writeText" in script
 
 
 def test_portal_dashboard_has_quick_connect_in_subscription_and_activation_result():

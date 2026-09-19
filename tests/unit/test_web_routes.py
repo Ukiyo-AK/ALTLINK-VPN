@@ -1414,6 +1414,8 @@ async def test_subscription_connect_page_builds_app_deep_links(monkeypatch):
 
     settings = SimpleNamespace(backend_public_url="https://altlink.online")
     request = SimpleNamespace(
+        headers={"user-agent": "Mozilla/5.0 (Linux; Android 15)"},
+        query_params={},
         app=SimpleNamespace(
             state=SimpleNamespace(settings=settings, container=SimpleNamespace(hub=fake_hub))
         )
@@ -1432,6 +1434,8 @@ async def test_subscription_connect_page_builds_app_deep_links(monkeypatch):
         "incy://import/https://altlink.online/sub/abc_DEF-123"
     )
     assert rendered["context"]["qr_data_uri"].startswith("data:image/png;base64,")
+    assert rendered["context"]["platform"] == "android"
+    assert "play.google.com" in rendered["context"]["current_downloads"]["happ"]["url"]
 
 
 @pytest.mark.asyncio

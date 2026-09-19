@@ -7271,6 +7271,43 @@ body.landing-v2 .landing-reveal.is-visible {
   height: 176px;
 }
 
+.subscription-platform-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 28px 0 0;
+}
+
+.subscription-platform-caption {
+  display: grid;
+  gap: 4px;
+  margin-right: auto;
+}
+
+.subscription-platform-caption label {
+  margin: 0;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.subscription-platform-caption span {
+  font-size: 0.85rem;
+}
+
+.subscription-platform-bar select {
+  width: min(100%, 300px);
+  min-height: 48px;
+  margin: 0;
+  border-radius: 14px;
+  background-color: var(--panel-solid);
+  color: var(--text);
+}
+
+.subscription-client-picker {
+  display: none;
+}
+
 .subscription-client-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -7313,6 +7350,18 @@ body.landing-v2 .landing-reveal.is-visible {
   margin: 18px 0 22px;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.subscription-client-store {
+  display: block;
+  margin: 12px 0;
+  font-size: 0.85rem;
+}
+
+.subscription-client-card .subscription-client-note {
+  min-height: 0;
+  margin: 14px 0 0;
+  font-size: 0.85rem;
 }
 
 .subscription-client-icon {
@@ -7412,51 +7461,169 @@ body.landing-v2 .landing-reveal.is-visible {
 
 @media (max-width: 768px) {
   .subscription-connect-shell {
-    width: min(calc(100% - 24px), 100%);
-    padding-top: 12px;
+    width: 100%;
+    padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   }
 
   .subscription-connect-header {
-    margin-bottom: 18px;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .subscription-connect-brand {
+    gap: 8px;
+    font-size: 0.9rem;
+  }
+
+  .subscription-connect-brand img {
+    width: 34px;
+    height: 34px;
   }
 
   .subscription-connect-header .button {
     min-height: 44px;
-    padding-inline: 14px;
+    padding-inline: 10px;
+    font-size: 0.8rem;
   }
 
   .subscription-connect-hero {
     grid-template-columns: minmax(0, 1fr);
-    gap: 24px;
-    padding: 28px 22px;
-    border-radius: 26px;
+    gap: 0;
+    padding: 8px 0 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
   }
 
   .subscription-connect-copy h1 {
-    margin-top: 14px;
-    font-size: clamp(2rem, 10vw, 3rem);
+    margin: 0 0 10px;
+    font-size: clamp(1.65rem, 7vw, 2.1rem);
+    line-height: 1.15;
+    letter-spacing: -0.04em;
   }
 
   .subscription-connect-copy p {
+    font-size: 0.94rem;
+    line-height: 1.5;
+  }
+
+  .subscription-connect-qr,
+  .subscription-connect-copy .badge,
+  .subscription-connect-desktop-copy,
+  .subscription-connect-steps,
+  .subscription-client-description {
+    display: none;
+  }
+
+  .subscription-platform-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .subscription-platform-caption {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+    margin: 0;
+  }
+
+  .subscription-platform-caption label {
+    font-size: 0.9rem;
+  }
+
+  .subscription-platform-caption span {
+    font-size: 0.75rem;
+  }
+
+  .subscription-platform-bar select {
+    width: 100%;
     font-size: 1rem;
   }
 
-  .subscription-connect-qr {
-    width: min(100%, 220px);
-    margin-inline: auto;
+  .subscription-client-picker {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+    margin: 16px 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--panel-solid);
   }
 
-  .subscription-client-grid,
-  .subscription-connect-steps {
+  .subscription-client-picker button {
+    min-height: 44px;
+    padding: 8px;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    background: transparent;
+    color: var(--muted);
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .subscription-client-picker button.is-selected {
+    color: #fff;
+    background: var(--accent);
+  }
+
+  .subscription-client-picker button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .subscription-client-grid {
     grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin-top: 12px;
+  }
+
+  .is-connect-enhanced .subscription-client-grid {
+    margin-top: 0;
+  }
+
+  .is-connect-enhanced .subscription-client-card:not(.is-selected) {
+    display: none;
   }
 
   .subscription-client-card {
-    padding: 22px;
+    padding: 18px;
+    border-radius: 20px;
+    box-shadow: none;
   }
 
-  .subscription-client-card p {
-    min-height: 0;
+  .subscription-client-card.is-primary {
+    box-shadow: none;
+  }
+
+  .subscription-client-card__head {
+    gap: 12px;
+  }
+
+  .subscription-client-card h2 {
+    font-size: 1.2rem;
+  }
+
+  .subscription-client-card__head .muted {
+    font-size: 0.8rem;
+  }
+
+  .subscription-client-icon {
+    flex-basis: 40px;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+  }
+
+  .subscription-client-icon svg {
+    width: 24px;
+    height: 24px;
   }
 
   .subscription-client-actions {
@@ -7469,17 +7636,38 @@ body.landing-v2 .landing-reveal.is-visible {
   }
 
   .subscription-link-card {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 20px;
+    gap: 10px;
+    margin-top: 14px;
+    padding: 16px;
+    border-radius: 20px;
+    background: var(--panel-solid);
   }
 
   .subscription-link-card .button {
-    width: 100%;
+    padding-inline: 10px;
+    font-size: 0.8rem;
+  }
+
+  .subscription-link-value {
+    font-size: 1rem;
+    padding-inline: 6px;
+  }
+
+  .subscription-copy-status {
+    font-size: 0.75rem;
+    line-height: 1.5;
   }
 
   .subscription-connect-footer {
-    align-items: flex-start;
-    flex-direction: column;
-    padding-inline: 4px;
+    flex-wrap: wrap;
+    gap: 0 6px;
+    padding: 12px 0 0;
+    font-size: 0.82rem;
+  }
+
+  .subscription-connect-footer a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
   }
 }

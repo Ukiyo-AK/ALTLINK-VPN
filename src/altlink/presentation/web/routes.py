@@ -80,6 +80,12 @@ from altlink.utils.latency import (
     server_probe_port,
 )
 from altlink.utils.devices import hwid_device_view
+from altlink.utils.client_apps import (
+    CLIENT_DOWNLOADS,
+    CLIENT_PLATFORMS,
+    client_downloads_for_platform,
+    detect_client_platform,
+)
 from altlink.utils.qr import render_qr_png
 from altlink.utils.security import generate_token
 from altlink.utils.subscriptions import (
@@ -106,7 +112,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260912-audit-fixes"
+ASSET_VERSION = "20260919-connect-platforms"
 SUBSCRIPTION_SHORT_UUID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 SUBSCRIPTION_CLIENT_TYPE_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 SUBSCRIPTION_REQUEST_HEADERS = {
@@ -1563,6 +1569,11 @@ async def subscription_connect_page(request: Request, short_uuid: str):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Подписка временно недоступна.")
     qr_png = render_qr_png(subscription_url)
     qr_data_uri = f"data:image/png;base64,{base64.b64encode(qr_png).decode('ascii')}"
+    platform_choice = request.query_params.get("platform", "auto")
+    if platform_choice not in CLIENT_PLATFORMS:
+        platform_choice = "auto"
+    detected_platform = detect_client_platform(request.headers.get("user-agent", ""))
+    platform = detected_platform if platform_choice == "auto" else platform_choice
     return render(
         request,
         "subscription_connect.html",
@@ -1575,8 +1586,11 @@ async def subscription_connect_page(request: Request, short_uuid: str):
         ),
         happ_import_url=f"happ://add/{subscription_url}",
         incy_import_url=f"incy://import/{subscription_url}",
-        happ_download_url="https://www.happ.su/main/ru",
-        incy_download_url="https://github.com/INCY-DEV/incy-platforms#downloads",
+        platform_choice=platform_choice,
+        platform=platform,
+        client_platforms=CLIENT_PLATFORMS,
+        client_downloads=CLIENT_DOWNLOADS,
+        current_downloads=client_downloads_for_platform(platform),
         qr_data_uri=qr_data_uri,
         support_url="https://t.me/altlink_support",
     )

@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock
+from html import unescape
 
 import httpx
 import pytest
@@ -71,6 +72,27 @@ async def test_connect_http_keeps_original_link_and_revokes_old_local_urls(test_
         assert f"https://altlink.online/sub/{new_token}" in fresh_page.text
         assert token not in fresh_page.text
         assert (await client.get(f"/sub/{new_token}")).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent,choice,expected", [
+    ("iPhone OS 18 like Mac OS X", "", "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"),
+    ("Linux; Android 15", "", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
+    ("Windows NT 10.0", "?platform=ios", "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"),
+    ("iPhone OS 18", "?platform=windows", "https://www.happ.su/main/ru"),
+    ("Android 15", "?platform=invalid", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
+])
+async def test_connect_renders_platform_links_even_without_javascript(test_services, agent, choice, expected):
+    _, token = await create_trial(test_services)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(subscription_app(test_services)), base_url="https://altlink.online") as client:
+        response = await client.get(f"/connect/{token}{choice}", headers={"user-agent": agent})
+    assert response.status_code == 200
+    assert f'href="{expected}" data-app-download' in unescape(response.text)
+    assert 'name="platform"' in response.text
+    assert all(f'value="{platform}"' in response.text for platform in ("auto", "ios", "android", "windows", "macos", "linux", "other"))
+    assert '/static/subscription_connect.js?v=' in response.text
+    assert 'rel="noopener noreferrer"' in response.text
+    assert "no-store" in response.headers["cache-control"]
 
 
 @pytest.mark.asyncio

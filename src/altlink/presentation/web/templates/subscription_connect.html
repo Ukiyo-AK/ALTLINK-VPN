@@ -26,8 +26,8 @@
     <section class="subscription-connect-hero">
       <div class="subscription-connect-copy">
         <span class="badge highlight">Персональное подключение</span>
-        <h1>Подключите ALTLINK за пару нажатий</h1>
-        <p>Выберите приложение, добавьте подписку и включите подходящий сервер. Список серверов будет обновляться автоматически.</p>
+        <h1>Подключите ALTLINK<span class="subscription-connect-desktop-copy"> за пару нажатий</span></h1>
+        <p>Установите приложение, добавьте подписку и включите соединение.</p>
       </div>
       <div class="subscription-connect-qr" aria-label="QR-код подписки">
         <img src="{{ qr_data_uri }}" alt="QR-код для добавления подписки">
@@ -35,33 +35,68 @@
       </div>
     </section>
 
+    <form class="subscription-platform-bar" method="get" data-platform-form>
+      <div class="subscription-platform-caption">
+        <label for="subscription-platform">Ваше устройство</label>
+        <span class="muted" data-platform-status aria-live="polite">{% if platform_choice == 'auto' %}{% if platform == 'other' %}Выберите платформу{% else %}Определено: {{ client_platforms[platform] }}{% endif %}{% else %}Выбрано: {{ client_platforms[platform] }}{% endif %}</span>
+      </div>
+      <select id="subscription-platform" name="platform" data-platform-select>
+        <option value="auto" {% if platform_choice == 'auto' %}selected{% endif %}>Определить автоматически</option>
+        {% for code, label in client_platforms.items() %}
+        <option value="{{ code }}" {% if platform_choice == code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button class="button ghost" type="submit" data-platform-submit>Выбрать</button>
+    </form>
+
+    <div class="subscription-client-picker" role="group" aria-label="Приложение для подключения" data-client-picker hidden>
+      <button type="button" class="is-selected" data-client-choice="happ" aria-pressed="true" aria-controls="connect-happ">Happ</button>
+      <button type="button" data-client-choice="incy" aria-pressed="false" aria-controls="connect-incy">INCY</button>
+    </div>
+
     <section class="subscription-client-grid" aria-label="Приложения для подключения">
-      <article class="subscription-client-card is-primary">
+      <article class="subscription-client-card is-primary is-selected" id="connect-happ" data-client-card="happ">
         <div class="subscription-client-card__head">
           <span class="subscription-client-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 3 4.8 6.1v5.2c0 4.6 2.9 8.2 7.2 9.7 4.3-1.5 7.2-5.1 7.2-9.7V6.1L12 3Z" stroke="currentColor" stroke-width="1.8"/><path d="m8.7 12.1 2.1 2.1 4.7-4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </span>
           <div><h2>Happ</h2><span class="badge">Рекомендуем</span></div>
         </div>
-        <p>Универсальный клиент для телефона и компьютера.</p>
+        <p class="subscription-client-description">Универсальный клиент для телефона и компьютера.</p>
+        <span class="subscription-client-store muted" data-download-store>{{ current_downloads.happ.store }}</span>
         <div class="subscription-client-actions">
-          <a class="button full" href="{{ happ_import_url }}" data-app-import>Добавить в Happ</a>
-          <a class="button ghost full" href="{{ happ_download_url }}" target="_blank" rel="noopener noreferrer">Скачать Happ</a>
+          <a class="button ghost full" href="{{ current_downloads.happ.url }}" data-app-download target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg>
+            <span>1. Скачать Happ</span>
+          </a>
+          <a class="button full" href="{{ happ_import_url }}" data-app-import>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span>2. Добавить в Happ</span>
+          </a>
         </div>
+        <p class="subscription-client-note" data-download-note {% if not current_downloads.happ.note %}hidden{% endif %}>{{ current_downloads.happ.note }}</p>
       </article>
 
-      <article class="subscription-client-card">
+      <article class="subscription-client-card" id="connect-incy" data-client-card="incy">
         <div class="subscription-client-card__head">
           <span class="subscription-client-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none"><path d="M7 4.5h10A2.5 2.5 0 0 1 19.5 7v10a2.5 2.5 0 0 1-2.5 2.5H7A2.5 2.5 0 0 1 4.5 17V7A2.5 2.5 0 0 1 7 4.5Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 8.5v7M15 8.5v7M9 12h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
           </span>
           <div><h2>INCY</h2><span class="muted">Альтернативный клиент</span></div>
         </div>
-        <p>Кроссплатформенное приложение с импортом подписки по ссылке.</p>
+        <p class="subscription-client-description">Кроссплатформенное приложение с импортом подписки по ссылке.</p>
+        <span class="subscription-client-store muted" data-download-store>{{ current_downloads.incy.store }}</span>
         <div class="subscription-client-actions">
-          <a class="button full" href="{{ incy_import_url }}" data-app-import>Добавить в INCY</a>
-          <a class="button ghost full" href="{{ incy_download_url }}" target="_blank" rel="noopener noreferrer">Скачать INCY</a>
+          <a class="button ghost full" href="{{ current_downloads.incy.url }}" data-app-download target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg>
+            <span>1. Скачать INCY</span>
+          </a>
+          <a class="button full" href="{{ incy_import_url }}" data-app-import>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span>2. Добавить в INCY</span>
+          </a>
         </div>
+        <p class="subscription-client-note" data-download-note {% if not current_downloads.incy.note %}hidden{% endif %}>{{ current_downloads.incy.note }}</p>
       </article>
     </section>
 
@@ -70,7 +105,10 @@
         <span class="muted">Ссылка подписки</span>
         <input class="subscription-link-value" aria-label="Персональная ссылка" value="{{ subscription_url }}" readonly data-subscription-link>
       </div>
-      <button class="button ghost" type="button" data-copy-button>Скопировать</button>
+      <button class="button ghost" type="button" data-copy-button>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="3"/><path d="M15 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/></svg>
+        <span data-copy-label>Скопировать</span>
+      </button>
       <p class="subscription-copy-status muted" data-copy-status aria-live="polite">Не передавайте эту ссылку другим людям.</p>
     </section>
 
@@ -86,45 +124,7 @@
     </footer>
   </main>
 
-  <script>
-    (() => {
-      const root = document.querySelector("[data-copy-root]");
-      if (!root) return;
-      const button = root.querySelector("[data-copy-button]");
-      const status = root.querySelector("[data-copy-status]");
-      const linkInput = root.querySelector("[data-subscription-link]");
-      const value = root.dataset.copyText || "";
-
-      const fallbackCopy = () => {
-        linkInput.focus();
-        linkInput.select();
-        linkInput.setSelectionRange(0, value.length);
-        return document.execCommand("copy");
-      };
-
-      button?.addEventListener("click", async () => {
-        try {
-          let copied = false;
-          if (navigator.clipboard && window.isSecureContext) {
-            try {
-              await navigator.clipboard.writeText(value);
-              copied = true;
-            } catch (_) {
-              // Some WebViews expose the API but deny clipboard permission.
-            }
-          }
-          if (!copied && !fallbackCopy()) {
-            throw new Error("copy failed");
-          }
-          button.textContent = "Скопировано";
-          status.textContent = "Ссылка скопирована. Добавьте её в приложение вручную.";
-          window.setTimeout(() => { button.textContent = "Скопировать"; }, 2400);
-        } catch (_) {
-          button.textContent = "Скопировать";
-          status.textContent = "Не удалось скопировать автоматически. Нажмите и удерживайте ссылку.";
-        }
-      });
-    })();
-  </script>
+  <script type="application/json" id="subscription-connect-config">{{ {'platforms': client_platforms, 'downloads': client_downloads}|tojson }}</script>
+  <script src="/static/subscription_connect.js?v={{ asset_version }}" defer></script>
 </body>
 </html>
