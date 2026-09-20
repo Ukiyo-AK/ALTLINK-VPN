@@ -363,12 +363,18 @@ class DashboardService(BaseService):
             for server_id, samples, operational in uptime_rows
         }
 
-        snapshots: list[ServerMetricSnapshot] = []
+        snapshots = []
         if selected_ids:
             snapshots = list(
                 (
-                    await self.session.scalars(
-                        select(ServerMetricSnapshot)
+                    await self.session.execute(
+                        select(
+                            ServerMetricSnapshot.server_id,
+                            ServerMetricSnapshot.captured_at,
+                            ServerMetricSnapshot.assigned_users,
+                            ServerMetricSnapshot.online_users,
+                            ServerMetricSnapshot.is_operational,
+                        )
                         .where(
                             ServerMetricSnapshot.server_id.in_(selected_ids),
                             ServerMetricSnapshot.captured_at >= window.start,
@@ -907,7 +913,7 @@ class DashboardService(BaseService):
         if trial_user_ids:
             traffic_rows = (
                 await self.session.execute(
-                    select(TrafficSnapshot.user_id, TrafficSnapshot.created_at)
+                    select(TrafficSnapshot.user_id, func.max(TrafficSnapshot.created_at))
                     .join(User, TrafficSnapshot.user_id == User.id)
                     .where(
                         User.created_at >= window.start,
@@ -915,6 +921,7 @@ class DashboardService(BaseService):
                         TrafficSnapshot.created_at <= window.end,
                         or_(TrafficSnapshot.used_bytes > 0, TrafficSnapshot.lifetime_used_bytes > 0),
                     )
+                    .group_by(TrafficSnapshot.user_id)
                 )
             ).all()
             for user_id, created_at in traffic_rows:
@@ -924,7 +931,7 @@ class DashboardService(BaseService):
 
             online_rows = (
                 await self.session.execute(
-                    select(OnlineSessionCache.user_id, OnlineSessionCache.last_activity_at)
+                    select(OnlineSessionCache.user_id, func.max(OnlineSessionCache.last_activity_at))
                     .join(User, OnlineSessionCache.user_id == User.id)
                     .where(
                         User.created_at >= window.start,
@@ -932,6 +939,7 @@ class DashboardService(BaseService):
                         OnlineSessionCache.last_activity_at.is_not(None),
                         OnlineSessionCache.last_activity_at <= window.end,
                     )
+                    .group_by(OnlineSessionCache.user_id)
                 )
             ).all()
             for user_id, last_activity_at in online_rows:
@@ -1029,28 +1037,13 @@ class DashboardService(BaseService):
             )
             .subquery()
         )
-        baseline_rows = list(
-            (
-                await self.session.scalars(
-                    select(TrafficSnapshot)
-                    .join(baseline_ranked, TrafficSnapshot.id == baseline_ranked.c.snapshot_id)
-                    .where(baseline_ranked.c.row_number == 1)
-                )
-            ).all()
-        )
-        rows = list(
-            (
-                await self.session.scalars(
-                    select(TrafficSnapshot)
-                    .where(
-                        TrafficSnapshot.server_id.is_(None),
-                        TrafficSnapshot.created_at >= window.start,
-                        TrafficSnapshot.created_at <= window.end,
-                    )
-                    .order_by(TrafficSnapshot.user_id.asc(), TrafficSnapshot.created_at.asc())
-                )
-            ).all()
-        )
+        baseline_rows = (
+            await self.session.execute(
+                select(TrafficSnapshot.user_id, TrafficSnapshot.lifetime_used_bytes)
+                .join(baseline_ranked, TrafficSnapshot.id == baseline_ranked.c.snapshot_id)
+                .where(baseline_ranked.c.row_number == 1)
+            )
+        ).all()
         new_user_ids = set(
             (
                 await self.session.scalars(
@@ -1059,10 +1052,21 @@ class DashboardService(BaseService):
             ).all()
         )
         previous_by_user = {
-            snapshot.user_id: max(int(snapshot.lifetime_used_bytes or 0), 0)
-            for snapshot in baseline_rows
+            user_id: max(int(lifetime_used_bytes or 0), 0)
+            for user_id, lifetime_used_bytes in baseline_rows
         }
-        for snapshot in rows:
+        # Stream only the three counters we need, not millions of ORM snapshots.
+        rows = await self.session.stream(
+            select(TrafficSnapshot.user_id, TrafficSnapshot.lifetime_used_bytes, TrafficSnapshot.created_at)
+            .where(
+                TrafficSnapshot.server_id.is_(None),
+                TrafficSnapshot.created_at >= window.start,
+                TrafficSnapshot.created_at <= window.end,
+            )
+            .order_by(TrafficSnapshot.user_id.asc(), TrafficSnapshot.created_at.asc(), TrafficSnapshot.id.asc())
+            .execution_options(yield_per=2000)
+        )
+        async for snapshot in rows:
             current = max(int(snapshot.lifetime_used_bytes or 0), 0)
             previous = previous_by_user.get(snapshot.user_id)
             if previous is None:

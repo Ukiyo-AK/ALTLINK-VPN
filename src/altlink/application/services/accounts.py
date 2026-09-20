@@ -606,7 +606,30 @@ class AccountService(BaseService):
             await self.session.flush()
         return user
 
-    async def get_subscription_bundle(self, user_id: str) -> dict:
+    async def get_local_subscription_bundle(self, user_id: str) -> dict:
+        """Read-only screen data; remote reconciliation belongs to sync jobs."""
+        user = await self.get_user(user_id)
+        return {
+            "user": user,
+            "subscription": await self.get_current_subscription(user.id),
+            "subscription_url": remnawave_public_subscription_url(self.settings, user.remnawave_short_uuid),
+            "subscription_connect_url": local_subscription_connect_url(self.settings, user.remnawave_short_uuid),
+        }
+
+    async def get_connection_statistics(self, user: User) -> dict:
+        subscription = await self.get_current_subscription(user.id)
+        latest = subscription or await self.get_latest_subscription(user.id)
+        is_trial = bool(subscription and subscription.plan and subscription.plan.is_trial)
+        return {
+            "total_traffic_bytes": await self.get_user_total_traffic_bytes(user.id),
+            "whitelist_traffic_bytes": max(int(latest.whitelist_traffic_used_bytes or 0), 0) if latest else 0,
+            "devices": max(int(user.hwid_device_count or 0), 0),
+            "balance_rub": user.balance_rub,
+            "billing_label": "Тест до" if is_trial else "Следующее списание",
+            "billing_at": (subscription.ends_at if is_trial else subscription.next_billing_at) if subscription else None,
+        }
+
+    async def get_subscription_bundle(self, user_id: str, *, include_remote_details: bool = True) -> dict:
         user = await self.get_user(user_id)
         await self.ensure_remote_user_link(user)
         subscription = await self.get_current_subscription(user.id)
@@ -620,7 +643,14 @@ class AccountService(BaseService):
 
         async def safe_remote_part(label: str, loader, *, default):
             try:
-                return await loader()
+                if include_remote_details:
+                    return await loader()
+                # Optional link metadata must not hold up a Telegram action through all retries.
+                async with asyncio.timeout(5):
+                    return await loader()
+            except TimeoutError:
+                logger.warning("Timed out loading subscription link metadata for user %s.", user.id)
+                return default
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code if exc.response is not None else None
                 if status_code == 404:
@@ -646,16 +676,17 @@ class AccountService(BaseService):
                 )
                 return default
 
-        bundle["accessible_nodes"] = await safe_remote_part(
-            "accessible_nodes",
-            lambda: self.remnawave.get_accessible_nodes(user.remnawave_user_uuid),
-            default=[],
-        )
-        bundle["connection_keys"] = await safe_remote_part(
-            "connection_keys",
-            lambda: self.remnawave.get_connection_keys(user.remnawave_user_uuid),
-            default=None,
-        )
+        if include_remote_details:
+            bundle["accessible_nodes"] = await safe_remote_part(
+                "accessible_nodes",
+                lambda: self.remnawave.get_accessible_nodes(user.remnawave_user_uuid),
+                default=[],
+            )
+            bundle["connection_keys"] = await safe_remote_part(
+                "connection_keys",
+                lambda: self.remnawave.get_connection_keys(user.remnawave_user_uuid),
+                default=None,
+            )
         bundle["subscription_info"] = await safe_remote_part(
             "subscription_info",
             lambda: self.remnawave.get_subscription_info(user.remnawave_short_uuid),

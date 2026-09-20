@@ -1,8 +1,10 @@
 <!doctype html>
-<html lang="ru" data-theme="light">
+<html lang="ru" data-theme="light"{% if auto_login_pending %} class="portal-auth-loading"{% endif %}>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
   <title>{{ title }} | ALTLINK</title>
   <link rel="icon" type="image/png" href="/media/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -10,15 +12,30 @@
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Unbounded:wght@600;700;800&display=swap" rel="stylesheet">
   {% include "_theme_bootstrap.html" %}
   <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script>
+    if (new URLSearchParams(location.hash.slice(1)).has('tgWebAppData')) {
+      document.documentElement.classList.add('portal-auth-loading');
+    }
+    window.portalLoginFallback = setTimeout(() => {
+      document.documentElement.classList.remove('portal-auth-loading');
+    }, 15000);
+  </script>
+  <script src="https://telegram.org/js/telegram-web-app.js" async></script>
+  <script src="/static/portal_login.js?v={{ asset_version }}" defer></script>
+  <noscript><style>.portal-auth-loading .center-shell { display: grid !important; } .portal-auth-loader { display: none !important; }</style></noscript>
 </head>
 <body class="portal-login-page">
+  <div class="portal-auth-loader" role="status" aria-live="polite">
+    <img src="/media/altlink%20icon.svg" alt="ALTLINK">
+    <span class="portal-auth-spinner" aria-hidden="true"></span>
+    <strong>Открываем личный кабинет…</strong>
+  </div>
   <div class="center-shell">
     <section class="login-card portal-login-shell">
       <div class="portal-login-layout">
         <div class="portal-login-main stack">
           <div class="brand">
-            <img class="brand-logo" src="/media/logo.png" alt="ALTLINK">
+            <img class="brand-logo" src="/media/altlink%20icon.svg" alt="ALTLINK">
             <div>
               <strong>ALTLINK</strong>
               <div class="muted">Пользовательский кабинет</div>
@@ -29,7 +46,6 @@
           <div class="alert {{ flash.level }}">{{ flash.message }}</div>
           {% endif %}
 
-          <span class="badge highlight">Telegram-вход</span>
           <div class="stack compact">
             <h1>Вход в личный кабинет</h1>
             <p class="muted">
@@ -37,8 +53,8 @@
             </p>
           </div>
           <div class="panel stack portal-login-status-card" id="portal-miniapp-status" hidden>
-            <strong>Открываем личный кабинет…</strong>
-            <div class="muted">Проверяем Telegram Mini App. Если вход не получится, ниже останется обычная кнопка входа.</div>
+            <strong>Не удалось войти автоматически</strong>
+            <div class="muted">Войдите через Telegram-кнопку ниже.</div>
           </div>
 
           {% if telegram_login_enabled and telegram_login_url %}
@@ -60,7 +76,8 @@
         </div>
 
         {% if telegram_login_enabled and telegram_login_url %}
-        <aside class="portal-login-qr-card">
+        <button class="button ghost portal-login-qr-toggle" type="button" aria-expanded="false" aria-controls="portal-login-qr">Показать QR-код</button>
+        <aside class="portal-login-qr-card" id="portal-login-qr">
           <span class="badge">Или отсканируйте QR-код</span>
           <h2>Вход с ПК</h2>
           <p class="muted">
@@ -101,102 +118,11 @@
       </form>
       {% endif %}
 
-      <div class="muted portal-login-footnote">
-        После входа вы сможете запустить тестовый период, пополнить баланс, выбрать тариф
-        и получить конфиги прямо в браузере.
-      </div>
     </section>
   </div>
 
-  {% if telegram_login_enabled and telegram_login_url %}
-  <script>
-    (() => {
-      const miniAppStatus = document.getElementById("portal-miniapp-status");
-      const telegram = window.Telegram?.WebApp;
-      const initData = telegram?.initData;
-      if (initData && miniAppStatus) {
-        miniAppStatus.hidden = false;
-        telegram.ready?.();
-        fetch("/api/auth/telegram-webapp", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ init_data: initData }),
-        })
-          .then((response) => response.json().then((payload) => ({ ok: response.ok, payload })))
-          .then(({ ok, payload }) => {
-            if (ok && payload.redirect_url) {
-              miniAppStatus.querySelector("strong").textContent = "Вход подтверждён, открываем кабинет…";
-              window.location.href = payload.redirect_url;
-              return;
-            }
-            miniAppStatus.querySelector("strong").textContent = "Не удалось войти автоматически";
-            miniAppStatus.querySelector(".muted").textContent = payload.message || "Войдите через Telegram-кнопку ниже.";
-          })
-          .catch(() => {
-            miniAppStatus.querySelector("strong").textContent = "Не удалось войти автоматически";
-            miniAppStatus.querySelector(".muted").textContent = "Проверьте соединение или войдите через Telegram-кнопку ниже.";
-          });
-      }
-
-      const statusNode = document.getElementById("portal-login-status");
-      const hintNode = document.getElementById("portal-login-hint");
-      const reloadLink = document.getElementById("portal-login-reload");
-      const statusUrl = {{ telegram_login_status_url | tojson }};
-      const deepLink = {{ telegram_login_url | tojson }};
-
-      if (!statusNode || !hintNode || !statusUrl) {
-        return;
-      }
-
-      const showReload = () => {
-        if (reloadLink) {
-          reloadLink.style.display = "inline-flex";
-        }
-      };
-
-      const poll = async () => {
-        try {
-          const response = await fetch(`${statusUrl}?ts=${Date.now()}`, {
-            cache: "no-store",
-            headers: { "X-Requested-With": "portal-login-poll" },
-          });
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-          const payload = await response.json();
-          if (payload.status === "approved" && payload.redirect_url) {
-            statusNode.textContent = "Вход подтверждён. Открываем кабинет…";
-            hintNode.textContent = "Если переход не сработал автоматически, страница обновится сама.";
-            window.location.href = payload.redirect_url;
-            return;
-          }
-
-          statusNode.textContent = payload.message || "Ожидаем подтверждение в Telegram…";
-          if (payload.status === "pending") {
-            window.setTimeout(poll, 2000);
-            return;
-          }
-
-          hintNode.textContent = "Если нужно, создайте новую попытку входа и подтвердите её в боте.";
-          showReload();
-        } catch (error) {
-          statusNode.textContent = "Не удалось проверить состояние входа.";
-          hintNode.textContent = "Проверьте соединение и попробуйте ещё раз, либо создайте новую попытку входа.";
-          showReload();
-        }
-      };
-
-      const mobileQuery = window.matchMedia ? window.matchMedia("(max-width: 760px)") : null;
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("autostart") === "1" && mobileQuery && mobileQuery.matches && deepLink) {
-        window.setTimeout(() => {
-          window.location.href = deepLink;
-        }, 250);
-      }
-
-      poll();
-    })();
+  <script type="application/json" id="portal-login-config">
+    {{ {'statusUrl': telegram_login_status_url, 'deepLink': telegram_login_url, 'autoLogin': auto_login_pending|default(false)}|tojson }}
   </script>
-  {% endif %}
 </body>
 </html>

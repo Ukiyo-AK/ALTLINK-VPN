@@ -107,6 +107,14 @@ def test_menu_actions_can_show_quick_plan_for_new_or_trial_users():
     assert plan_button["style"] == "success"
 
 
+def test_new_user_menu_omits_unused_account_sections():
+    markup = menu_actions(show_trial=True, show_quick_plan=True, show_account_sections=False).as_markup()
+    buttons = inline_buttons(markup)
+    callbacks = [button.get("callback_data") for button in buttons]
+    assert callbacks == ["client:plan_menu", "client:support", "client:trial_activate"]
+    assert inline_rows(markup)[0] == ["🧾 Выбрать тариф"]
+
+
 def test_referral_actions_offer_share_and_clear_navigation():
     share_url = "https://t.me/share/url?url=https%3A%2F%2Ft.me%2FAltlinkbot%3Fstart%3Dref_TEST"
     markup = referral_actions(share_url=share_url).as_markup()

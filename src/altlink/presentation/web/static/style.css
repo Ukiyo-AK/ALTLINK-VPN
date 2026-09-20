@@ -7671,3 +7671,97 @@ body.landing-v2 .landing-reveal.is-visible {
     min-height: 44px;
   }
 }
+
+.connection-statistics {
+  padding: 18px 22px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--panel);
+  min-width: 0;
+}
+
+.connection-statistics dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(180px, 1.5fr);
+  gap: 18px;
+  margin: 0;
+}
+
+.connection-statistics dl > div { min-width: 0; }
+.connection-statistics dt { color: var(--muted); font-size: 0.8rem; }
+.connection-statistics dd {
+  margin: 5px 0 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.connection-statistics small { font-size: 0.75rem; font-weight: 400; }
+.connection-statistics-date dd { font-size: 0.95rem; line-height: 1.45; }
+.connection-statistics p { margin: 12px 0 0; color: var(--muted); font-size: 0.72rem; }
+
+.portal-auth-loader {
+  display: none;
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-content: center;
+  justify-items: center;
+  gap: 24px;
+  padding: 24px;
+  text-align: center;
+}
+.portal-auth-loader img { width: 72px; height: 72px; }
+.portal-auth-loader strong { font-size: 1rem; }
+.portal-auth-loading .portal-auth-loader { display: grid; }
+.portal-auth-loading .portal-login-page .center-shell { display: none; }
+.portal-auth-spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: portal-auth-spin 0.9s linear infinite;
+}
+@keyframes portal-auth-spin { to { transform: rotate(360deg); } }
+.portal-login-qr-toggle { display: none; }
+.portal-login-page .portal-login-cta { background: linear-gradient(135deg, #067468, #078570); color: #fff; }
+html[data-theme="dark"] .portal-login-page .portal-login-cta { background: linear-gradient(135deg, #18bd95, #72e8c4); color: #061b15; }
+.portal-login-page [hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .portal-auth-spinner { animation: none; }
+}
+
+@media (max-width: 768px) {
+  .connection-statistics { padding: 14px 16px; border-radius: 18px; }
+  .connection-statistics dl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
+  .connection-statistics-date { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .connection-statistics-date dd { margin: 0; text-align: right; font-size: 0.85rem; }
+  .connection-statistics dt small { display: block; }
+  .connection-statistics dd { font-size: 1.08rem; }
+  .connection-statistics p { line-height: 1.45; }
+
+  .portal-login-page .center-shell {
+    padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+  .portal-login-shell { padding: 24px 20px; border-radius: 24px; max-width: 420px; }
+  .portal-login-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .portal-login-main { padding: 0; gap: 20px; }
+  .portal-login-main .brand { margin: 0; gap: 12px; align-items: center; }
+  .portal-login-main .brand-logo { width: 44px; height: 44px; }
+  .portal-login-main .brand .muted { display: none; }
+  .portal-login-main h1 { font-size: clamp(1.65rem, 7vw, 2rem); line-height: 1.15; }
+  .portal-login-main p { font-size: 0.92rem; line-height: 1.5; margin: 0; }
+  .portal-login-status-card { padding: 14px; gap: 6px; box-shadow: none; }
+  .portal-login-status-card strong { font-size: 0.88rem; line-height: 1.45; }
+  #portal-login-hint { display: none; }
+  .portal-login-cta, .portal-login-qr-toggle { min-height: 48px; }
+  .portal-login-qr-toggle { display: flex; width: 100%; }
+  .portal-login-qr-card { display: none; padding: 16px; }
+  .portal-login-qr-card.is-open { display: grid; }
+  .portal-login-qr-card h2, .portal-login-qr-card p, .portal-login-steps,
+  .portal-login-qr-card > .button { display: none; }
+  .portal-login-qr-image { width: 180px; margin-inline: auto; }
+}

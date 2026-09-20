@@ -35,6 +35,17 @@
       </div>
     </section>
 
+    <section class="connection-statistics" aria-label="Ваша подписка">
+      <dl>
+        <div><dt>Трафик всего</dt><dd>{{ '%.2f'|format(statistics.total_traffic_bytes / 1024**3) }} <small>ГБ</small></dd></div>
+        <div><dt>Белые списки <small>за период</small></dt><dd>{{ '%.2f'|format(statistics.whitelist_traffic_bytes / 1024**3) }} <small>ГБ</small></dd></div>
+        <div><dt>Устройства</dt><dd>{{ statistics.devices }}</dd></div>
+        <div><dt>Баланс</dt><dd>{{ statistics.balance_rub|rub }} <small>₽</small></dd></div>
+        <div class="connection-statistics-date"><dt>{{ statistics.billing_label }}</dt><dd>{{ statistics.billing_at|msk_datetime if statistics.billing_at else 'Не запланировано' }}</dd></div>
+      </dl>
+      <p>По последней синхронизации. Учитываются устройства, распознанные приложениями.</p>
+    </section>
+
     <form class="subscription-platform-bar" method="get" data-platform-form>
       <div class="subscription-platform-caption">
         <label for="subscription-platform">Ваше устройство</label>

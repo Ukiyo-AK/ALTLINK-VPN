@@ -524,14 +524,14 @@ def test_profile_text_for_start_does_not_show_legacy_whitelist_debt_copy():
     assert "БС: 2.00 ГБ" not in text
 
 
-def test_home_text_without_subscription_points_user_to_subscription_button():
+def test_home_text_without_subscription_points_user_to_plan_button():
     settings = Settings(_env_file=None, backend_public_url="https://altlink.online")
     user = SimpleNamespace(balance_rub=Decimal("15.00"), status="new")
 
     text = client_handlers.home_text(user, None, settings)
 
     assert "Тариф пока не выбран" in text
-    assert "«Подписка»" in text
+    assert "«Подписка»" not in text
     assert "«Выбрать тариф»" in text
 
 
@@ -938,6 +938,53 @@ async def test_show_subscription_renders_for_active_trial_user(test_services):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("paid", [False, True])
+async def test_open_subscription_does_not_request_remote_data(test_services, monkeypatch, paid):
+    message = DummyMessage(text="Подписка", user_id=21901)
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        if paid:
+            await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=False)
+        else:
+            await hub.billing.activate_trial(user.id)
+    remote_methods = ("get_user", "get_accessible_nodes", "get_connection_keys", "get_subscription_info")
+    mocks = [AsyncMock(side_effect=AssertionError("No remote reads on screen open")) for _ in remote_methods]
+    for method, mock in zip(remote_methods, mocks):
+        monkeypatch.setattr(test_services.remnawave, method, mock)
+    async with test_services.hub() as hub:
+        await client_handlers.show_subscription(message, test_services, hub)
+    assert message.answers
+    for mock in mocks:
+        mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["new", "trial", "paid", "expired"])
+async def test_home_navigation_for_each_account_stage(test_services, monkeypatch, state):
+    message = DummyMessage(text="Меню", user_id=21902)
+    async with test_services.hub() as hub:
+        user = await client_handlers.ensure_user(message.from_user, test_services, hub)
+        if state == "trial":
+            await hub.billing.activate_trial(user.id)
+        elif state in {"paid", "expired"}:
+            subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=False)
+            if state == "expired":
+                subscription.status = SubscriptionStatus.BLOCKED
+    send = AsyncMock()
+    monkeypatch.setattr(client_handlers, "send_card_with_optional_media", send)
+    async with test_services.hub() as hub:
+        await client_handlers.show_home(message, test_services, hub)
+    markup = send.await_args.kwargs["primary_markup"]
+    callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
+    assert ("client:balance" in callbacks) is (state != "new")
+    assert ("client:subscription" in callbacks) is (state != "new")
+    if state in {"new", "trial"}:
+        assert "client:plan_menu" in callbacks
+    if state == "expired":
+        assert "client:topup_menu" in callbacks
+
+
+@pytest.mark.asyncio
 async def test_show_subscription_tolerates_missing_remote_subscription_info(test_services, monkeypatch):
     message = DummyMessage(text="Подписка", user_id=21056)
 
@@ -1328,7 +1375,7 @@ async def test_activate_plan_succeeds_when_bundle_loading_fails(monkeypatch):
             return subscription
 
     class DummyAccounts:
-        async def get_subscription_bundle(self, user_id):
+        async def get_subscription_bundle(self, user_id, *, include_remote_details=True):
             raise RuntimeError("panel timeout")
 
     @asynccontextmanager
@@ -1372,7 +1419,7 @@ async def test_activate_plan_falls_back_to_text_when_media_card_send_fails(monke
             return subscription
 
     class DummyAccounts:
-        async def get_subscription_bundle(self, user_id):
+        async def get_subscription_bundle(self, user_id, *, include_remote_details=True):
             return {
                 "subscription": subscription,
                 "subscription_info": SimpleNamespace(subscriptionUrl="https://sub.example/demo"),
@@ -1415,7 +1462,7 @@ async def test_subscription_link_handles_bundle_errors_without_crashing(monkeypa
         return SimpleNamespace(id="user-42")
 
     class DummyAccounts:
-        async def get_subscription_bundle(self, user_id):
+        async def get_subscription_bundle(self, user_id, *, include_remote_details=True):
             raise RuntimeError("panel timeout")
 
         async def get_current_subscription(self, user_id):

@@ -619,6 +619,12 @@ async def test_admin_analytics_route_passes_period_and_selected_servers(monkeypa
     assert rendered["context"]["active_nav"] == "analytics"
     assert rendered["context"]["analytics_warning"] is None
     assert calls == [("overview", "1d"), ("servers", "1d", ["server-1"])]
+    await web_routes.analytics(request, period="1d")
+    assert len(calls) == 2
+    monkeypatch.setattr(web_routes, "resolve_admin", AsyncMock(return_value=None))
+    unauthorized = await web_routes.analytics(request, period="1d")
+    assert unauthorized.headers["location"] == "/admin/login"
+    assert len(calls) == 2
 
 
 @pytest.mark.asyncio
@@ -1402,7 +1408,8 @@ async def test_subscription_connect_page_builds_app_deep_links(monkeypatch):
     @asynccontextmanager
     async def fake_hub():
         accounts = SimpleNamespace(
-            get_user_by_remnawave_short_uuid=AsyncMock(return_value=SimpleNamespace(id="user-1"))
+            get_user_by_remnawave_short_uuid=AsyncMock(return_value=SimpleNamespace(id="user-1")),
+            get_connection_statistics=AsyncMock(return_value={"devices": 3}),
         )
         yield SimpleNamespace(accounts=accounts)
 
@@ -1435,6 +1442,7 @@ async def test_subscription_connect_page_builds_app_deep_links(monkeypatch):
     )
     assert rendered["context"]["qr_data_uri"].startswith("data:image/png;base64,")
     assert rendered["context"]["platform"] == "android"
+    assert rendered["context"]["statistics"] == {"devices": 3}
     assert "play.google.com" in rendered["context"]["current_downloads"]["happ"]["url"]
 
 

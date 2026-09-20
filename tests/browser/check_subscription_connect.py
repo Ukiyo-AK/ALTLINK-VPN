@@ -18,7 +18,7 @@ import tempfile
 import httpx
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from starlette.applications import Starlette
-from starlette.responses import HTMLResponse
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 import uvicorn
@@ -28,9 +28,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 from altlink.utils.client_apps import CLIENT_DOWNLOADS, CLIENT_PLATFORMS, client_downloads_for_platform, detect_client_platform
 from altlink.utils.qr import render_qr_png
+from altlink.utils.time import format_msk_datetime
 
 LINK = "https://altlink.example/sub/browser-test-123456789012345678901234567890"
 env = Environment(loader=FileSystemLoader(ROOT / "src/altlink/presentation/web/templates"), autoescape=select_autoescape())
+env.filters["rub"] = lambda value: f"{value:g}"
+env.filters["msk_datetime"] = format_msk_datetime
 
 
 async def preview(request):
@@ -44,8 +47,35 @@ async def preview(request):
         current_downloads=client_downloads_for_platform(platform), subscription_url=LINK,
         happ_import_url=f"happ://add/{LINK}", incy_import_url=f"incy://import/{LINK}",
         support_url="https://t.me/altlink_support",
+        statistics={"total_traffic_bytes": 123456789012, "whitelist_traffic_bytes": 3456789012,
+                    "devices": 3, "balance_rub": 507.18, "billing_label": "Следующее списание", "billing_at": None},
         qr_data_uri="data:image/png;base64," + base64.b64encode(render_qr_png(LINK)).decode(),
     ))
+
+
+async def login_preview(request):
+    return HTMLResponse(env.get_template("portal_login.html").render(
+        title="Вход", asset_version="preview", telegram_login_enabled=True, dev_login_enabled=False,
+        telegram_login_url="https://t.me/Altlinkbot?start=login_test", auto_login_pending=request.query_params.get("auto") == "1",
+        telegram_login_status_url="/preview/login/status?outcome=" + request.query_params.get("outcome", "pending"),
+        telegram_login_qr_data_url="data:image/png;base64," + base64.b64encode(render_qr_png(LINK)).decode(),
+    ))
+
+
+async def login_status_preview(request):
+    await asyncio.sleep(0.8)
+    outcome = request.query_params.get("outcome", "pending")
+    return JSONResponse({"status": outcome, "redirect_url": "/portal" if outcome == "approved" else None})
+
+
+async def webapp_auth_preview(request):
+    body = await request.json()
+    await asyncio.sleep(0.8)
+    return JSONResponse({"ok": body.get("init_data") == "valid-init"}, status_code=200 if body.get("init_data") == "valid-init" else 401)
+
+
+async def portal_preview(request):
+    return HTMLResponse("<html><body>Portal ready</body></html>")
 
 
 class CDP:
@@ -82,6 +112,7 @@ async def check_page(cdp, url, width, user_agent, platform, expected, theme):
     else:
         raise AssertionError(("Connect JS did not initialize", cdp.errors, await cdp.evaluate("({url: location.href, state: document.readyState, text: document.body?.innerText?.slice(0, 1000)})")))
     await cdp.evaluate(f"window.altlinkTheme.setPreference('{theme}')")
+    await asyncio.sleep(0.25)
     metrics = await cdp.evaluate("""(() => ({
       overflow: document.documentElement.scrollWidth > innerWidth,
       qr: !!document.querySelector('.subscription-connect-qr').offsetWidth,
@@ -121,6 +152,10 @@ async def check_page(cdp, url, width, user_agent, platform, expected, theme):
 async def main():
     app = Starlette(routes=[
         Route("/connect/preview", preview),
+        Route("/preview/login", login_preview),
+        Route("/preview/login/status", login_status_preview),
+        Route("/api/auth/telegram-webapp", webapp_auth_preview, methods=["POST"]),
+        Route("/portal", portal_preview),
         Mount("/static", StaticFiles(directory=ROOT / "src/altlink/presentation/web/static")),
         Mount("/media", StaticFiles(directory=ROOT / "media")),
     ])
@@ -153,7 +188,7 @@ async def main():
                     cdp = CDP(connection)
                     await cdp.call("Runtime.enable")
                     await cdp.call("Network.enable")
-                    await cdp.call("Network.setBlockedURLs", urls=["*fonts.googleapis.com*", "*fonts.gstatic.com*"])
+                    await cdp.call("Network.setBlockedURLs", urls=["*fonts.googleapis.com*", "*fonts.gstatic.com*", "*telegram.org/js/*"])
                     await cdp.call("Page.addScriptToEvaluateOnNewDocument", source="Object.defineProperty(window, 'localStorage', {get() { throw Error('storage denied'); }});")
                     cases = [
                         (360, "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36", "Linux armv8l", "android"),
@@ -166,12 +201,75 @@ async def main():
                         for theme in ("light", "dark"):
                             await check_page(cdp, url, *case, theme)
                             print(f"PASS {case[0]}px {case[3]} {theme}", flush=True)
+                    origin = url.removesuffix("/connect/preview")
+                    for width in (360, 390, 430, 1440):
+                        for theme in ("light", "dark"):
+                            await check_login(cdp, origin, width, theme)
+                            print(f"PASS login {width}px {theme}", flush=True)
+                    await check_auto_login(cdp, origin)
+                    print("PASS approved, expired, Mini App success/failure login flows", flush=True)
             finally:
                 process.terminate()
                 process.wait(timeout=10)
     finally:
         server.should_exit = True
         await serving
+
+
+async def check_login(cdp, origin, width, theme):
+    await cdp.call("Emulation.setDeviceMetricsOverride", width=width, height=880, deviceScaleFactor=1, mobile=width <= 768)
+    await cdp.call("Page.navigate", url=origin + "/preview/login")
+    await asyncio.sleep(0.5)
+    await cdp.evaluate(f"window.altlinkTheme.setPreference('{theme}')")
+    await asyncio.sleep(0.25)
+    metrics = await cdp.evaluate("""(() => ({
+      overflow: document.documentElement.scrollWidth > innerWidth,
+      qr: !!document.querySelector('.portal-login-qr-card').offsetWidth,
+      loader: !!document.querySelector('.portal-auth-loader').offsetWidth,
+      ctaBottom: document.querySelector('.portal-login-cta').getBoundingClientRect().bottom,
+      smallActions: [...document.querySelectorAll('.button')].some(e => e.offsetWidth && e.getBoundingClientRect().height < 44)
+    }))()""")
+    assert not metrics["overflow"] and not metrics["loader"] and not metrics["smallActions"], metrics
+    assert metrics["qr"] is (width > 768), metrics
+    assert metrics["ctaBottom"] < 880, metrics
+    if width == 390:
+        screenshot = await cdp.call("Page.captureScreenshot", format="png", captureBeyondViewport=True)
+        (ROOT / f"data/connect-preview/login-{theme}.png").write_bytes(base64.b64decode(screenshot["data"]))
+    if width <= 768:
+        await cdp.evaluate("document.querySelector('.portal-login-qr-toggle').click()")
+        assert await cdp.evaluate("!!document.querySelector('.portal-login-qr-card').offsetWidth")
+        await cdp.evaluate("document.querySelector('.portal-login-qr-toggle').click()")
+        assert not await cdp.evaluate("!!document.querySelector('.portal-login-qr-card').offsetWidth")
+
+
+async def check_auto_login(cdp, origin):
+    await cdp.call("Emulation.setDeviceMetricsOverride", width=390, height=880, deviceScaleFactor=1, mobile=True)
+    cases = [
+        ("?auto=1&outcome=approved", True),
+        ("?auto=1&outcome=expired", False),
+        ("#tgWebAppData=valid-init", True),
+        ("#tgWebAppData=invalid-init", False),
+    ]
+    for suffix, success in cases:
+        await cdp.call("Page.navigate", url=origin + "/preview/login" + suffix)
+        await asyncio.sleep(0.25)
+        assert await cdp.evaluate("!!document.querySelector('.portal-auth-loader')?.offsetWidth"), suffix
+        assert not await cdp.evaluate("!!document.querySelector('.center-shell')?.offsetWidth"), suffix
+        await asyncio.sleep(1.6)
+        if success:
+            assert await cdp.evaluate("location.pathname") == "/portal", suffix
+        else:
+            assert await cdp.evaluate("!!document.querySelector('.portal-login-cta').offsetWidth"), suffix
+            assert not await cdp.evaluate("!!document.querySelector('.portal-auth-loader').offsetWidth"), suffix
+    assert not cdp.errors, cdp.errors
+    await cdp.call("Emulation.setScriptExecutionDisabled", value=True)
+    try:
+        await cdp.call("Page.navigate", url=origin + "/preview/login?auto=1")
+        await asyncio.sleep(0.5)
+        assert await cdp.evaluate("!!document.querySelector('.portal-login-cta').offsetWidth")
+        assert not await cdp.evaluate("!!document.querySelector('.portal-auth-loader').offsetWidth")
+    finally:
+        await cdp.call("Emulation.setScriptExecutionDisabled", value=False)
 
 
 if __name__ == "__main__":

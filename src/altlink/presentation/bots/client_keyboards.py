@@ -112,14 +112,16 @@ def menu_actions(
     portal_url: str | None = None,
     show_quick_topup: bool = False,
     show_quick_plan: bool = False,
+    show_account_sections: bool = True,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     if show_quick_topup:
         builder.button(text="➕ Пополнить баланс", callback_data="client:topup_menu", style="success")
     elif show_quick_plan:
         builder.button(text="🧾 Выбрать тариф", callback_data="client:plan_menu", style="success")
-    builder.button(text="💳 Баланс", callback_data="client:balance", style="primary")
-    builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
+    if show_account_sections:
+        builder.button(text="💳 Баланс", callback_data="client:balance", style="primary")
+        builder.button(text="🧾 Подписка", callback_data="client:subscription", style="primary")
     if portal_url:
         builder.button(text="🌐 Личный кабинет", url=portal_url, style="success")
     if share_url:
@@ -130,7 +132,8 @@ def menu_actions(
     row_sizes = []
     if show_quick_topup or show_quick_plan:
         row_sizes.append(1)
-    row_sizes.append(2)
+    if show_account_sections:
+        row_sizes.append(2)
     second_row = int(bool(portal_url)) + int(bool(share_url))
     if second_row:
         row_sizes.append(second_row)

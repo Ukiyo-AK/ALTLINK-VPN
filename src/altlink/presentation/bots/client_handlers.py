@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import logging
 import secrets
+from contextlib import nullcontext
 from decimal import Decimal, InvalidOperation
 import re
 from urllib.parse import quote_plus, unquote, urlparse
@@ -820,7 +821,7 @@ def resolve_subscription_payload(bundle: dict | None) -> str | None:
 
 async def safe_get_subscription_bundle(hub, user_id: str) -> dict | None:
     try:
-        return await hub.accounts.get_subscription_bundle(user_id)
+        return await hub.accounts.get_subscription_bundle(user_id, include_remote_details=False)
     except Exception:
         logger.exception("Failed to load subscription bundle for user %s", user_id)
         return None
@@ -1320,8 +1321,9 @@ async def create_portal_autologin_url(hub, settings, user_id: str) -> str | None
     if portal_public_url(settings) is None:
         return None
     try:
-        attempt = await hub.portal_auth.create_login_attempt()
-        await hub.portal_auth.approve_login_attempt(attempt.token, user_id)
+        async with hub.session.begin_nested():
+            attempt = await hub.portal_auth.create_login_attempt()
+            await hub.portal_auth.approve_login_attempt(attempt.token, user_id)
     except Exception as exc:
         logger.warning("Failed to create portal autologin URL for user %s: %s", user_id, exc)
         return None
@@ -1373,7 +1375,7 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
         "🏠 Главное меню",
         "",
         f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
-        "Тариф пока не выбран. Нажмите «Подписка», затем «Выбрать тариф», чтобы активировать Start / Pro или запустить тест на 2 дня.",
+        "Тариф пока не выбран. Нажмите «Выбрать тариф» или начните с бесплатного теста на 2 дня.",
         "",
         "🚀 Личный кабинет открывается отдельной кнопкой ниже.",
     ]
@@ -1876,6 +1878,7 @@ async def show_home(target: Message | CallbackQuery, container: AppContainer, hu
         show_trial=show_trial,
         latest_subscription=latest_subscription,
         as_new_message=not isinstance(target, CallbackQuery),
+        hub=hub,
     )
 
 
@@ -1908,13 +1911,8 @@ async def show_profile(target: Message | CallbackQuery, container: AppContainer,
 async def show_subscription(target: Message | CallbackQuery, container: AppContainer, hub) -> None:
     user = await ensure_user(target.from_user, container, hub)
     await sync_visible_trial_state(hub, user.id)
-    await hub.billing.refresh_subscription_traffic(user.id)
-    bundle = await safe_get_subscription_bundle(hub, user.id)
-    if bundle is None:
-        subscription = await hub.accounts.get_current_subscription(user.id)
-        bundle = {"user": user, "subscription": subscription}
-    else:
-        subscription = bundle.get("subscription")
+    bundle = await hub.accounts.get_local_subscription_bundle(user.id)
+    subscription = bundle.get("subscription")
     latest_subscription = await hub.accounts.get_latest_subscription(user.id) if subscription is None else subscription
     body = subscription_text(
         bundle,
@@ -2104,6 +2102,7 @@ def build_home_markup(
     portal_url: str | None = None,
     show_quick_topup: bool = False,
     show_quick_plan: bool = False,
+    show_account_sections: bool = True,
 ):
     share_url = referral_share_vpn_url(settings, referral_code) if allow_share else None
     return menu_actions(
@@ -2112,6 +2111,7 @@ def build_home_markup(
         portal_url=portal_url,
         show_quick_topup=show_quick_topup,
         show_quick_plan=show_quick_plan,
+        show_account_sections=show_account_sections,
     ).as_markup()
 
 
@@ -2144,11 +2144,14 @@ async def send_home_card(
     show_trial: bool,
     latest_subscription=None,
     as_new_message: bool = False,
+    hub=None,
 ) -> None:
-    text = home_text(user, subscription, container.settings, latest_subscription=latest_subscription)
-    async with container.hub() as inner_hub:
+    async with (nullcontext(hub) if hub is not None else container.hub()) as inner_hub:
         portal_url = await create_portal_autologin_url(inner_hub, container.settings, user.id)
         quick_action = await resolve_home_quick_action(inner_hub, user, subscription)
+        if subscription is None and latest_subscription is None:
+            latest_subscription = await inner_hub.accounts.get_latest_subscription(user.id)
+    text = home_text(user, subscription, container.settings, latest_subscription=latest_subscription)
     show_quick_topup = quick_action == "topup"
     show_quick_plan = quick_action == "plan"
     primary_markup = build_home_markup(
@@ -2159,6 +2162,7 @@ async def send_home_card(
         portal_url=portal_url,
         show_quick_topup=show_quick_topup,
         show_quick_plan=show_quick_plan,
+        show_account_sections=subscription is not None or latest_subscription is not None,
     )
     fallback_markup = build_home_markup(
         settings=container.settings,
@@ -2168,6 +2172,7 @@ async def send_home_card(
         portal_url=portal_url,
         show_quick_topup=show_quick_topup,
         show_quick_plan=show_quick_plan,
+        show_account_sections=subscription is not None or latest_subscription is not None,
     )
     await send_card_with_optional_media(
         target,
@@ -3090,6 +3095,7 @@ async def onboarding_promo_prompt(callback: CallbackQuery, state: FSMContext, co
                 show_trial=show_trial,
                 latest_subscription=latest_subscription,
                 as_new_message=False,
+                hub=hub,
             )
             return
     await state.update_data(promo_source="onboarding")

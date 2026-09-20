@@ -9,8 +9,61 @@ import pytest
 
 from altlink.application.services.accounts import UserListFilters
 from altlink.application.services.base import ConflictError
-from altlink.domain.enums import BalanceTransactionType, PlanCode
+from altlink.domain.enums import BalanceTransactionType, PlanCode, SubscriptionStatus
 from altlink.infrastructure.db.models import TrafficSnapshot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout", [False, True])
+async def test_lightweight_bundle_does_not_fetch_nodes_or_keys(test_services, monkeypatch, timeout):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(telegram_id=11901, username=None, first_name="Test", last_name=None, language_code="ru")
+        await hub.billing.activate_trial(user.id)
+        nodes = AsyncMock(side_effect=AssertionError("Nodes not needed"))
+        keys = AsyncMock(side_effect=AssertionError("Keys not needed"))
+        monkeypatch.setattr(test_services.remnawave, "get_accessible_nodes", nodes)
+        monkeypatch.setattr(test_services.remnawave, "get_connection_keys", keys)
+        if timeout:
+            monkeypatch.setattr(test_services.remnawave, "get_subscription_info", AsyncMock(side_effect=TimeoutError))
+        bundle = await hub.accounts.get_subscription_bundle(user.id, include_remote_details=False)
+        expected = "https://remna.example/api/sub" if timeout else "https://sub.example"
+        assert bundle["subscription_url"] == f"{expected}/{user.remnawave_short_uuid}"
+        assert bundle["subscription_connect_url"].endswith(f"/connect/{user.remnawave_short_uuid}")
+        nodes.assert_not_awaited()
+        keys.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["trial", "paid", "expired"])
+async def test_connection_stats_are_local_and_keep_trial_separate_from_billing(test_services, monkeypatch, state):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(telegram_id=11902, username=None, first_name="Test", last_name=None, language_code="ru")
+        if state == "trial":
+            subscription = await hub.billing.activate_trial(user.id)
+        else:
+            subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=False)
+        if state == "expired":
+            subscription.status = SubscriptionStatus.BLOCKED
+        subscription.whitelist_traffic_used_bytes = 3 * 1024**3
+        user.hwid_device_count = 12
+        user.balance_rub = Decimal("507.18")
+        hub.session.add(TrafficSnapshot(user_id=user.id, subscription_id=subscription.id, server_id=None,
+            snapshot_date=date.today(), used_bytes=2 * 1024**3, lifetime_used_bytes=23 * 1024**3, source="test"))
+        remote = AsyncMock(side_effect=AssertionError("Stats must be local"))
+        monkeypatch.setattr(test_services.remnawave, "get_user", remote)
+        result = await hub.accounts.get_connection_statistics(user)
+        assert result["devices"] == 12
+        assert result["balance_rub"] == Decimal("507.18")
+        assert result["total_traffic_bytes"] == 23 * 1024**3
+        assert result["whitelist_traffic_bytes"] == 3 * 1024**3
+        if state == "trial":
+            assert result["billing_label"] == "Тест до"
+            assert result["billing_at"] == subscription.ends_at
+        elif state == "paid":
+            assert result["billing_at"] == subscription.next_billing_at
+        else:
+            assert result["billing_at"] is None
+        remote.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -50,6 +50,11 @@ async def test_connect_http_keeps_original_link_and_revokes_old_local_urls(test_
         assert f'value="https://altlink.online/sub/{token}"' in page.text
         assert 'name="referrer" content="no-referrer"' in page.text
         assert "private_account_name" not in page.text
+        assert "connection-statistics" in page.text
+        assert "Трафик всего" in page.text
+        assert "Белые списки" in page.text
+        assert "Устройства" in page.text
+        assert "Тест до" in page.text
         upstream.assert_not_awaited()
 
         mirrored = await client.get(f"/sub/{token}")
@@ -72,6 +77,33 @@ async def test_connect_http_keeps_original_link_and_revokes_old_local_urls(test_
         assert f"https://altlink.online/sub/{new_token}" in fresh_page.text
         assert token not in fresh_page.text
         assert (await client.get(f"/sub/{new_token}")).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approved", [False, True])
+async def test_login_only_starts_with_loader_for_approved_attempt(test_services, approved):
+    test_services.settings.client_bot_name = "Altlinkbot"
+    user_id, _ = await create_trial(test_services)
+    async with test_services.hub() as hub:
+        attempt = await hub.portal_auth.create_login_attempt()
+        token = attempt.token
+        if approved:
+            await hub.portal_auth.approve_login_attempt(token, user_id)
+    app = subscription_app(test_services)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="https://altlink.online") as client:
+        page = await client.get(f"/portal/login?token={token}")
+        assert page.status_code == 200
+        assert ('data-theme="light" class="portal-auth-loading"' in page.text) is approved
+        assert 'src="/static/portal_login.js?v=' in page.text
+        assert "no-store" in page.headers["cache-control"]
+        # The loading screen grants no access; the existing backend validation still does.
+        result = (await client.get("/portal/login/status")).json()
+        assert result["status"] == ("approved" if approved else "pending")
+        if approved:
+            assert result["redirect_url"] == "/portal"
+            replay = await client.get(f"/portal/login?token={token}")
+            assert replay.status_code == 303
+            assert replay.headers["location"] == "/portal"
 
 
 @pytest.mark.asyncio

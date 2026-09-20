@@ -67,6 +67,8 @@ from altlink.infrastructure.db.models import (
 from altlink.application.services.billing import DEFAULT_PROMO_CAMPAIGN_SETTINGS, PROMO_CAMPAIGN_SETTINGS_KEY
 from altlink.application.services.base import ConflictError, NotFoundError, ServiceError
 from altlink.application.services.monitoring import MonitoringService
+from altlink.application.services.dashboard import DASHBOARD_PERIODS, DEFAULT_DASHBOARD_PERIOD, MAX_ANALYTICS_SERVERS
+from altlink.presentation.web.analytics_cache import AnalyticsCache, business_snapshot, infrastructure_snapshot
 from altlink.application.services.topups import MIN_TOPUP_AMOUNT_RUB
 from altlink.presentation.bots.admin_keyboards import support_request_actions
 from altlink.utils.latency import (
@@ -112,7 +114,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260919-connect-platforms"
+ASSET_VERSION = "20260919-portal-flow"
 SUBSCRIPTION_SHORT_UUID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 SUBSCRIPTION_CLIENT_TYPE_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 SUBSCRIPTION_REQUEST_HEADERS = {
@@ -1561,8 +1563,9 @@ async def subscription_connect_page(request: Request, short_uuid: str):
     settings = request.app.state.settings
     async with request.app.state.container.hub() as hub:
         user = await hub.accounts.get_user_by_remnawave_short_uuid(short_uuid)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Подписка не найдена.")
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Подписка не найдена.")
+        statistics = await hub.accounts.get_connection_statistics(user)
 
     subscription_url = local_subscription_proxy_url(settings, short_uuid)
     if not subscription_url:
@@ -1578,6 +1581,7 @@ async def subscription_connect_page(request: Request, short_uuid: str):
         request,
         "subscription_connect.html",
         title="Подключение ALTLINK",
+        statistics=statistics,
         subscription_url=subscription_url,
         subscription_preview=(
             f"{subscription_url[:36]}…{subscription_url[-10:]}"
@@ -1676,15 +1680,21 @@ async def dashboard(request: Request, period: str = "2w", refresh: bool = False)
 @router.get("/admin/analytics")
 async def analytics(request: Request, period: str = "2w"):
     container = request.app.state.container
-    selected_server_ids = request.query_params.getlist("server_id")
+    period = period if period in DASHBOARD_PERIODS else DEFAULT_DASHBOARD_PERIOD
+    selected_server_ids = list(dict.fromkeys(request.query_params.getlist("server_id")))[:MAX_ANALYTICS_SERVERS]
     async with container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
 
+    state = request.app.state
+    if not hasattr(state, "business_analytics_cache"):
+        state.business_analytics_cache = AnalyticsCache()
+        state.server_analytics_cache = AnalyticsCache()
+
     async def load_business_analytics() -> dict:
         async with container.hub() as hub:
-            return await hub.dashboard.overview(period=period)
+            return business_snapshot(await hub.dashboard.overview(period=period))
 
     async def load_server_analytics() -> tuple[dict, str | None]:
         async with container.hub() as hub:
@@ -1693,7 +1703,7 @@ async def analytics(request: Request, period: str = "2w"):
                     period=period,
                     selected_server_ids=selected_server_ids,
                 )
-                return result, None
+                return infrastructure_snapshot(result), None
             except SQLAlchemyError:
                 logger.exception("Failed to load server metric history; using current server snapshot.")
                 await hub.session.rollback()
@@ -1701,14 +1711,14 @@ async def analytics(request: Request, period: str = "2w"):
                     period=period,
                     selected_server_ids=selected_server_ids,
                 )
-                return result, (
+                return infrastructure_snapshot(result), (
                     "История серверов пока недоступна. Показан текущий срез; "
                     "проверьте применение миграций базы данных."
                 )
 
     overview, (server_analytics, analytics_warning) = await asyncio.gather(
-        load_business_analytics(),
-        load_server_analytics(),
+        state.business_analytics_cache.get(period, load_business_analytics),
+        state.server_analytics_cache.get((period, tuple(selected_server_ids)), load_server_analytics),
     )
     charts = {
         "business": overview["charts"],
@@ -2933,15 +2943,18 @@ async def portal_login_page(request: Request):
     attempt = None
     deep_link = None
     qr_data_url = None
+    auto_login_pending = False
     if login_enabled:
         async with request.app.state.container.hub() as hub:
             attempt = await ensure_portal_login_attempt(request, hub)
+            auto_login_pending = hub.portal_auth.login_attempt_status(attempt) == "approved"
         deep_link = portal_bot_login_url(settings, attempt.token) if attempt is not None else None
         qr_data_url = portal_login_qr_data_url(deep_link)
     return render(
         request,
         "portal_login.html",
         title="Вход в кабинет",
+        auto_login_pending=auto_login_pending,
         telegram_login_bot=settings.client_bot_name.lstrip("@"),
         telegram_login_enabled=login_enabled,
         telegram_login_issue=login_issue,
