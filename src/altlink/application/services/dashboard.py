@@ -31,6 +31,7 @@ from altlink.infrastructure.db.models import (
     TrafficSnapshot,
     TopupRequest,
     User,
+    UserStartServer,
 )
 from altlink.utils.time import ensure_utc, to_moscow, utc_now
 
@@ -101,7 +102,12 @@ class DashboardService(BaseService):
                     await self.session.scalars(
                         select(User)
                         .where(
-                            User.assigned_server_id.in_(unavailable_start_ids),
+                            or_(
+                                User.assigned_server_id.in_(unavailable_start_ids),
+                                User.id.in_(select(UserStartServer.user_id).where(
+                                    UserStartServer.server_id.in_(unavailable_start_ids)
+                                )),
+                            ),
                             User.status.in_([UserStatus.ACTIVE, UserStatus.GRACE]),
                         )
                         .options(
@@ -112,10 +118,18 @@ class DashboardService(BaseService):
                     )
                 ).all()
             )
+            selections = {}
+            for assignment in (await self.session.scalars(select(UserStartServer))).all():
+                selections.setdefault(assignment.user_id, set()).add(assignment.server_id)
+            server_map = {server.id: server for server in servers}
             for user in candidates:
                 subscription = self._resolve_current_subscription(user.subscriptions)
                 if subscription and subscription.plan and is_metered_plan_code(subscription.plan.code):
-                    affected_users.append({"user": user, "server": user.assigned_server})
+                    selected = [server_map[server_id] for server_id in sorted(
+                        selections.get(user.id, {user.assigned_server_id}) - {None}
+                    ) if server_id in server_map and server_map[server_id].server_type == ServerType.TEN_GBIT]
+                    if selected and not any(self._server_is_operational(server) for server in selected):
+                        affected_users.append({"user": user, "server": selected[0]})
 
         payments_count, payments_total = (
             await self.session.execute(

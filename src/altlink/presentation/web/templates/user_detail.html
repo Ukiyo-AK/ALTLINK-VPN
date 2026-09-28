@@ -10,7 +10,7 @@
       <div><dt>Username</dt><dd>{{ user.username or '—' }}</dd></div>
       <div><dt>Статус</dt><dd>{{ user.status }}</dd></div>
       <div><dt>Баланс</dt><dd>{{ user.balance_rub|rub }} ₽</dd></div>
-      <div><dt>Назначенный 10 Гбит сервер</dt><dd>{{ user.assigned_server.name if user.assigned_server else '—' }}</dd></div>
+      <div><dt>Назначенные серверы Start</dt><dd>{{ assigned_start_servers|map(attribute='name')|join(', ') or '—' }}</dd></div>
       <div><dt>Тариф</dt><dd>{{ subscription.plan.name if subscription else '—' }}</dd></div>
       <div><dt>Следующее списание</dt><dd>{{ subscription.next_billing_at|msk_datetime if subscription else '—' }}</dd></div>
       <div><dt>Автопродление</dt><dd>{{ 'включено' if subscription and subscription.auto_renew else 'отключено' }}</dd></div>
@@ -100,35 +100,33 @@
       <button type="submit" class="button ghost">Сохранить лимит</button>
     </form>
     {% if is_start_subscription %}
-    <div class="server-assignment-current {{ 'is-available' if assigned_start_server_usable else 'is-unavailable' }}">
+    {% for server in assigned_start_servers %}
+    <div class="server-assignment-current {{ 'is-available' if server.id in available_start_server_ids else 'is-unavailable' }}">
       <div>
-        <span class="muted">Текущий Start-сервер</span>
-        <strong>{{ card.user.assigned_server.name if card.user.assigned_server else 'Не назначен' }}</strong>
+        <span class="muted">Назначенный Start-сервер</span>
+        <strong>{{ server.name }}</strong>
       </div>
-      <span class="badge {{ 'highlight' if assigned_start_server_usable else 'warning' }}">
-        {{ 'Доступен' if assigned_start_server_usable else 'Требуется ручной выбор' }}
+      <span class="badge {{ 'highlight' if server.id in available_start_server_ids else 'warning' }}">
+        {{ 'Доступен' if server.id in available_start_server_ids else 'Недоступен' }}
       </span>
     </div>
+    {% endfor %}
     <form
       method="post"
       action="/admin/users/{{ user.id }}/start-server"
       class="stack"
-      onsubmit="return confirm('Переназначить пользователю Start-сервер? Доступ в Remnawave будет обновлён сразу.');"
+      onsubmit="return confirm('Сохранить выбранные Start-серверы? Доступ в Remnawave будет обновлён сразу.');"
     >
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <label>
-        <span>Назначить Start-сервер</span>
-        <select name="server_id" required {% if not available_start_servers %}disabled{% endif %}>
-          {% for server in available_start_servers %}
-          <option value="{{ server.id }}" {% if user.assigned_server_id == server.id %}selected{% endif %}>
-            {{ server.name }}{% if server.country_code %} · {{ server.country_code|upper }}{% endif %} · назначено {{ server.current_clients }} · онлайн {{ server.users_online }}
-          </option>
-          {% endfor %}
-        </select>
+      {% for server in selectable_start_servers %}
+      <label class="inline-form">
+        <input type="checkbox" name="server_id" value="{{ server.id }}" {% if server.id in selected_start_server_ids %}checked{% endif %}>
+        <span>{{ server.name }}{% if server.country_code %} · {{ server.country_code|upper }}{% endif %} · назначено {{ server.current_clients }} · онлайн {{ server.users_online }}{% if server.id not in available_start_server_ids %} · недоступен{% endif %}</span>
       </label>
-      {% if available_start_servers %}
-      <p class="muted">В списке только рабочие Start-серверы. Смена применяется в Remnawave сразу.</p>
-      <button type="submit" class="button ghost">Назначить выбранный сервер</button>
+      {% endfor %}
+      {% if selectable_start_servers %}
+      <p class="muted">Выберите один или несколько серверов. Недоступные ранее назначенные серверы можно оставить или снять. Изменения применяются сразу.</p>
+      <button type="submit" class="button ghost">Сохранить серверы</button>
       {% else %}
       <p class="muted">Сейчас нет доступных серверов Start.</p>
       {% endif %}

@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 
 import httpx
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -26,6 +26,7 @@ from altlink.infrastructure.db.models import (
     TrafficSnapshot,
     User,
     UserServerAccess,
+    UserStartServer,
 )
 from altlink.utils.time import ensure_utc, utc_now
 
@@ -242,22 +243,29 @@ class CatalogService(BaseService):
                     await self.session.scalars(
                         select(User)
                         .where(
-                            User.assigned_server_id.in_(unusable_start_server_ids),
+                            or_(
+                                User.assigned_server_id.in_(unusable_start_server_ids),
+                                User.id.in_(select(UserStartServer.user_id).where(
+                                    UserStartServer.server_id.in_(unusable_start_server_ids)
+                                )),
+                            ),
                             User.status.in_([UserStatus.ACTIVE, UserStatus.GRACE]),
                         )
                         .options(selectinload(User.subscriptions).joinedload(Subscription.plan))
                     )
                 ).all()
             )
+            selections = {}
+            for assignment in (await self.session.scalars(select(UserStartServer))).all():
+                selections.setdefault(assignment.user_id, set()).add(assignment.server_id)
             for user in candidates:
                 subscription = self._resolve_current_subscription(user.subscriptions)
                 if subscription and subscription.plan and is_metered_plan_code(subscription.plan.code):
-                    affected_start_users.append(
-                        {
-                            "user_id": user.id,
-                            "telegram_id": user.telegram_id,
-                            "server_id": user.assigned_server_id,
-                        }
+                    affected_start_users.extend(
+                        {"user_id": user.id, "telegram_id": user.telegram_id, "server_id": server_id}
+                        for server_id in sorted(
+                            selections.get(user.id, {user.assigned_server_id}) & unusable_start_server_ids
+                        )
                     )
 
         if changed_servers:
@@ -354,6 +362,7 @@ class CatalogService(BaseService):
             update(OnlineSessionCache).where(OnlineSessionCache.server_id == server_id).values(server_id=None)
         )
         await self.session.execute(delete(UserServerAccess).where(UserServerAccess.server_id == server_id))
+        await self.session.execute(delete(UserStartServer).where(UserStartServer.server_id == server_id))
         await self.session.execute(delete(ServerInbound).where(ServerInbound.server_id == server_id))
         await self.session.execute(delete(Server).where(Server.id == server_id))
         await self.session.flush()
@@ -363,18 +372,41 @@ class CatalogService(BaseService):
         user = await self.session.get(User, user_id, options=[joinedload(User.assigned_server)])
         if user is None:
             raise NotFoundError("Пользователь не найден.")
-        if is_metered_plan_code(plan_code) and user.assigned_server_id:
-            assigned_server = await self.session.get(
-                Server,
-                user.assigned_server_id,
-                options=[selectinload(Server.inbounds)],
-            )
-            if assigned_server is not None and assigned_server.server_type == ServerType.TEN_GBIT:
-                return assigned_server
+        if is_metered_plan_code(plan_code):
+            selected = await self.get_assigned_start_servers(user_id)
+            if selected:
+                server = next((item for item in selected if item.id == user.assigned_server_id), selected[0])
+                existing_ids = set((await self.session.scalars(
+                    select(UserStartServer.server_id).where(UserStartServer.user_id == user_id)
+                )).all())
+                self.session.add_all(
+                    UserStartServer(user_id=user_id, server_id=item.id)
+                    for item in selected if item.id not in existing_ids
+                )
+                user.assigned_server_id = server.id
+                await self.session.flush()
+                return server
         server = await self._pick_preferred_server_for_plan(plan_code)
         user.assigned_server_id = server.id
+        if is_metered_plan_code(plan_code):
+            self.session.add(UserStartServer(user_id=user.id, server_id=server.id))
         await self.session.flush()
         return server
+
+    async def get_assigned_start_servers(self, user_id: str) -> list[Server]:
+        selected = list((await self.session.scalars(
+            select(Server).join(UserStartServer, UserStartServer.server_id == Server.id)
+            .where(UserStartServer.user_id == user_id, Server.server_type == ServerType.TEN_GBIT)
+            .options(selectinload(Server.inbounds)).order_by(Server.name, Server.id)
+        )).all())
+        if not selected:
+            # Keep legacy assignments usable before a user has an explicit selection.
+            selected = list((await self.session.scalars(
+                select(Server).join(User, User.assigned_server_id == Server.id)
+                .where(User.id == user_id, Server.server_type == ServerType.TEN_GBIT)
+                .options(selectinload(Server.inbounds))
+            )).all())
+        return selected
 
     async def list_available_start_servers(self) -> list[Server]:
         servers = await self.list_servers()
@@ -393,7 +425,22 @@ class CatalogService(BaseService):
         *,
         admin_id: str | None = None,
     ) -> Server:
-        user = await self.session.get(User, user_id, options=[joinedload(User.assigned_server)])
+        server = await self.get_server(server_id)
+        if not self._server_is_usable(server):
+            raise ConflictError("Выбранный Start-сервер сейчас недоступен.")
+        return (await self.set_start_servers(user_id, [server_id], admin_id=admin_id))[0]
+
+    async def set_start_servers(
+        self,
+        user_id: str,
+        server_ids: Sequence[str],
+        *,
+        admin_id: str | None = None,
+        toggle: bool = False,
+    ) -> list[Server]:
+        user = await self.session.scalar(
+            select(User).where(User.id == user_id).with_for_update().execution_options(populate_existing=True)
+        )
         if user is None:
             raise NotFoundError("Пользователь не найден.")
         subscription = await self.session.scalar(
@@ -420,53 +467,71 @@ class CatalogService(BaseService):
         )
         if ensure_utc(expire_at) <= utc_now():
             raise ConflictError("Подписка Start уже истекла. Сначала восстановите доступ пользователя.")
+        if self.remnawave is not None and not user.remnawave_user_uuid:
+            raise ConflictError("Сначала синхронизируйте пользователя с Remnawave, затем выберите серверы.")
 
-        server = await self.get_server(server_id)
-        if server.server_type != ServerType.TEN_GBIT:
-            raise ConflictError("Можно выбрать только сервер типа Start.")
-        if not self._server_is_usable(server):
-            raise ConflictError("Выбранный Start-сервер сейчас недоступен.")
-
+        previous_servers = await self.get_assigned_start_servers(user_id)
+        previous_ids = {server.id for server in previous_servers}
+        selected_ids = set(server_ids)
+        if toggle:
+            selected_ids = previous_ids.symmetric_difference(selected_ids)
+        if not selected_ids:
+            raise ConflictError("Оставьте хотя бы один Start-сервер.")
+        selected_servers = []
+        for server_id in sorted(selected_ids):
+            server = await self.get_server(server_id)
+            if server.server_type != ServerType.TEN_GBIT:
+                raise ConflictError("Можно выбрать только сервер типа Start.")
+            if not self._server_is_usable(server) and server_id not in previous_ids:
+                raise ConflictError("Выбранный Start-сервер сейчас недоступен.")
+            selected_servers.append(server)
         previous_server_id = user.assigned_server_id
-        user.assigned_server_id = server.id
+        new_primary_id = previous_server_id if previous_server_id in selected_ids else selected_servers[0].id
         try:
-            await self.rebuild_user_access_matrix()
-            await self.session.flush()
-            if self.remnawave is not None and user.remnawave_user_uuid:
-                remote_user = await self.remnawave.get_user(user.remnawave_user_uuid)
-                remote_squad_ids = {
-                    squad.uuid for squad in (remote_user.activeInternalSquads or [])
-                }
-                if (
-                    not server.remnawave_internal_squad_uuid
-                    or server.remnawave_internal_squad_uuid not in remote_squad_ids
-                ):
-                    raise ConflictError("Remnawave не подтвердила назначение выбранного Start-сервера.")
+            async with self.session.begin_nested():
+                await self.session.execute(delete(UserStartServer).where(UserStartServer.user_id == user_id))
+                self.session.add_all(UserStartServer(user_id=user_id, server_id=server_id) for server_id in selected_ids)
+                user.assigned_server_id = new_primary_id
+                await self.rebuild_user_access_matrix(user_id=user_id)
+                await self.session.flush()
+                if self.remnawave is not None and user.remnawave_user_uuid:
+                    remote_user = await self.remnawave.get_user(user.remnawave_user_uuid)
+                    remote_squad_ids = {squad.uuid for squad in (remote_user.activeInternalSquads or [])}
+                    accesses = await self.get_user_servers(user_id)
+                    expected_squads = {access.server.remnawave_internal_squad_uuid for access in accesses}
+                    if None in expected_squads or remote_squad_ids != expected_squads:
+                        raise ConflictError("Remnawave не подтвердила назначение выбранных Start-серверов.")
         except Exception as exc:
-            user.assigned_server_id = previous_server_id
-            await self.rebuild_user_access_matrix()
-            await self.session.flush()
+            await self.session.refresh(user)
+            try:
+                async with self.session.begin_nested():
+                    await self.rebuild_user_access_matrix(user_id=user_id)
+                    await self.session.flush()
+            except Exception:
+                logger.exception("Could not restore Start server access for user %s", user_id)
             if isinstance(exc, ServiceError):
                 raise
             if isinstance(exc, httpx.HTTPError):
-                raise ConflictError("Не удалось подтвердить назначение сервера в Remnawave.") from exc
+                raise ConflictError("Не удалось подтвердить назначение серверов в Remnawave.") from exc
             raise
 
         await self.log_event(
             level=SystemEventLevel.INFO,
             event_type="start_server_manually_reassigned",
-            message="Администратор вручную переназначил Start-сервер пользователя.",
+            message="Администратор изменил набор Start-серверов пользователя.",
             payload={
                 "user_id": user.id,
                 "telegram_id": user.telegram_id,
                 "from_server_id": previous_server_id,
-                "to_server_id": server.id,
-                "to_server_name": server.name,
+                "to_server_id": new_primary_id,
+                "to_server_name": next(server.name for server in selected_servers if server.id == new_primary_id),
+                "from_server_ids": sorted(previous_ids),
+                "to_server_ids": sorted(selected_ids),
             },
             actor_admin_id=admin_id,
             subject_user_id=user.id,
         )
-        return server
+        return selected_servers
 
     async def get_user_servers(self, user_id: str, *, active_only: bool = True) -> list[UserServerAccess]:
         query = (
@@ -483,22 +548,30 @@ class CatalogService(BaseService):
             ).all()
         )
 
-    async def rebuild_user_access_matrix(self) -> None:
+    async def rebuild_user_access_matrix(self, *, user_id: str | None = None, sync_remote: bool = True) -> None:
         now = utc_now()
+        users_query = select(User).options(
+            joinedload(User.assigned_server),
+            selectinload(User.subscriptions).joinedload(Subscription.plan),
+        )
+        accesses_query = select(UserServerAccess)
+        if user_id is not None:
+            users_query = users_query.where(User.id == user_id).execution_options(populate_existing=True)
+            accesses_query = accesses_query.where(UserServerAccess.user_id == user_id)
         users = list(
             (
-                await self.session.scalars(
-                    select(User)
-                    .options(
-                        joinedload(User.assigned_server),
-                        selectinload(User.subscriptions).joinedload(Subscription.plan),
-                    )
-                )
+                await self.session.scalars(users_query)
             ).all()
         )
         servers = list((await self.session.scalars(select(Server).options(selectinload(Server.inbounds)))).all())
-        accesses = list((await self.session.scalars(select(UserServerAccess))).all())
+        accesses = list((await self.session.scalars(accesses_query)).all())
         access_map = {(access.user_id, access.server_id): access for access in accesses}
+        selection_query = select(UserStartServer)
+        if user_id is not None:
+            selection_query = selection_query.where(UserStartServer.user_id == user_id)
+        selections: dict[str, set[str]] = {}
+        for selection in (await self.session.scalars(selection_query)).all():
+            selections.setdefault(selection.user_id, set()).add(selection.server_id)
 
         active_statuses = {UserStatus.ACTIVE, UserStatus.TRIAL, UserStatus.GRACE}
         user_server_targets: dict[str, set[str]] = {}
@@ -507,7 +580,9 @@ class CatalogService(BaseService):
             subscription = self._resolve_current_subscription(user.subscriptions)
             desired_server_ids = set()
             if user.status in active_statuses and subscription is not None:
-                desired_server_ids = await self._resolve_server_targets(user, subscription, servers)
+                desired_server_ids = await self._resolve_server_targets(
+                    user, subscription, servers, selected_start_ids=selections.get(user.id)
+                )
             user_server_targets[user.id] = desired_server_ids
 
             for server in servers:
@@ -538,6 +613,16 @@ class CatalogService(BaseService):
                     if access.granted_at is None:
                         access.granted_at = now
 
+        client_counts = {}
+        if user_id is not None:
+            # Include other users in server totals without loading or syncing their accounts.
+            await self.session.flush()
+            client_counts = dict((await self.session.execute(
+                select(UserServerAccess.server_id, func.count(UserServerAccess.id))
+                .where(UserServerAccess.status.in_([AccessStatus.ACTIVE, AccessStatus.GRACE]))
+                .group_by(UserServerAccess.server_id)
+            )).all())
+
         for server in servers:
             current_clients = len(
                 [
@@ -546,6 +631,8 @@ class CatalogService(BaseService):
                     if access.server_id == server.id and access.status in {AccessStatus.ACTIVE, AccessStatus.GRACE}
                 ]
             )
+            if user_id is not None:
+                current_clients = client_counts.get(server.id, 0)
             server.current_clients = current_clients
             online_clients = max(int(server.users_online or 0), 0)
             if server.max_clients > 0:
@@ -560,7 +647,8 @@ class CatalogService(BaseService):
                     inbound.client_count = current_clients
                     inbound.max_clients = server.max_clients
 
-        await self._sync_user_squads(users, user_server_targets)
+        if sync_remote:
+            await self._sync_user_squads(users, user_server_targets)
 
     async def sync_user_target_squads(self, user_id: str) -> None:
         if self.remnawave is None:
@@ -585,6 +673,8 @@ class CatalogService(BaseService):
         user: User,
         subscription: Subscription,
         servers: Sequence[Server],
+        *,
+        selected_start_ids: set[str] | None = None,
     ) -> set[str]:
         available_servers = [server for server in servers if self._server_is_usable(server)]
         if subscription.plan.code == PlanCode.TRIAL:
@@ -618,14 +708,11 @@ class CatalogService(BaseService):
                 if whitelist_allowed
                 else set()
             )
-            assigned_server = next((server for server in servers if server.id == user.assigned_server_id), None)
-            if (
-                assigned_server is None
-                or assigned_server.server_type != ServerType.TEN_GBIT
-                or not self._server_is_usable(assigned_server)
-            ):
-                return desired_server_ids
-            desired_server_ids.add(assigned_server.id)
+            selected_ids = selected_start_ids if selected_start_ids is not None else {user.assigned_server_id}
+            desired_server_ids.update(
+                server.id for server in available_servers
+                if server.server_type == ServerType.TEN_GBIT and server.id in selected_ids
+            )
             return desired_server_ids
 
         return set()

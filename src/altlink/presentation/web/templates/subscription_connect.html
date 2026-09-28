@@ -35,17 +35,6 @@
       </div>
     </section>
 
-    <section class="connection-statistics" aria-label="Ваша подписка">
-      <dl>
-        <div><dt>Трафик всего</dt><dd>{{ '%.2f'|format(statistics.total_traffic_bytes / 1024**3) }} <small>ГБ</small></dd></div>
-        <div><dt>Белые списки <small>за период</small></dt><dd>{{ '%.2f'|format(statistics.whitelist_traffic_bytes / 1024**3) }} <small>ГБ</small></dd></div>
-        <div><dt>Устройства</dt><dd>{{ statistics.devices }}</dd></div>
-        <div><dt>Баланс</dt><dd>{{ statistics.balance_rub|rub }} <small>₽</small></dd></div>
-        <div class="connection-statistics-date"><dt>{{ statistics.billing_label }}</dt><dd>{{ statistics.billing_at|msk_datetime if statistics.billing_at else 'Не запланировано' }}</dd></div>
-      </dl>
-      <p>По последней синхронизации. Учитываются устройства, распознанные приложениями.</p>
-    </section>
-
     <form class="subscription-platform-bar" method="get" data-platform-form>
       <div class="subscription-platform-caption">
         <label for="subscription-platform">Ваше устройство</label>
@@ -60,55 +49,39 @@
       <button class="button ghost" type="submit" data-platform-submit>Выбрать</button>
     </form>
 
+    {% set client_order = ['incy', 'happ'] if recommended_app == 'incy' else ['happ', 'incy'] %}
     <div class="subscription-client-picker" role="group" aria-label="Приложение для подключения" data-client-picker hidden>
-      <button type="button" class="is-selected" data-client-choice="happ" aria-pressed="true" aria-controls="connect-happ">Happ</button>
-      <button type="button" data-client-choice="incy" aria-pressed="false" aria-controls="connect-incy">INCY</button>
+      {% for app in client_order %}
+      <button type="button" class="{{ 'is-selected' if app == recommended_app else '' }}" data-client-choice="{{ app }}" aria-pressed="{{ 'true' if app == recommended_app else 'false' }}" aria-controls="connect-{{ app }}">{{ 'INCY' if app == 'incy' else 'Happ' }}</button>
+      {% endfor %}
     </div>
 
     <section class="subscription-client-grid" aria-label="Приложения для подключения">
-      <article class="subscription-client-card is-primary is-selected" id="connect-happ" data-client-card="happ">
+      {% for app in client_order %}
+      {% set app_name = 'INCY' if app == 'incy' else 'Happ' %}
+      {% set download = current_downloads[app] %}
+      <article class="subscription-client-card{{ ' is-primary is-selected' if app == recommended_app else '' }}" id="connect-{{ app }}" data-client-card="{{ app }}">
         <div class="subscription-client-card__head">
           <span class="subscription-client-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none"><path d="M12 3 4.8 6.1v5.2c0 4.6 2.9 8.2 7.2 9.7 4.3-1.5 7.2-5.1 7.2-9.7V6.1L12 3Z" stroke="currentColor" stroke-width="1.8"/><path d="m8.7 12.1 2.1 2.1 4.7-4.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </span>
-          <div><h2>Happ</h2><span class="badge">Рекомендуем</span></div>
+          <div><h2>{{ app_name }}</h2><span class="{{ 'badge' if app == recommended_app else 'muted' }}" data-client-recommendation>{{ 'Рекомендуем' if app == recommended_app else 'Альтернативный клиент' }}</span></div>
         </div>
         <p class="subscription-client-description">Универсальный клиент для телефона и компьютера.</p>
-        <span class="subscription-client-store muted" data-download-store>{{ current_downloads.happ.store }}</span>
+        <span class="subscription-client-store muted" data-download-store>{{ download.store }}</span>
         <div class="subscription-client-actions">
-          <a class="button ghost full" href="{{ current_downloads.happ.url }}" data-app-download target="_blank" rel="noopener noreferrer">
+          <a class="button ghost full" href="{{ download.url }}" data-app-download target="_blank" rel="noopener noreferrer">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg>
-            <span>1. Скачать Happ</span>
+            <span>1. Скачать {{ app_name }}</span>
           </a>
-          <a class="button full" href="{{ happ_import_url }}" data-app-import>
+          <a class="button full" href="{{ incy_import_url if app == 'incy' else happ_import_url }}" data-app-import>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            <span>2. Добавить в Happ</span>
+            <span>2. Добавить в {{ app_name }}</span>
           </a>
         </div>
-        <p class="subscription-client-note" data-download-note {% if not current_downloads.happ.note %}hidden{% endif %}>{{ current_downloads.happ.note }}</p>
+        <p class="subscription-client-note" data-download-note {% if not download.note %}hidden{% endif %}>{{ download.note }}</p>
       </article>
-
-      <article class="subscription-client-card" id="connect-incy" data-client-card="incy">
-        <div class="subscription-client-card__head">
-          <span class="subscription-client-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none"><path d="M7 4.5h10A2.5 2.5 0 0 1 19.5 7v10a2.5 2.5 0 0 1-2.5 2.5H7A2.5 2.5 0 0 1 4.5 17V7A2.5 2.5 0 0 1 7 4.5Z" stroke="currentColor" stroke-width="1.8"/><path d="M9 8.5v7M15 8.5v7M9 12h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-          </span>
-          <div><h2>INCY</h2><span class="muted">Альтернативный клиент</span></div>
-        </div>
-        <p class="subscription-client-description">Кроссплатформенное приложение с импортом подписки по ссылке.</p>
-        <span class="subscription-client-store muted" data-download-store>{{ current_downloads.incy.store }}</span>
-        <div class="subscription-client-actions">
-          <a class="button ghost full" href="{{ current_downloads.incy.url }}" data-app-download target="_blank" rel="noopener noreferrer">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg>
-            <span>1. Скачать INCY</span>
-          </a>
-          <a class="button full" href="{{ incy_import_url }}" data-app-import>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            <span>2. Добавить в INCY</span>
-          </a>
-        </div>
-        <p class="subscription-client-note" data-download-note {% if not current_downloads.incy.note %}hidden{% endif %}>{{ current_downloads.incy.note }}</p>
-      </article>
+      {% endfor %}
     </section>
 
     <section class="subscription-link-card" data-copy-root data-copy-text="{{ subscription_url }}">
@@ -130,12 +103,18 @@
     </section>
 
     <footer class="subscription-connect-footer">
+      {% if client_bot_url %}
+      <a class="button ghost compact" href="{{ client_bot_url }}" target="_blank" rel="noopener noreferrer" data-client-bot>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 3-6 18-4-8-8-4 18-6ZM11 13l5-5"/></svg>
+        <span>Открыть бота</span>
+      </a>
+      {% endif %}
       <span>Не получилось подключиться?</span>
       <a href="{{ support_url }}" target="_blank" rel="noopener noreferrer">Написать в поддержку</a>
     </footer>
   </main>
 
-  <script type="application/json" id="subscription-connect-config">{{ {'platforms': client_platforms, 'downloads': client_downloads}|tojson }}</script>
+  <script type="application/json" id="subscription-connect-config">{{ {'platforms': client_platforms, 'downloads': client_downloads, 'recommendations': client_recommendations}|tojson }}</script>
   <script src="/static/subscription_connect.js?v={{ asset_version }}" defer></script>
 </body>
 </html>

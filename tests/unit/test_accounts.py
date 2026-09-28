@@ -35,7 +35,7 @@ async def test_lightweight_bundle_does_not_fetch_nodes_or_keys(test_services, mo
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["trial", "paid", "expired"])
-async def test_connection_stats_are_local_and_keep_trial_separate_from_billing(test_services, monkeypatch, state):
+async def test_total_traffic_is_local_and_available_after_expiry(test_services, monkeypatch, state):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(telegram_id=11902, username=None, first_name="Test", last_name=None, language_code="ru")
         if state == "trial":
@@ -51,18 +51,7 @@ async def test_connection_stats_are_local_and_keep_trial_separate_from_billing(t
             snapshot_date=date.today(), used_bytes=2 * 1024**3, lifetime_used_bytes=23 * 1024**3, source="test"))
         remote = AsyncMock(side_effect=AssertionError("Stats must be local"))
         monkeypatch.setattr(test_services.remnawave, "get_user", remote)
-        result = await hub.accounts.get_connection_statistics(user)
-        assert result["devices"] == 12
-        assert result["balance_rub"] == Decimal("507.18")
-        assert result["total_traffic_bytes"] == 23 * 1024**3
-        assert result["whitelist_traffic_bytes"] == 3 * 1024**3
-        if state == "trial":
-            assert result["billing_label"] == "Тест до"
-            assert result["billing_at"] == subscription.ends_at
-        elif state == "paid":
-            assert result["billing_at"] == subscription.next_billing_at
-        else:
-            assert result["billing_at"] is None
+        assert await hub.accounts.get_user_total_traffic_bytes(user.id) == 23 * 1024**3
         remote.assert_not_awaited()
 
 
@@ -362,7 +351,7 @@ async def test_is_trial_available_without_trial_period_returns_true(test_service
 
 
 @pytest.mark.asyncio
-async def test_can_offer_trial_requires_clean_account_history(test_services):
+async def test_can_offer_trial_survives_topup_until_paid_plan_is_activated(test_services):
     async with test_services.hub() as hub:
         user = await hub.accounts.get_or_create_user(
             telegram_id=11005,
@@ -376,6 +365,8 @@ async def test_can_offer_trial_requires_clean_account_history(test_services):
 
         await hub.topups.create_request(user.id, Decimal("100"), auto_complete=True)
 
+        assert await hub.accounts.can_offer_trial(user.id) is True
+        await hub.billing.activate_paid_plan(user.id, PlanCode.SINGLE_10GBIT)
         assert await hub.accounts.can_offer_trial(user.id) is False
 
 

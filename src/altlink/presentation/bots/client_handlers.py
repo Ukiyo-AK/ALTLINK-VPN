@@ -942,7 +942,7 @@ def subscription_link_caption(payload: str) -> str:
         "🔗 Ваша персональная ссылка VPN\n\n"
         f"<code>{escaped_payload}</code>\n\n"
         "Откройте её в Happ или INCY либо отсканируйте QR-код.\n\n"
-        "Рекомендуемые приложения: <code>Happ</code> и <code>INCY</code>"
+        "Рекомендуем: Android и iPhone/iPad — <code>INCY</code>; остальные платформы — <code>Happ</code>."
     )
 
 
@@ -1012,11 +1012,12 @@ async def is_channel_member(telegram_id: int, container: AppContainer) -> bool:
     )
 
 
-async def answer_or_edit(message: Message | CallbackQuery, text: str, *, reply_markup=None, **kwargs):
+async def answer_or_edit(message: Message | CallbackQuery, text: str, *, reply_markup=None, answer_callback: bool = True, **kwargs):
     kwargs = {key: value for key, value in kwargs.items() if value is not None}
     if isinstance(message, CallbackQuery):
         if await try_edit_tracked_client_card(message, text, reply_markup=reply_markup, media_file=None, **kwargs):
-            await message.answer()
+            if answer_callback:
+                await message.answer()
             return message.message
         try:
             result = await message.message.edit_text(text, reply_markup=reply_markup, **kwargs)
@@ -1024,7 +1025,8 @@ async def answer_or_edit(message: Message | CallbackQuery, text: str, *, reply_m
         except TelegramBadRequest:
             result = await message.message.answer(text, reply_markup=reply_markup, **kwargs)
             remember_client_card(result, has_media=False)
-        await message.answer()
+        if answer_callback:
+            await message.answer()
         return result
     result = await message.answer(text, reply_markup=reply_markup, **kwargs)
     remember_client_card(result, has_media=False)
@@ -1124,6 +1126,7 @@ async def edit_or_send_dynamic_media_card(
     caption: str,
     reply_markup,
     parse_mode: str | None = None,
+    answer_callback: bool = True,
 ) -> None:
     anchor = callback.message
     try:
@@ -1146,7 +1149,8 @@ async def edit_or_send_dynamic_media_card(
             reply_markup=reply_markup,
         )
         remember_client_card(sent, has_media=True)
-    await callback.answer()
+    if answer_callback:
+        await callback.answer()
 
 
 def remember_client_card(message: Message, *, has_media: bool) -> None:
@@ -1330,7 +1334,13 @@ async def create_portal_autologin_url(hub, settings, user_id: str) -> str | None
     return portal_login_resume_url(settings, attempt.token)
 
 
-def home_text(user, subscription, settings, latest_subscription=None) -> str:
+def home_text(user, subscription, settings, latest_subscription=None, *, total_traffic_bytes: int = 0) -> str:
+    traffic_subscription = subscription or latest_subscription
+    whitelist_bytes = max(int(getattr(traffic_subscription, "whitelist_traffic_used_bytes", 0) or 0), 0)
+    traffic_lines = [
+        f"Трафик всего: {max(int(total_traffic_bytes), 0) / 1024**3:.2f} ГБ",
+        f"Белые списки за {'текущий' if subscription else 'последний'} период: {whitelist_bytes / 1024**3:.2f} ГБ",
+    ] if traffic_subscription else []
     if subscription:
         lines = [
             "🏠 Главное меню",
@@ -1338,6 +1348,7 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
             f"Текущий тариф: {subscription.plan.name}",
             f"Формат списания: {billing_cycle_label(subscription.plan)}",
             f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+            *traffic_lines,
             "✨ Всё управление VPN доступно кнопками ниже.",
         ]
         if subscription.notes:
@@ -1346,13 +1357,14 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
         lines.append("Выберите нужный раздел кнопками ниже.")
         return "\n".join(lines)
 
-    if user.status == "blocked" or (latest_subscription and getattr(latest_subscription, "status", None) == "blocked"):
+    if latest_subscription is not None or user.status == "blocked":
         latest_plan = getattr(latest_subscription, "plan", None)
         if latest_plan is not None and getattr(latest_plan, "is_trial", False):
             lines = [
                 "🏠 Главное меню",
                 "",
                 f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+                *traffic_lines,
                 "Тестовый период завершён, поэтому доступ сейчас остановлен.",
                 "",
                 "Что делать дальше:",
@@ -1365,7 +1377,12 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
             "🏠 Главное меню",
             "",
             f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
-            "Доступ сейчас остановлен. Обычно это означает, что закончился баланс для продления.",
+            *traffic_lines,
+            (
+                "Доступ сейчас остановлен. Обычно это означает, что закончился баланс для продления."
+                if user.status == "blocked" or getattr(latest_subscription, "status", None) == "blocked"
+                else "Подписка завершена. Выберите тариф, чтобы снова пользоваться сервисом."
+            ),
             "",
             "Пополните баланс и заново выберите тариф.",
         ]
@@ -1375,6 +1392,7 @@ def home_text(user, subscription, settings, latest_subscription=None) -> str:
         "🏠 Главное меню",
         "",
         f"Баланс: {Decimal(user.balance_rub):.2f} ₽",
+        *traffic_lines,
         "Тариф пока не выбран. Нажмите «Выбрать тариф» или начните с бесплатного теста на 2 дня.",
         "",
         "🚀 Личный кабинет открывается отдельной кнопкой ниже.",
@@ -2151,7 +2169,14 @@ async def send_home_card(
         quick_action = await resolve_home_quick_action(inner_hub, user, subscription)
         if subscription is None and latest_subscription is None:
             latest_subscription = await inner_hub.accounts.get_latest_subscription(user.id)
-    text = home_text(user, subscription, container.settings, latest_subscription=latest_subscription)
+        total_traffic_bytes = (
+            await inner_hub.accounts.get_user_total_traffic_bytes(user.id)
+            if subscription is not None or latest_subscription is not None else 0
+        )
+    text = home_text(
+        user, subscription, container.settings, latest_subscription=latest_subscription,
+        total_traffic_bytes=total_traffic_bytes,
+    )
     show_quick_topup = quick_action == "topup"
     show_quick_plan = quick_action == "plan"
     primary_markup = build_home_markup(
@@ -3302,6 +3327,7 @@ async def legacy_plan_menu(callback: CallbackQuery, container: AppContainer):
 
 @router.callback_query(F.data == "client:trial_activate")
 async def trial_activate(callback: CallbackQuery, container: AppContainer):
+    await callback.answer("Активируем бесплатный тест…")
     subscription = None
     activation_payload = None
     connection_url = None
@@ -3312,7 +3338,7 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
         if user is None:
             return
         try:
-            subscription = await hub.billing.activate_trial(user.id)
+            subscription = await hub.billing.activate_trial(user.id, user_requested=True)
             bundle = await safe_get_subscription_bundle(hub, user.id)
             activation_payload = resolve_subscription_payload(bundle)
             connection_url = bundle.get("subscription_connect_url") if bundle else None
@@ -3344,6 +3370,7 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
                 caption=caption,
                 reply_markup=reply_markup,
                 parse_mode="HTML",
+                answer_callback=False,
             )
             return
         except Exception:
@@ -3361,6 +3388,7 @@ async def trial_activate(callback: CallbackQuery, container: AppContainer):
             auto_renew_disabled=False,
         ).as_markup(),
         parse_mode=response_parse_mode,
+        answer_callback=False,
     )
 
 

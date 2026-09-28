@@ -296,20 +296,22 @@ async def render_admin(
     *,
     reply_markup=None,
     force_new: bool = False,
+    answer_callback: bool = True,
 ) -> Message:
     anchor = target.message if isinstance(target, CallbackQuery) else target
     if not force_new and isinstance(target, CallbackQuery):
         try:
             result = await target.message.edit_text(text, reply_markup=reply_markup)
             remember_admin_card(target.message)
-            await target.answer()
+            if answer_callback:
+                await target.answer()
             return result
         except TelegramBadRequest:
             pass
 
     result = await anchor.answer(text, reply_markup=reply_markup)
     remember_admin_card(result)
-    if isinstance(target, CallbackQuery):
+    if isinstance(target, CallbackQuery) and answer_callback:
         await target.answer()
     return result
 
@@ -1007,6 +1009,14 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
             if loaded_assigned_server is not None:
                 assigned_server_name = loaded_assigned_server.name
                 assigned_server_available = hub.catalog.is_server_usable(loaded_assigned_server)
+        if subscription and subscription.plan and is_metered_plan_code(subscription.plan.code):
+            selected_servers = await hub.catalog.get_assigned_start_servers(user.id)
+            if selected_servers:
+                assigned_server_name = ", ".join(
+                    f"{server.name} ({'доступен' if hub.catalog.is_server_usable(server) else 'недоступен'})"
+                    for server in selected_servers
+                )
+                assigned_server_available = any(hub.catalog.is_server_usable(server) for server in selected_servers)
 
     if not hasattr(user, "id"):
         user.id = user_id
@@ -1046,7 +1056,7 @@ async def show_user_card(target: Message | CallbackQuery, user_id: str, containe
         f"Лимит устройств: {plan.device_limit if plan else '—'}",
         f"Персональный лимит трафика: {traffic_limit}",
         f"Сброс лимита: {traffic_strategy}",
-        f"Назначенный сервер: {assigned_server} ({'доступен' if assigned_server_available else 'недоступен'})",
+        f"Назначенные серверы: {assigned_server}",
         f"Пополнений: {len(topups)}",
         f"Транзакций: {len(transactions)}",
     ]
@@ -1121,6 +1131,7 @@ async def show_user_start_servers(
     container: AppContainer,
     *,
     page: int,
+    answer_callback: bool = True,
 ) -> None:
     async with container.hub() as hub:
         user = await hub.accounts.get_user(user_id)
@@ -1132,29 +1143,33 @@ async def show_user_start_servers(
         ):
             raise ConflictError("Переназначение сервера доступно только для тарифа Start.")
         servers = await hub.catalog.list_available_start_servers()
-        current_server = user.assigned_server
-        current_server_available = hub.catalog.is_server_usable(current_server)
+        selected_servers = await hub.catalog.get_assigned_start_servers(user_id)
+        selected_ids = {server.id for server in selected_servers}
+        servers.extend(server for server in selected_servers if server.id not in {item.id for item in servers})
+        current_names = ", ".join(
+            f"{server.name}{'' if hub.catalog.is_server_usable(server) else ' (недоступен)'}"
+            for server in selected_servers
+        ) or "не назначены"
     total_pages = max((len(servers) + 5) // 6, 1)
     page = min(max(page, 0), total_pages - 1)
-    current_name = current_server.name if current_server else "не назначен"
-    current_status = "доступен" if current_server_available else "недоступен — выберите резерв вручную"
     await render_admin(
         target,
-        "Переназначение Start-сервера\n\n"
+        "Серверы Start\n\n"
         f"Пользователь: {user_label(user)}\n"
-        f"Текущий сервер: {current_name}\n"
-        f"Статус: {current_status}\n\n"
+        f"Выбраны: {current_names[:1000]}\n\n"
         + (
-            "Выберите рабочий Start-сервер. В кнопках указано: назначено / онлайн."
+            "Нажатие добавляет или убирает сервер. ✓ — выбран. Изменения применяются сразу. "
+            "Оставьте хотя бы один сервер. В кнопках: назначено / онлайн."
             if servers
             else "Доступных Start-серверов сейчас нет."
         ),
         reply_markup=user_start_server_actions(
             user_id,
             servers,
-            current_server_id=user.assigned_server_id,
+            selected_server_ids=selected_ids,
             page=page,
         ).as_markup(),
+        answer_callback=answer_callback,
     )
 
 
@@ -2053,24 +2068,24 @@ async def assign_user_start_server(callback: CallbackQuery, container: AppContai
     except (TypeError, ValueError):
         await callback.answer("Некорректный сервер.", show_alert=True)
         return
+    await callback.answer("Обновляем доступ…")
     async with container.hub() as hub:
-        servers = await hub.catalog.list_available_start_servers()
-        server = next((item for item in servers if item.id == server_id), None)
-        if server is None:
-            await callback.answer("Список серверов изменился. Откройте его заново.", show_alert=True)
-            return
         admin = await hub.accounts.get_admin_by_telegram_id(callback.from_user.id)
         try:
-            server = await hub.catalog.reassign_start_server(
+            await hub.catalog.set_start_servers(
                 user_id,
-                server.id,
+                [server_id],
                 admin_id=admin.id if admin else None,
+                toggle=True,
             )
         except (ConflictError, NotFoundError, ServiceError) as exc:
-            await callback.answer(str(exc), show_alert=True)
+            await render_admin(
+                callback, str(exc),
+                reply_markup=user_actions(user_id, can_reassign_start_server=True).as_markup(),
+                answer_callback=False,
+            )
             return
-    await callback.answer(f"Назначен сервер: {server.name}")
-    await show_user_start_servers(callback, user_id, container, page=page)
+    await show_user_start_servers(callback, user_id, container, page=page, answer_callback=False)
 
 
 @router.callback_query(F.data.startswith(f"{USER_LOGS_PREFIX}:"))

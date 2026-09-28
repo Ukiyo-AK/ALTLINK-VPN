@@ -7672,35 +7672,6 @@ body.landing-v2 .landing-reveal.is-visible {
   }
 }
 
-.connection-statistics {
-  padding: 18px 22px;
-  margin-bottom: 18px;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  background: var(--panel);
-  min-width: 0;
-}
-
-.connection-statistics dl {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(180px, 1.5fr);
-  gap: 18px;
-  margin: 0;
-}
-
-.connection-statistics dl > div { min-width: 0; }
-.connection-statistics dt { color: var(--muted); font-size: 0.8rem; }
-.connection-statistics dd {
-  margin: 5px 0 0;
-  font-size: 1.2rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-.connection-statistics small { font-size: 0.75rem; font-weight: 400; }
-.connection-statistics-date dd { font-size: 0.95rem; line-height: 1.45; }
-.connection-statistics p { margin: 12px 0 0; color: var(--muted); font-size: 0.72rem; }
-
 .portal-auth-loader {
   display: none;
   min-height: 100vh;
@@ -7733,14 +7704,6 @@ html[data-theme="dark"] .portal-login-page .portal-login-cta { background: linea
 }
 
 @media (max-width: 768px) {
-  .connection-statistics { padding: 14px 16px; border-radius: 18px; }
-  .connection-statistics dl { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
-  .connection-statistics-date { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-  .connection-statistics-date dd { margin: 0; text-align: right; font-size: 0.85rem; }
-  .connection-statistics dt small { display: block; }
-  .connection-statistics dd { font-size: 1.08rem; }
-  .connection-statistics p { line-height: 1.45; }
-
   .portal-login-page .center-shell {
     padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
     min-height: 100vh;

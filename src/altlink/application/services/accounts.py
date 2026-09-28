@@ -556,7 +556,7 @@ class AccountService(BaseService):
     async def can_offer_trial(self, user_id: str) -> bool:
         if not await self.is_trial_available(user_id):
             return False
-        return not await self.has_user_transactions(user_id)
+        return not await self.has_paid_subscription_history(user_id)
 
     async def get_current_subscription(self, user_id: str) -> Subscription | None:
         return await self.session.scalar(
@@ -614,19 +614,6 @@ class AccountService(BaseService):
             "subscription": await self.get_current_subscription(user.id),
             "subscription_url": remnawave_public_subscription_url(self.settings, user.remnawave_short_uuid),
             "subscription_connect_url": local_subscription_connect_url(self.settings, user.remnawave_short_uuid),
-        }
-
-    async def get_connection_statistics(self, user: User) -> dict:
-        subscription = await self.get_current_subscription(user.id)
-        latest = subscription or await self.get_latest_subscription(user.id)
-        is_trial = bool(subscription and subscription.plan and subscription.plan.is_trial)
-        return {
-            "total_traffic_bytes": await self.get_user_total_traffic_bytes(user.id),
-            "whitelist_traffic_bytes": max(int(latest.whitelist_traffic_used_bytes or 0), 0) if latest else 0,
-            "devices": max(int(user.hwid_device_count or 0), 0),
-            "balance_rub": user.balance_rub,
-            "billing_label": "Тест до" if is_trial else "Следующее списание",
-            "billing_at": (subscription.ends_at if is_trial else subscription.next_billing_at) if subscription else None,
         }
 
     async def get_subscription_bundle(self, user_id: str, *, include_remote_details: bool = True) -> dict:

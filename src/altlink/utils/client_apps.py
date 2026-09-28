@@ -9,6 +9,10 @@ CLIENT_PLATFORMS = {
     "linux": "Linux",
     "other": "Другая платформа",
 }
+CLIENT_RECOMMENDATIONS = {
+    platform: "incy" if platform in {"ios", "android"} else "happ"
+    for platform in CLIENT_PLATFORMS
+}
 
 # Official publisher links, checked 2026-09-19. Desktop downloads stay on publisher pages.
 CLIENT_DOWNLOADS = {

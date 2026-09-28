@@ -10,7 +10,7 @@ from altlink.infrastructure.db.models.billing import (
     TrialPeriod,
     WhitelistPackagePurchase,
 )
-from altlink.infrastructure.db.models.catalog import Server, ServerInbound, UserServerAccess
+from altlink.infrastructure.db.models.catalog import Server, ServerInbound, UserServerAccess, UserStartServer
 from altlink.infrastructure.db.models.integrations import ExternalApiClient
 from altlink.infrastructure.db.models.ops import (
     Notification,
@@ -48,5 +48,6 @@ __all__ = [
     "TrialPeriod",
     "User",
     "UserServerAccess",
+    "UserStartServer",
     "WhitelistPackagePurchase",
 ]

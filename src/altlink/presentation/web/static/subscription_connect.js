@@ -19,10 +19,20 @@
     return "other";
   };
 
+  const selectClient = (selected) => {
+    choices.forEach((choice) => {
+      const active = choice.dataset.clientChoice === selected;
+      choice.classList.toggle("is-selected", active);
+      choice.setAttribute("aria-pressed", String(active));
+    });
+    cards.forEach((card) => card.classList.toggle("is-selected", card.dataset.clientCard === selected));
+  };
+
   const applyPlatform = () => {
     const automatic = selector.value === "auto";
     const platform = automatic ? detectPlatform() : selector.value;
     const label = config.platforms[platform] || config.platforms.other;
+    const recommended = config.recommendations[platform] || config.recommendations.other;
     platformStatus.textContent = automatic
       ? (platform === "other" ? "Выберите платформу" : `Определено: ${label}`)
       : `Выбрано: ${label}`;
@@ -34,7 +44,16 @@
       const note = card.querySelector("[data-download-note]");
       note.textContent = download.note;
       note.hidden = !download.note;
+      const primary = card.dataset.clientCard === recommended;
+      card.classList.toggle("is-primary", primary);
+      const badge = card.querySelector("[data-client-recommendation]");
+      badge.className = primary ? "badge" : "muted";
+      badge.textContent = primary ? "Рекомендуем" : "Альтернативный клиент";
+      if (primary) card.parentElement.prepend(card);
     });
+    const primaryChoice = choices.find((choice) => choice.dataset.clientChoice === recommended);
+    primaryChoice.parentElement.prepend(primaryChoice);
+    selectClient(recommended);
   };
 
   selector.addEventListener("change", () => {
@@ -52,15 +71,7 @@
     applyPlatform();
   });
   choices.forEach((button) => {
-    button.addEventListener("click", () => {
-      const selected = button.dataset.clientChoice;
-      choices.forEach((choice) => {
-        const active = choice.dataset.clientChoice === selected;
-        choice.classList.toggle("is-selected", active);
-        choice.setAttribute("aria-pressed", String(active));
-      });
-      cards.forEach((card) => card.classList.toggle("is-selected", card.dataset.clientCard === selected));
-    });
+    button.addEventListener("click", () => selectClient(button.dataset.clientChoice));
   });
   applyPlatform();
   document.querySelector("[data-client-picker]").hidden = false;

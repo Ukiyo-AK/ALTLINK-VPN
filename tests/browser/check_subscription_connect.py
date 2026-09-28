@@ -26,7 +26,7 @@ import websockets
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
-from altlink.utils.client_apps import CLIENT_DOWNLOADS, CLIENT_PLATFORMS, client_downloads_for_platform, detect_client_platform
+from altlink.utils.client_apps import CLIENT_DOWNLOADS, CLIENT_PLATFORMS, CLIENT_RECOMMENDATIONS, client_downloads_for_platform, detect_client_platform
 from altlink.utils.qr import render_qr_png
 from altlink.utils.time import format_msk_datetime
 
@@ -44,11 +44,11 @@ async def preview(request):
     return HTMLResponse(env.get_template("subscription_connect.html").render(
         title="ALTLINK preview", asset_version="preview", platform_choice=choice, platform=platform,
         client_platforms=CLIENT_PLATFORMS, client_downloads=CLIENT_DOWNLOADS,
+        client_recommendations=CLIENT_RECOMMENDATIONS, recommended_app=CLIENT_RECOMMENDATIONS[platform],
+        client_bot_url="https://t.me/Altlinkbot",
         current_downloads=client_downloads_for_platform(platform), subscription_url=LINK,
         happ_import_url=f"happ://add/{LINK}", incy_import_url=f"incy://import/{LINK}",
         support_url="https://t.me/altlink_support",
-        statistics={"total_traffic_bytes": 123456789012, "whitelist_traffic_bytes": 3456789012,
-                    "devices": 3, "balance_rub": 507.18, "billing_label": "Следующее списание", "billing_at": None},
         qr_data_uri="data:image/png;base64," + base64.b64encode(render_qr_png(LINK)).decode(),
     ))
 
@@ -119,6 +119,9 @@ async def check_page(cdp, url, width, user_agent, platform, expected, theme):
       status: document.querySelector('[data-platform-status]').textContent,
       cards: [...document.querySelectorAll('[data-client-card]')].filter(e => e.offsetWidth).length,
       url: document.querySelector('[data-app-download]').href,
+      selected: document.querySelector('[data-client-card].is-selected').dataset.clientCard,
+      recommended: document.querySelector('[data-client-card].is-primary').dataset.clientCard,
+      stats: !!document.querySelector('.connection-statistics'),
       broken: [...document.images].some(e => !e.complete || e.naturalWidth === 0),
       smallActions: [...document.querySelectorAll('.button, [data-client-choice], select')].some(e => e.offsetWidth && e.getBoundingClientRect().height < 44)
     }))()""")
@@ -126,7 +129,11 @@ async def check_page(cdp, url, width, user_agent, platform, expected, theme):
     assert metrics["qr"] is not mobile, metrics
     assert metrics["cards"] == (1 if mobile else 2), metrics
     assert CLIENT_PLATFORMS[expected] in metrics["status"], metrics
-    assert metrics["url"] == client_downloads_for_platform(expected)["happ"]["url"], metrics
+    recommended = CLIENT_RECOMMENDATIONS[expected]
+    assert metrics["selected"] == metrics["recommended"] == recommended, metrics
+    assert metrics["url"] == client_downloads_for_platform(expected)[recommended]["url"], metrics
+    assert not metrics["stats"], metrics
+    assert await cdp.evaluate("document.querySelector('[data-client-bot]').href") == "https://t.me/Altlinkbot"
 
     if width in (390, 1440):
         screenshot = await cdp.call("Page.captureScreenshot", format="png", captureBeyondViewport=True)
@@ -136,8 +143,12 @@ async def check_page(cdp, url, width, user_agent, platform, expected, theme):
 
     for chosen in CLIENT_PLATFORMS:
         await cdp.evaluate(f"document.querySelector('[data-platform-select]').value = '{chosen}'; document.querySelector('[data-platform-select]').dispatchEvent(new Event('change'))")
-        urls = await cdp.evaluate("[...document.querySelectorAll('[data-app-download]')].map(e => e.href)")
-        assert urls == [link["url"] for link in client_downloads_for_platform(chosen).values()]
+        urls = await cdp.evaluate("Object.fromEntries([...document.querySelectorAll('[data-client-card]')].map(e => [e.dataset.clientCard, e.querySelector('[data-app-download]').href]))")
+        assert urls == {app: link["url"] for app, link in client_downloads_for_platform(chosen).items()}
+        primary = CLIENT_RECOMMENDATIONS[chosen]
+        assert await cdp.evaluate("document.querySelector('[data-client-card].is-selected').dataset.clientCard") == primary
+        assert await cdp.evaluate("document.querySelector('[data-client-card]').dataset.clientCard") == primary
+        assert await cdp.evaluate("document.querySelector('[data-client-choice]').getAttribute('aria-pressed')") == "true"
     if mobile:
         await cdp.evaluate("document.querySelector('[data-client-choice=incy]').click()")
         assert await cdp.evaluate("!!document.querySelector('[data-client-card=incy]').offsetWidth && !document.querySelector('[data-client-card=happ]').offsetWidth")

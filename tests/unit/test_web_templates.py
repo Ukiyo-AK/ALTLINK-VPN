@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+from altlink.utils.client_apps import CLIENT_DOWNLOADS, CLIENT_PLATFORMS, CLIENT_RECOMMENDATIONS, client_downloads_for_platform
 
 
 TEMPLATE_ROOT = Path("src/altlink/presentation/web/templates")
@@ -72,16 +75,27 @@ def test_portal_dashboard_template_supports_one_tap_copy_for_subscription_link()
     assert "subscription-link-preview" in content
 
 
-def test_subscription_connect_template_has_safe_happ_and_incy_actions():
-    content = (TEMPLATE_ROOT / "subscription_connect.html").read_text(encoding="utf-8")
+@pytest.mark.parametrize("platform", CLIENT_PLATFORMS)
+def test_subscription_connect_template_has_safe_happ_and_incy_actions(platform):
+    environment = Environment(loader=FileSystemLoader(TEMPLATE_ROOT), autoescape=select_autoescape())
+    subscription_url = "https://altlink.online/sub/test-token"
+    content = environment.get_template("subscription_connect.html").render(
+        title="Подключение", asset_version="test", platform=platform, platform_choice=platform,
+        client_platforms=CLIENT_PLATFORMS, client_downloads=CLIENT_DOWNLOADS,
+        client_recommendations=CLIENT_RECOMMENDATIONS, recommended_app=CLIENT_RECOMMENDATIONS[platform],
+        current_downloads=client_downloads_for_platform(platform), subscription_url=subscription_url,
+        happ_import_url=f"happ://add/{subscription_url}", incy_import_url=f"incy://import/{subscription_url}",
+        client_bot_url="https://t.me/Altlinkbot", support_url="https://t.me/altlink_support", qr_data_uri="",
+    )
 
     assert 'content="noindex, nofollow, noarchive"' in content
     assert 'content="no-referrer"' in content
-    assert 'href="{{ happ_import_url }}"' in content
-    assert 'href="{{ incy_import_url }}"' in content
-    assert "data-copy-text=\"{{ subscription_url }}\"" in content
+    assert f'href="happ://add/{subscription_url}"' in content
+    assert f'href="incy://import/{subscription_url}"' in content
+    assert f'data-copy-text="{subscription_url}"' in content
+    assert 'href="https://t.me/Altlinkbot"' in content
     script = Path("src/altlink/presentation/web/static/subscription_connect.js").read_text(encoding="utf-8")
-    assert 'src="/static/subscription_connect.js?v={{ asset_version }}" defer' in content
+    assert 'src="/static/subscription_connect.js?v=test" defer' in content
     assert "navigator.clipboard.writeText" in script
 
 
@@ -248,9 +262,11 @@ def test_admin_user_template_exposes_start_server_reassignment():
 
     assert 'action="/admin/users/{{ user.id }}/start-server"' in user_detail
     assert 'name="server_id"' in user_detail
-    assert "available_start_servers" in user_detail
+    assert "selectable_start_servers" in user_detail
+    assert 'type="checkbox" name="server_id"' in user_detail
+    assert "selected_start_server_ids" in user_detail
     assert "is_start_subscription" in user_detail
-    assert "Назначить выбранный сервер" in user_detail
+    assert "Сохранить серверы" in user_detail
 
 
 def test_landing_template_keeps_homepage_copy_compact():
@@ -261,8 +277,10 @@ def test_landing_template_keeps_homepage_copy_compact():
     assert "Подключитесь за минуту. Доступ без ограничений каждый день" in landing
     assert "2 дня теста" in landing
     assert "безлимит трафика" in landing
-    assert "Рекомендуем Happ" in landing
-    assert "другое совместимое клиентское приложение" in landing
+    assert "На Android и iPhone рекомендуем INCY, на остальных платформах — Happ." in landing
+    assert "другие совместимые клиентские приложения" in landing
+    assert "id=llc.itdev.incy" in landing
+    assert "/ru/app/incy/" in landing
     assert "landing_max_device_limit" in landing
     assert "price_label" in landing
     assert "landing-feature-card" in landing

@@ -101,7 +101,7 @@ def user_actions(user_id: str, *, can_reassign_start_server: bool = False) -> In
     builder.button(text="Лимит трафика", callback_data=f"{USER_TRAFFIC_LIMIT_PREFIX}:{user_id}", style="primary")
     if can_reassign_start_server:
         builder.button(
-            text="Переназначить Start-сервер",
+            text="Серверы Start",
             callback_data=f"{USER_START_SERVERS_PREFIX}:0:{user_id}",
             style="primary",
         )
@@ -116,15 +116,17 @@ def user_start_server_actions(
     user_id: str,
     servers: list,
     *,
-    current_server_id: str | None,
+    current_server_id: str | None = None,
+    selected_server_ids: set[str] | None = None,
     page: int,
     page_size: int = 6,
 ) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
     start = page * page_size
     visible_servers = servers[start : start + page_size]
+    selected_ids = selected_server_ids if selected_server_ids is not None else {current_server_id}
     for server in visible_servers:
-        marker = "✓ " if server.id == current_server_id else ""
+        marker = "✓ " if server.id in selected_ids else "+ "
         country = f" [{server.country_code.upper()}]" if server.country_code else ""
         load = f" · {int(getattr(server, 'current_clients', 0) or 0)}/{int(getattr(server, 'users_online', 0) or 0)}"
         builder.button(
@@ -133,7 +135,7 @@ def user_start_server_actions(
                 f"{USER_START_SERVER_ASSIGN_PREFIX}:{page}:"
                 f"{compact_callback_uuid(server.id)}:{compact_callback_uuid(user_id)}"
             ),
-            style="success" if server.id == current_server_id else "primary",
+            style="success" if server.id in selected_ids else "primary",
         )
     total_pages = max((len(servers) + page_size - 1) // page_size, 1)
     if page > 0:

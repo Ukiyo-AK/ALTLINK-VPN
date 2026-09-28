@@ -105,8 +105,8 @@ def test_start_server_action_is_only_shown_for_start_user():
         user_actions("user-1", can_reassign_start_server=True).as_markup()
     )
 
-    assert not any(button["text"] == "Переназначить Start-сервер" for button in regular_buttons)
-    button = next(button for button in start_buttons if button["text"] == "Переназначить Start-сервер")
+    assert not any(button["text"] == "Серверы Start" for button in regular_buttons)
+    button = next(button for button in start_buttons if button["text"] == "Серверы Start")
     assert button["callback_data"] == f"{USER_START_SERVERS_PREFIX}:0:user-1"
 
 
@@ -125,6 +125,7 @@ def test_start_server_picker_paginates_and_keeps_callbacks_within_telegram_limit
             user_id,
             servers,
             current_server_id=servers[6].id,
+            selected_server_ids={servers[6].id, servers[7].id},
             page=1,
         ).as_markup()
     )
@@ -133,6 +134,11 @@ def test_start_server_picker_paginates_and_keeps_callbacks_within_telegram_limit
     assert any(callback.startswith(f"{USER_START_SERVER_ASSIGN_PREFIX}:1:") for callback in callbacks)
     assert f"{USER_START_SERVERS_PREFIX}:0:{user_id}" in callbacks
     assert all(len(callback.encode("utf-8")) <= 64 for callback in callbacks)
+    server_buttons = [button for button in buttons if button.get("callback_data", "").startswith(
+        f"{USER_START_SERVER_ASSIGN_PREFIX}:"
+    )]
+    assert len(server_buttons) == 2
+    assert all(button["text"].startswith("✓ ") for button in server_buttons)
 
 
 def test_user_subscription_actions_keep_old_controls_in_subsection():

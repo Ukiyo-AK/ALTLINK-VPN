@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from starlette.datastructures import FormData
 from sqlalchemy.exc import SQLAlchemyError
 
 from altlink.presentation.web import routes as web_routes
@@ -29,7 +30,7 @@ from altlink.presentation.web.routes import (
     probe_server_latency,
     resolve_document_path,
     server_probe_port,
-    LATENCY_RECHECK_THRESHOLD_MS,
+LATENCY_RECHECK_THRESHOLD_MS,
 )
 from altlink.utils.latency import (
     LEGACY_WHITELIST_LATENCY_TARGET_SETTING_KEY,
@@ -1409,7 +1410,6 @@ async def test_subscription_connect_page_builds_app_deep_links(monkeypatch):
     async def fake_hub():
         accounts = SimpleNamespace(
             get_user_by_remnawave_short_uuid=AsyncMock(return_value=SimpleNamespace(id="user-1")),
-            get_connection_statistics=AsyncMock(return_value={"devices": 3}),
         )
         yield SimpleNamespace(accounts=accounts)
 
@@ -1419,7 +1419,7 @@ async def test_subscription_connect_page_builds_app_deep_links(monkeypatch):
         rendered.update(template_name=template_name, context=context)
         return SimpleNamespace(status_code=200)
 
-    settings = SimpleNamespace(backend_public_url="https://altlink.online")
+    settings = SimpleNamespace(backend_public_url="https://altlink.online", client_bot_name="@Altlinkbot")
     request = SimpleNamespace(
         headers={"user-agent": "Mozilla/5.0 (Linux; Android 15)"},
         query_params={},
@@ -1442,7 +1442,9 @@ async def test_subscription_connect_page_builds_app_deep_links(monkeypatch):
     )
     assert rendered["context"]["qr_data_uri"].startswith("data:image/png;base64,")
     assert rendered["context"]["platform"] == "android"
-    assert rendered["context"]["statistics"] == {"devices": 3}
+    assert "statistics" not in rendered["context"]
+    assert rendered["context"]["recommended_app"] == "incy"
+    assert rendered["context"]["client_bot_url"] == "https://t.me/Altlinkbot"
     assert "play.google.com" in rendered["context"]["current_downloads"]["happ"]["url"]
 
 
@@ -1476,7 +1478,7 @@ async def test_portal_trial_marks_successful_activation_for_quick_connect(monkey
 
     assert response.status_code == 303
     assert bool(request.session.get("portal_activation_completed")) is not fails
-    billing.activate_trial.assert_awaited_once_with("user-1")
+    billing.activate_trial.assert_awaited_once_with("user-1", user_requested=True)
 
 
 @pytest.mark.asyncio
@@ -1517,3 +1519,45 @@ async def test_portal_plan_marks_successful_activation_for_quick_connect(monkeyp
         PlanCode.UNLIMITED,
         charge_user=True,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("authorized", [True, False])
+async def test_admin_start_servers_form_keeps_multiple_values(monkeypatch, authorized):
+    catalog = SimpleNamespace(set_start_servers=AsyncMock(return_value=[
+        SimpleNamespace(name="First"), SimpleNamespace(name="Second"),
+    ]))
+
+    @asynccontextmanager
+    async def hub():
+        yield SimpleNamespace(catalog=catalog)
+
+    request = SimpleNamespace(
+        form=AsyncMock(return_value=FormData([
+            ("csrf_token", "token"), ("server_id", "server-1"), ("server_id", "server-2"),
+        ])),
+        session={"csrf_token": "token"},
+        app=SimpleNamespace(state=SimpleNamespace(container=SimpleNamespace(hub=hub))),
+    )
+    monkeypatch.setattr(web_routes, "resolve_admin", AsyncMock(
+        return_value=SimpleNamespace(id="admin-1") if authorized else None
+    ))
+    response = await web_routes.user_start_server(request, "user-1")
+    assert response.status_code == 303
+    if authorized:
+        catalog.set_start_servers.assert_awaited_once_with(
+            "user-1", ["server-1", "server-2"], admin_id="admin-1"
+        )
+    else:
+        catalog.set_start_servers.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_start_servers_rejects_invalid_csrf():
+    request = SimpleNamespace(
+        form=AsyncMock(return_value=FormData([("csrf_token", "wrong"), ("server_id", "server-1")])),
+        session={"csrf_token": "token"},
+    )
+    with pytest.raises(web_routes.HTTPException) as error:
+        await web_routes.user_start_server(request, "user-1")
+    assert error.value.status_code == 400

@@ -31,6 +31,7 @@ async def create_trial(services):
 @pytest.mark.asyncio
 async def test_connect_http_keeps_original_link_and_revokes_old_local_urls(test_services, monkeypatch):
     test_services.settings.backend_public_url = "https://altlink.online"
+    test_services.settings.client_bot_name = "Altlinkbot"
     user_id, token = await create_trial(test_services)
     upstream = AsyncMock(return_value=httpx.Response(200, content=b"vless://server-key", headers={"content-type": "text/plain"}))
     monkeypatch.setattr(routes, "fetch_upstream_subscription", upstream)
@@ -50,11 +51,13 @@ async def test_connect_http_keeps_original_link_and_revokes_old_local_urls(test_
         assert f'value="https://altlink.online/sub/{token}"' in page.text
         assert 'name="referrer" content="no-referrer"' in page.text
         assert "private_account_name" not in page.text
-        assert "connection-statistics" in page.text
-        assert "Трафик всего" in page.text
-        assert "Белые списки" in page.text
-        assert "Устройства" in page.text
-        assert "Тест до" in page.text
+        assert "connection-statistics" not in page.text
+        assert "Трафик всего" not in page.text
+        assert "Баланс" not in page.text
+        assert 'href="https://t.me/Altlinkbot"' in page.text
+        assert 'data-client-bot' in page.text
+        assert '/cabinet/' not in page.text
+        assert (await client.get(f"/cabinet/{token}")).status_code == 404
         upstream.assert_not_awaited()
 
         mirrored = await client.get(f"/sub/{token}")
@@ -107,19 +110,25 @@ async def test_login_only_starts_with_loader_for_approved_attempt(test_services,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent,choice,expected", [
-    ("iPhone OS 18 like Mac OS X", "", "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"),
-    ("Linux; Android 15", "", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
-    ("Windows NT 10.0", "?platform=ios", "https://apps.apple.com/us/app/happ-proxy-utility/id6504287215"),
-    ("iPhone OS 18", "?platform=windows", "https://www.happ.su/main/ru"),
-    ("Android 15", "?platform=invalid", "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru"),
+@pytest.mark.parametrize("agent,choice,recommended,expected", [
+    ("iPhone OS 18 like Mac OS X", "", "incy", "https://apps.apple.com/ru/app/incy/id6756943388"),
+    ("Linux; Android 15", "", "incy", "https://play.google.com/store/apps/details?id=llc.itdev.incy&hl=ru"),
+    ("Windows NT 10.0", "?platform=ios", "incy", "https://apps.apple.com/ru/app/incy/id6756943388"),
+    ("iPhone OS 18", "?platform=windows", "happ", "https://www.happ.su/main/ru"),
+    ("Android 15", "?platform=invalid", "incy", "https://play.google.com/store/apps/details?id=llc.itdev.incy&hl=ru"),
+    ("Macintosh; Intel Mac OS X", "", "happ", "https://www.happ.su/main/ru"),
+    ("X11; Linux x86_64", "", "happ", "https://www.happ.su/main/ru"),
+    ("", "", "happ", "https://www.happ.su/main/ru"),
 ])
-async def test_connect_renders_platform_links_even_without_javascript(test_services, agent, choice, expected):
+async def test_connect_renders_platform_links_even_without_javascript(test_services, agent, choice, recommended, expected):
     _, token = await create_trial(test_services)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(subscription_app(test_services)), base_url="https://altlink.online") as client:
         response = await client.get(f"/connect/{token}{choice}", headers={"user-agent": agent})
     assert response.status_code == 200
     assert f'href="{expected}" data-app-download' in unescape(response.text)
+    assert f'class="subscription-client-card is-primary is-selected" id="connect-{recommended}"' in response.text
+    alternative = "happ" if recommended == "incy" else "incy"
+    assert response.text.index(f'data-client-card="{recommended}"') < response.text.index(f'data-client-card="{alternative}"')
     assert 'name="platform"' in response.text
     assert all(f'value="{platform}"' in response.text for platform in ("auto", "ios", "android", "windows", "macos", "linux", "other"))
     assert '/static/subscription_connect.js?v=' in response.text

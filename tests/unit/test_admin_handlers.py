@@ -562,7 +562,7 @@ async def test_show_user_card_does_not_lazy_load_assigned_server_after_session_c
 
     assert answers
     assert "Telegram ID: 123457" in answers[0]
-    assert "Назначенный сервер:" in answers[0]
+    assert "Назначенные серверы:" in answers[0]
     assert "Трафик за текущий цикл:" in answers[0]
     assert "Общий трафик в сервисе:" in answers[0]
     assert "????" not in answers[0]

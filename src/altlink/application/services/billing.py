@@ -449,11 +449,13 @@ class BillingService(BaseService):
         repeat_trial_promo: PromoCode | None = None,
         repeat_trial_redemption: PromoCodeRedemption | None = None,
         duration_days: int | None = None,
+        user_requested: bool = False,
     ) -> Subscription:
         async with self._activation_transaction(user_id):
             return await self._activate_trial(
                 user_id, repeat_trial_promo=repeat_trial_promo,
                 repeat_trial_redemption=repeat_trial_redemption, duration_days=duration_days,
+                user_requested=user_requested,
             )
 
     async def _activate_trial(
@@ -463,6 +465,7 @@ class BillingService(BaseService):
         repeat_trial_promo: PromoCode | None = None,
         repeat_trial_redemption: PromoCodeRedemption | None = None,
         duration_days: int | None = None,
+        user_requested: bool = False,
     ) -> Subscription:
         user = await self.accounts.get_user(user_id)
         now = utc_now()
@@ -482,6 +485,7 @@ class BillingService(BaseService):
             and repeat_trial_redemption.promo_code_id == repeat_trial_promo.id
             and repeat_trial_redemption.applied_at is None
         )
+        promo_settings = None
         existing_trial = await self.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user.id))
         if existing_trial and existing_trial.consumed:
             if not repeat_trial_authorized:
@@ -490,6 +494,22 @@ class BillingService(BaseService):
                 repeat_allowed_at = ensure_utc(existing_trial.ends_at) + timedelta(days=cooldown_days)
                 if not promo_settings["return_trial_enabled"] or now < repeat_allowed_at:
                     raise ConflictError("Тестовый период уже был использован.")
+
+        if user_requested and not repeat_trial_authorized:
+            # Old bot buttons and direct POSTs must respect the same waiting period as winback offers.
+            latest_paid = await self._latest_paid_subscription_for_user(user.id)
+            if latest_paid is not None or (existing_trial is not None and existing_trial.consumed):
+                promo_settings = promo_settings or await self._promo_campaign_settings()
+                inactive_since = (
+                    self._subscription_inactive_since(latest_paid)
+                    if latest_paid is not None else ensure_utc(existing_trial.ends_at)
+                )
+                if (
+                    not promo_settings["return_trial_enabled"]
+                    or inactive_since is None
+                    or now < inactive_since + timedelta(days=int(promo_settings["deep_winback_delay_days"]))
+                ):
+                    raise ConflictError("Бесплатный тест сейчас недоступен. Выберите тариф в разделе «Подписка».")
 
         plan = await self.accounts.get_plan(PlanCode.TRIAL)
         promo_duration_days = duration_days if repeat_trial_authorized else None
@@ -527,7 +547,7 @@ class BillingService(BaseService):
 
         await self.catalog.assign_preferred_server(user.id, plan.code)
         user.status = UserStatus.TRIAL
-        await self.catalog.rebuild_user_access_matrix()
+        await self.catalog.rebuild_user_access_matrix(user_id=user.id, sync_remote=False)
         await self._sync_user_remote_access(user, subscription, plan, enable=True, reset_traffic=True)
         if repeat_trial_authorized and repeat_trial_redemption is not None:
             await self.session.flush()
@@ -1859,7 +1879,7 @@ class BillingService(BaseService):
                 Subscription.user_id == user_id,
                 Plan.is_trial.is_(False),
             )
-            .order_by(Subscription.ends_at.desc(), Subscription.created_at.desc())
+            .order_by(Subscription.created_at.desc(), Subscription.id.desc())
             .limit(1)
         )
 

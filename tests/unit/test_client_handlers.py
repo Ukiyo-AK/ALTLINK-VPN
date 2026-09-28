@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -11,10 +11,13 @@ import httpx
 import pytest
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
+from sqlalchemy import select
 
 from altlink.domain.enums import PlanCode, PromoRewardKind, SubscriptionStatus, SupportRequestStatus
+from altlink.infrastructure.db.models import TrafficSnapshot, TrialPeriod
 from altlink.presentation.bots import client_handlers
 from altlink.settings import Settings
+from altlink.utils.time import utc_now
 
 
 class DummyMessage:
@@ -154,6 +157,58 @@ async def test_activation_keeps_original_link_and_adds_quick_connect(test_servic
     assert any(button.url == connect for button in buttons)
     if not media_fails:
         message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expired_days", [1, 40])
+async def test_return_trial_button_keeps_campaign_eligibility(test_services, monkeypatch, expired_days):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=660013, username=None, first_name="Test", last_name=None, language_code="ru",
+        )
+        subscription = await hub.billing.activate_trial(user.id)
+        subscription.status = SubscriptionStatus.BLOCKED
+        subscription.ends_at = utc_now() - timedelta(days=expired_days)
+        trial = await hub.session.scalar(select(TrialPeriod).where(TrialPeriod.user_id == user.id))
+        trial.ends_at = subscription.ends_at
+        assert not await hub.accounts.can_offer_trial(user.id)
+    media, message = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(client_handlers, "ensure_client_access", AsyncMock(return_value=user))
+    monkeypatch.setattr(client_handlers, "edit_or_send_dynamic_media_card", media)
+    monkeypatch.setattr(client_handlers, "answer_or_edit", message)
+    callback = DummyCallback()
+    await client_handlers.trial_activate(callback, test_services)
+    assert len(callback.callback_answers) == 1
+    if expired_days == 40:
+        media.assert_awaited_once()
+        assert media.await_args.kwargs["answer_callback"] is False
+        async with test_services.hub() as hub:
+            assert (await hub.accounts.get_current_subscription(user.id)).status == SubscriptionStatus.TRIAL
+    else:
+        media.assert_not_awaited()
+        assert "уже был использован" in message.await_args.args[1]
+        assert message.await_args.kwargs["answer_callback"] is False
+
+
+@pytest.mark.asyncio
+async def test_old_gift_button_cannot_bypass_paid_winback_delay(test_services, monkeypatch):
+    async with test_services.hub() as hub:
+        user = await hub.accounts.get_or_create_user(
+            telegram_id=660014, username=None, first_name="Test", last_name=None, language_code="ru",
+        )
+        subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=False)
+        subscription.status = SubscriptionStatus.BLOCKED
+        subscription.ends_at = utc_now() - timedelta(days=1)
+        subscription.blocked_at = subscription.ends_at
+        assert not await hub.accounts.can_offer_trial(user.id)
+    media, message = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(client_handlers, "ensure_client_access", AsyncMock(return_value=user))
+    monkeypatch.setattr(client_handlers, "edit_or_send_dynamic_media_card", media)
+    monkeypatch.setattr(client_handlers, "answer_or_edit", message)
+    await client_handlers.trial_activate(DummyCallback(), test_services)
+    media.assert_not_awaited()
+    async with test_services.hub() as hub:
+        assert await hub.accounts.get_current_subscription(user.id) is None
 
 
 @pytest.mark.asyncio
@@ -533,6 +588,15 @@ def test_home_text_without_subscription_points_user_to_plan_button():
     assert "Тариф пока не выбран" in text
     assert "«Подписка»" not in text
     assert "«Выбрать тариф»" in text
+
+
+@pytest.mark.parametrize("is_trial", [False, True])
+def test_home_after_cancelled_subscription_does_not_offer_initial_trial(is_trial):
+    user = SimpleNamespace(balance_rub=Decimal("15"), status="canceled")
+    latest = SimpleNamespace(status=SubscriptionStatus.CANCELED, plan=SimpleNamespace(is_trial=is_trial))
+    text = client_handlers.home_text(user, None, Settings(_env_file=None), latest_subscription=latest)
+    assert "начните с бесплатного теста" not in text
+    assert "заверш" in text
 
 
 def test_expired_paid_subscription_with_disabled_autorenew_offers_plan_selection():
@@ -965,11 +1029,18 @@ async def test_home_navigation_for_each_account_stage(test_services, monkeypatch
     async with test_services.hub() as hub:
         user = await client_handlers.ensure_user(message.from_user, test_services, hub)
         if state == "trial":
-            await hub.billing.activate_trial(user.id)
+            subscription = await hub.billing.activate_trial(user.id)
         elif state in {"paid", "expired"}:
             subscription = await hub.billing.activate_paid_plan(user.id, PlanCode.UNLIMITED, charge_user=False)
             if state == "expired":
                 subscription.status = SubscriptionStatus.BLOCKED
+        if state != "new":
+            subscription.whitelist_traffic_used_bytes = 3 * 1024**3
+            hub.session.add(TrafficSnapshot(
+                user_id=user.id, subscription_id=subscription.id, server_id=None,
+                snapshot_date=date.today(), used_bytes=2 * 1024**3,
+                lifetime_used_bytes=23 * 1024**3, source="test",
+            ))
     send = AsyncMock()
     monkeypatch.setattr(client_handlers, "send_card_with_optional_media", send)
     async with test_services.hub() as hub:
@@ -982,6 +1053,13 @@ async def test_home_navigation_for_each_account_stage(test_services, monkeypatch
         assert "client:plan_menu" in callbacks
     if state == "expired":
         assert "client:topup_menu" in callbacks
+    text = send.await_args.args[1]
+    if state == "new":
+        assert "Трафик" not in text
+    else:
+        assert "Трафик всего: 23.00 ГБ" in text
+        period = "последний" if state == "expired" else "текущий"
+        assert f"Белые списки за {period} период: 3.00 ГБ" in text
 
 
 @pytest.mark.asyncio

@@ -83,6 +83,7 @@ from altlink.utils.latency import (
 )
 from altlink.utils.devices import hwid_device_view
 from altlink.utils.client_apps import (
+    CLIENT_RECOMMENDATIONS,
     CLIENT_DOWNLOADS,
     CLIENT_PLATFORMS,
     client_downloads_for_platform,
@@ -114,7 +115,7 @@ DOCUMENT_KEYWORDS = {
 }
 TELEGRAM_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{4,31}$")
 PORTAL_LOGIN_ATTEMPT_SESSION_KEY = "portal_login_attempt_token"
-ASSET_VERSION = "20260919-portal-flow"
+ASSET_VERSION = "20260921-client-recommendations"
 SUBSCRIPTION_SHORT_UUID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 SUBSCRIPTION_CLIENT_TYPE_RE = re.compile(r"^[A-Za-z0-9._-]{1,32}$")
 SUBSCRIPTION_REQUEST_HEADERS = {
@@ -1565,7 +1566,6 @@ async def subscription_connect_page(request: Request, short_uuid: str):
         user = await hub.accounts.get_user_by_remnawave_short_uuid(short_uuid)
         if user is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Подписка не найдена.")
-        statistics = await hub.accounts.get_connection_statistics(user)
 
     subscription_url = local_subscription_proxy_url(settings, short_uuid)
     if not subscription_url:
@@ -1581,7 +1581,7 @@ async def subscription_connect_page(request: Request, short_uuid: str):
         request,
         "subscription_connect.html",
         title="Подключение ALTLINK",
-        statistics=statistics,
+        client_bot_url=bot_deep_link(settings),
         subscription_url=subscription_url,
         subscription_preview=(
             f"{subscription_url[:36]}…{subscription_url[-10:]}"
@@ -1594,6 +1594,8 @@ async def subscription_connect_page(request: Request, short_uuid: str):
         platform=platform,
         client_platforms=CLIENT_PLATFORMS,
         client_downloads=CLIENT_DOWNLOADS,
+        client_recommendations=CLIENT_RECOMMENDATIONS,
+        recommended_app=CLIENT_RECOMMENDATIONS[platform],
         current_downloads=client_downloads_for_platform(platform),
         qr_data_uri=qr_data_uri,
         support_url="https://t.me/altlink_support",
@@ -1871,6 +1873,12 @@ async def user_detail(request: Request, user_id: str):
         bundle = await hub.accounts.get_subscription_bundle(user_id)
         user_servers = await hub.catalog.get_user_servers(user_id)
         available_start_servers = await hub.catalog.list_available_start_servers()
+        assigned_start_servers = await hub.catalog.get_assigned_start_servers(user_id)
+        selectable_start_servers = list(available_start_servers)
+        selectable_start_servers.extend(
+            server for server in assigned_start_servers
+            if server.id not in {item.id for item in available_start_servers}
+        )
         plans = await hub.dashboard.list_plans()
         devices, devices_error = await safe_user_hwid_device_views(hub, user_id)
         has_paid_history = await hub.accounts.has_paid_subscription_history(user_id)
@@ -1889,6 +1897,10 @@ async def user_detail(request: Request, user_id: str):
             bundle=bundle,
             user_servers=user_servers,
             available_start_servers=available_start_servers,
+            assigned_start_servers=assigned_start_servers,
+            selected_start_server_ids={server.id for server in assigned_start_servers},
+            selectable_start_servers=selectable_start_servers,
+            available_start_server_ids={server.id for server in available_start_servers},
             assigned_start_server_usable=hub.catalog.is_server_usable(card["user"].assigned_server),
             is_start_subscription=bool(
                 card["subscription"]
@@ -1926,23 +1938,23 @@ async def user_detail(request: Request, user_id: str):
 
 @router.post("/admin/users/{user_id}/start-server")
 async def user_start_server(request: Request, user_id: str):
-    form = dict(await request.form())
+    form = await request.form()
     validate_csrf(request, form)
-    server_id = str(form.get("server_id") or "").strip()
+    server_ids = [str(item).strip() for item in form.getlist("server_id") if str(item).strip()]
     async with request.app.state.container.hub() as hub:
         admin = await resolve_admin(request, hub)
         if admin is None:
             return login_redirect()
         try:
-            server = await hub.catalog.reassign_start_server(
+            servers = await hub.catalog.set_start_servers(
                 user_id,
-                server_id,
+                server_ids,
                 admin_id=admin.id,
             )
         except (ConflictError, NotFoundError, ServiceError) as exc:
             set_flash(request, str(exc), "danger")
         else:
-            set_flash(request, f"Пользователю назначен Start-сервер «{server.name}».")
+            set_flash(request, "Назначены серверы Start: " + ", ".join(server.name for server in servers))
     return RedirectResponse(f"/admin/users/{user_id}", status_code=303)
 
 
@@ -3150,7 +3162,7 @@ async def portal_trial(request: Request):
             set_flash(request, "Сначала подпишитесь на Telegram-канал проекта.", "danger")
             return RedirectResponse("/portal", status_code=303)
         try:
-            await hub.billing.activate_trial(user.id)
+            await hub.billing.activate_trial(user.id, user_requested=True)
             request.session["portal_activation_completed"] = True
             set_flash(request, "Тестовый период на 2 дня активирован.")
         except (ConflictError, NotFoundError, ServiceError) as exc:

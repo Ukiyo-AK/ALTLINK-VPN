@@ -78,3 +78,14 @@ class UserServerAccess(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     user: Mapped["User"] = relationship(back_populates="server_accesses")
     server: Mapped["Server"] = relationship(back_populates="user_accesses")
+
+
+class UserStartServer(Base):
+    """Persistent Start selection, independent of temporary access revocation."""
+
+    __tablename__ = "user_start_servers"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    server_id: Mapped[str] = mapped_column(
+        ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
